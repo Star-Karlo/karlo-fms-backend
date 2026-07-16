@@ -1,0 +1,2682 @@
+basePath: /
+definitions:
+  alert.AlertType:
+    properties:
+      code:
+        type: string
+      name:
+        description: Indonesian display name
+        type: string
+      name_en:
+        description: English subtitle
+        type: string
+      scorecard:
+        description: Scorecard indicates this alert type also feeds Driver Scorecard
+          scoring.
+        type: boolean
+      severity:
+        description: default severity
+        type: string
+      source:
+        description: gps | camera
+        type: string
+    type: object
+  alert.Analytics:
+    properties:
+      by_day:
+        items:
+          $ref: '#/definitions/alert.DayCount'
+        type: array
+      by_hour:
+        items:
+          $ref: '#/definitions/alert.HourCount'
+        type: array
+      by_severity:
+        items:
+          $ref: '#/definitions/alert.Bucket'
+        type: array
+      by_type:
+        items:
+          $ref: '#/definitions/alert.Bucket'
+        type: array
+      top_vehicles:
+        items:
+          $ref: '#/definitions/alert.VehCount'
+        type: array
+      total:
+        type: integer
+    type: object
+  alert.Bucket:
+    properties:
+      count:
+        type: integer
+      key:
+        type: string
+      label:
+        type: string
+    type: object
+  alert.CheckRequest:
+    properties:
+      check_status:
+        description: unchecked | checked | false_alert
+        type: string
+      note:
+        type: string
+    type: object
+  alert.DTO:
+    properties:
+      actual_value:
+        type: number
+      address:
+        type: string
+      alert_code:
+        type: string
+      alert_name:
+        type: string
+      check_status:
+        type: string
+      checked_at:
+        type: string
+      device_source:
+        type: string
+      driver_id:
+        type: integer
+      driver_name:
+        type: string
+      id:
+        type: integer
+      lat:
+        type: number
+      license_plate:
+        type: string
+      limit_value:
+        type: number
+      lon:
+        type: number
+      media_url:
+        type: string
+      name_en:
+        type: string
+      note:
+        type: string
+      occurred_at:
+        type: string
+      severity:
+        type: string
+      source:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
+  alert.DayCount:
+    properties:
+      count:
+        type: integer
+      day:
+        type: string
+    type: object
+  alert.Detail:
+    properties:
+      alert:
+        $ref: '#/definitions/alert.DTO'
+      history:
+        items:
+          $ref: '#/definitions/alert.HistoryItem'
+        type: array
+    type: object
+  alert.HistoryItem:
+    properties:
+      alert_code:
+        type: string
+      alert_name:
+        type: string
+      id:
+        type: integer
+      lat:
+        type: number
+      lon:
+        type: number
+      occurred_at:
+        type: string
+      severity:
+        type: string
+    type: object
+  alert.HourCount:
+    properties:
+      count:
+        type: integer
+      hour:
+        type: integer
+    type: object
+  alert.VehCount:
+    properties:
+      count:
+        type: integer
+      license_plate:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
+  apitoken.CreateRequest:
+    properties:
+      name:
+        type: string
+    type: object
+  apitoken.DTO:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      last_used_at:
+        type: string
+      name:
+        type: string
+      revoked:
+        type: boolean
+      token:
+        description: Token is populated ONLY in the create response (shown once).
+        type: string
+      token_prefix:
+        type: string
+    type: object
+  auth.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  auth.RefreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    type: object
+  auth.TokenResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        description: access token lifetime, seconds
+        type: integer
+      refresh_token:
+        type: string
+      user:
+        $ref: '#/definitions/auth.UserDTO'
+    type: object
+  auth.UserDTO:
+    properties:
+      email:
+        type: string
+      full_name:
+        type: string
+      id:
+        type: integer
+      role:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: integer
+    type: object
+  controltower.AlertLine:
+    properties:
+      alert_code:
+        type: string
+      alert_name:
+        type: string
+      id:
+        type: integer
+      occurred_at:
+        type: string
+      severity:
+        type: string
+    type: object
+  controltower.Response:
+    properties:
+      groups:
+        additionalProperties:
+          items:
+            $ref: '#/definitions/controltower.VehicleCard'
+          type: array
+        description: keyed by drive_state
+        type: object
+      summary:
+        $ref: '#/definitions/controltower.Summary'
+    type: object
+  controltower.Summary:
+    properties:
+      checked_alerts:
+        type: integer
+      overspeeding_now:
+        type: integer
+      unchecked_alerts:
+        type: integer
+      unchecked_vehicles:
+        type: integer
+    type: object
+  controltower.VehicleCard:
+    properties:
+      alerts:
+        items:
+          $ref: '#/definitions/controltower.AlertLine'
+        type: array
+      drive_state:
+        type: string
+      license_plate:
+        type: string
+      more_count:
+        type: integer
+      unchecked_count:
+        type: integer
+      vehicle_id:
+        type: integer
+      worst_severity:
+        type: string
+    type: object
+  driver.CreateRequest:
+    properties:
+      employee_no:
+        type: string
+      full_name:
+        type: string
+      license_class:
+        type: string
+      license_expiry:
+        type: string
+      license_no:
+        type: string
+      phone:
+        type: string
+      role:
+        type: string
+      status:
+        type: string
+    type: object
+  driver.DTO:
+    properties:
+      created_at:
+        type: string
+      employee_no:
+        type: string
+      full_name:
+        type: string
+      id:
+        type: integer
+      license_class:
+        type: string
+      license_expiry:
+        type: string
+      license_no:
+        type: string
+      phone:
+        type: string
+      role:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  driver.UpdateRequest:
+    properties:
+      employee_no:
+        type: string
+      full_name:
+        type: string
+      license_class:
+        type: string
+      license_expiry:
+        type: string
+      license_no:
+        type: string
+      phone:
+        type: string
+      role:
+        type: string
+      status:
+        type: string
+    type: object
+  fleetgroup.DTO:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  fleetgroup.WriteRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-alert_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/alert.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-apitoken_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/apitoken.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-driver_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/driver.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-fleetgroup_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/fleetgroup.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-liveview_TripPoint:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/liveview.TripPoint'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-liveview_VehicleLive:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/liveview.VehicleLive'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-notifrule_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/notifrule.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-report_AlertRow:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/report.AlertRow'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-report_TripRow:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/report.TripRow'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-scorecard_SummaryRow:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/scorecard.SummaryRow'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-tracker_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/tracker.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-trackinglink_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/trackinglink.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-users_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/users.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-vehicle_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/vehicle.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  license.Counts:
+    properties:
+      expired:
+        type: integer
+      unidentified:
+        type: integer
+      valid:
+        type: integer
+      will_expire:
+        type: integer
+    type: object
+  license.DTO:
+    properties:
+      driver_name:
+        type: string
+      expiry:
+        type: string
+      id:
+        type: integer
+      kind:
+        type: string
+      number:
+        type: string
+      owner_id:
+        type: integer
+      owner_type:
+        type: string
+      status:
+        description: expired | will_expire | valid | unidentified
+        type: string
+      vehicle_plate:
+        type: string
+    type: object
+  license.Response:
+    properties:
+      counts:
+        $ref: '#/definitions/license.Counts'
+      items:
+        items:
+          $ref: '#/definitions/license.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  liveview.BehaviorEvent:
+    properties:
+      address:
+        type: string
+      lat:
+        type: number
+      lon:
+        type: number
+      speed:
+        type: number
+      time:
+        type: string
+      type:
+        description: overspeed | harsh_accel | harsh_brake
+        type: string
+      value:
+        description: km/h over limit, or km/h/s for harsh
+        type: number
+    type: object
+  liveview.BehaviorResult:
+    properties:
+      events:
+        items:
+          $ref: '#/definitions/liveview.BehaviorEvent'
+        type: array
+      overspeed_limit:
+        type: number
+      summary:
+        $ref: '#/definitions/liveview.BehaviorSummary'
+    type: object
+  liveview.BehaviorSummary:
+    properties:
+      avg_moving_speed:
+        type: number
+      distance_km:
+        type: number
+      harsh_accel:
+        type: integer
+      harsh_brake:
+        type: integer
+      max_speed:
+        type: number
+      overspeed_count:
+        type: integer
+      points:
+        type: integer
+    type: object
+  liveview.Driver:
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+      phone:
+        type: string
+    type: object
+  liveview.Position:
+    properties:
+      bearing:
+        type: number
+      ignition:
+        type: boolean
+      jalan:
+        type: string
+      kabupaten:
+        type: string
+      kecamatan:
+        type: string
+      kota:
+        type: string
+      lat:
+        type: number
+      lon:
+        type: number
+      provinsi:
+        type: string
+      speed:
+        type: number
+      time:
+        type: string
+    type: object
+  liveview.Tracker:
+    properties:
+      id:
+        type: integer
+      imei:
+        type: string
+    type: object
+  liveview.TripPoint:
+    properties:
+      address:
+        type: string
+      bearing:
+        type: number
+      ignition:
+        type: boolean
+      lat:
+        type: number
+      lon:
+        type: number
+      speed:
+        type: number
+      time:
+        type: string
+    type: object
+  liveview.VehicleLive:
+    properties:
+      drive_state:
+        type: string
+      driver:
+        $ref: '#/definitions/liveview.Driver'
+      fleet_group_name:
+        type: string
+      license_plate:
+        type: string
+      online:
+        type: boolean
+      position:
+        $ref: '#/definitions/liveview.Position'
+      registry_status:
+        type: string
+      stale_minutes:
+        type: number
+      tracker:
+        $ref: '#/definitions/liveview.Tracker'
+      vehicle_id:
+        type: integer
+    type: object
+  maintenance.Counts:
+    properties:
+      due_soon:
+        type: integer
+      in_service:
+        type: integer
+      normal:
+        type: integer
+      overdue:
+        type: integer
+    type: object
+  maintenance.CreateRequest:
+    properties:
+      component:
+        type: string
+      day_interval:
+        type: integer
+      day_reminder:
+        type: integer
+      km_interval:
+        type: number
+      km_reminder:
+        type: number
+      next_due_at:
+        type: string
+      scheduler:
+        type: string
+      status:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
+  maintenance.DTO:
+    properties:
+      component:
+        type: string
+      current_hourmeter:
+        type: number
+      current_odometer:
+        type: number
+      day_interval:
+        type: integer
+      id:
+        type: integer
+      km_interval:
+        type: number
+      license_plate:
+        type: string
+      next_due_at:
+        type: string
+      scheduler:
+        type: string
+      status:
+        type: string
+      vehicle_id:
+        type: integer
+      vehicle_type:
+        type: string
+    type: object
+  maintenance.Response:
+    properties:
+      counts:
+        $ref: '#/definitions/maintenance.Counts'
+      items:
+        items:
+          $ref: '#/definitions/maintenance.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  notifrule.DTO:
+    properties:
+      alert_code:
+        type: string
+      applies_to:
+        type: string
+      auto_popup:
+        type: boolean
+      created_at:
+        type: string
+      delivery:
+        items:
+          type: integer
+        type: array
+      geofence_scoped:
+        type: boolean
+      id:
+        type: integer
+      notification_name:
+        type: string
+      rule_name:
+        type: string
+      sent_to_self:
+        type: boolean
+      status:
+        type: string
+      target:
+        items:
+          type: integer
+        type: array
+      threshold:
+        type: number
+      time_scoped:
+        type: boolean
+      urgency:
+        type: string
+    type: object
+  notifrule.WriteRequest:
+    properties:
+      alert_code:
+        type: string
+      applies_to:
+        type: string
+      auto_popup:
+        type: boolean
+      delivery:
+        items:
+          type: integer
+        type: array
+      geofence_scoped:
+        type: boolean
+      notification_name:
+        type: string
+      rule_name:
+        type: string
+      sent_to_self:
+        type: boolean
+      status:
+        type: string
+      target:
+        items:
+          type: integer
+        type: array
+      threshold:
+        type: number
+      time_scoped:
+        type: boolean
+      urgency:
+        type: string
+    type: object
+  report.AlertRow:
+    properties:
+      actual:
+        type: number
+      address:
+        type: string
+      alert_code:
+        type: string
+      alert_name:
+        type: string
+      check_status:
+        type: string
+      date:
+        type: string
+      license_plate:
+        type: string
+      limit:
+        type: number
+      severity:
+        type: string
+    type: object
+  report.Meta:
+    properties:
+      category:
+        description: Vehicle | Driver
+        type: string
+      description:
+        type: string
+      key:
+        type: string
+      runnable:
+        description: false = catalog placeholder
+        type: boolean
+      sub_topic:
+        type: string
+      title:
+        type: string
+    type: object
+  report.TripRequest:
+    properties:
+      from:
+        type: string
+      interval_min:
+        type: integer
+      to:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
+  report.TripRow:
+    properties:
+      acc:
+        type: boolean
+      date:
+        type: string
+      driver:
+        type: string
+      imei:
+        type: string
+      lat:
+        type: number
+      license_plate:
+        type: string
+      location:
+        type: string
+      lon:
+        type: number
+      speed:
+        type: number
+      vehicle_type:
+        type: string
+    type: object
+  scorecard.Band:
+    properties:
+      index:
+        type: string
+      max:
+        type: integer
+      min:
+        type: integer
+    type: object
+  scorecard.Config:
+    properties:
+      alert_limit_pct:
+        type: integer
+      index_bands:
+        items:
+          $ref: '#/definitions/scorecard.Band'
+        type: array
+      min_distance_km:
+        type: integer
+      weights:
+        items:
+          $ref: '#/definitions/scorecard.Weight'
+        type: array
+    type: object
+  scorecard.Detail:
+    properties:
+      behaviors:
+        items:
+          $ref: '#/definitions/scorecard.DetailBehavior'
+        type: array
+      driver_id:
+        type: integer
+      index:
+        type: string
+      total_score:
+        type: number
+      trip_km:
+        type: number
+    type: object
+  scorecard.DetailBehavior:
+    properties:
+      code:
+        type: string
+      name:
+        type: string
+      occurrences:
+        type: integer
+      score:
+        type: number
+    type: object
+  scorecard.SummaryRow:
+    properties:
+      driver_id:
+        type: integer
+      driver_name:
+        type: string
+      driver_status:
+        type: string
+      index:
+        type: string
+      total_occurrences:
+        type: integer
+      total_score:
+        type: number
+      trip_km:
+        type: number
+    type: object
+  scorecard.Weight:
+    properties:
+      code:
+        type: string
+      group:
+        description: gps | dashcam
+        type: string
+      name:
+        type: string
+      weight:
+        type: integer
+    type: object
+  tracker.CreateRequest:
+    properties:
+      imei:
+        type: string
+      phone_no:
+        type: string
+      status:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
+  tracker.DTO:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      imei:
+        type: string
+      phone_no:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
+  tracker.UpdateRequest:
+    properties:
+      imei:
+        type: string
+      phone_no:
+        type: string
+      status:
+        type: string
+    type: object
+  trackinglink.DTO:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      note:
+        type: string
+      show_fields:
+        items:
+          type: integer
+        type: array
+      status:
+        type: string
+      token:
+        type: string
+      vehicle_ids:
+        items:
+          type: integer
+        type: array
+    type: object
+  trackinglink.PublicResponse:
+    properties:
+      expires_at:
+        type: string
+      name:
+        type: string
+      vehicles:
+        items:
+          $ref: '#/definitions/trackinglink.PublicVehicle'
+        type: array
+    type: object
+  trackinglink.PublicVehicle:
+    properties:
+      driver:
+        type: string
+      last_seen:
+        type: string
+      lat:
+        type: number
+      license_plate:
+        type: string
+      lon:
+        type: number
+      machine_on:
+        type: boolean
+      online:
+        type: boolean
+      speed:
+        type: number
+    type: object
+  trackinglink.WriteRequest:
+    properties:
+      duration_days:
+        type: integer
+      expires_at:
+        type: string
+      name:
+        type: string
+      note:
+        type: string
+      show_fields:
+        items:
+          type: integer
+        type: array
+      status:
+        type: string
+      vehicle_ids:
+        items:
+          type: integer
+        type: array
+    type: object
+  users.CreateRequest:
+    properties:
+      email:
+        type: string
+      full_name:
+        type: string
+      password:
+        type: string
+      role:
+        type: string
+    type: object
+  users.DTO:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      full_name:
+        type: string
+      id:
+        type: integer
+      last_login_at:
+        type: string
+      role:
+        type: string
+      status:
+        type: string
+    type: object
+  users.UpdateRequest:
+    properties:
+      full_name:
+        type: string
+      role:
+        type: string
+      status:
+        type: string
+    type: object
+  vehicle.AssignDriverRequest:
+    properties:
+      driver_id:
+        type: integer
+    type: object
+  vehicle.AssignTrackerRequest:
+    properties:
+      tracker_id:
+        type: integer
+    type: object
+  vehicle.CreateRequest:
+    properties:
+      box_type:
+        type: string
+      current_driver_id:
+        type: integer
+      fleet_group_id:
+        type: integer
+      garage:
+        type: string
+      hourmeter:
+        type: number
+      hull_no:
+        type: string
+      license_plate:
+        type: string
+      manufacturer:
+        type: string
+      notes:
+        type: string
+      odometer:
+        type: number
+      status:
+        type: string
+      tracker_id:
+        type: integer
+      unit_year:
+        type: integer
+      vehicle_type:
+        type: string
+    type: object
+  vehicle.DTO:
+    properties:
+      box_type:
+        type: string
+      color:
+        type: string
+      created_at:
+        type: string
+      current_driver_id:
+        type: integer
+      driver_name:
+        type: string
+      driver_phone:
+        type: string
+      fleet_group_id:
+        type: integer
+      fleet_group_name:
+        type: string
+      garage:
+        type: string
+      hourmeter:
+        type: number
+      hull_no:
+        type: string
+      id:
+        type: integer
+      license_plate:
+        type: string
+      manufacturer:
+        type: string
+      notes:
+        type: string
+      odometer:
+        type: number
+      status:
+        type: string
+      tracker_id:
+        type: integer
+      tracker_imei:
+        type: string
+      tracker_phone:
+        type: string
+      unit_year:
+        type: integer
+      updated_at:
+        type: string
+      vehicle_type:
+        type: string
+    type: object
+  vehicle.UpdateRequest:
+    properties:
+      box_type:
+        type: string
+      fleet_group_id:
+        type: integer
+      garage:
+        type: string
+      hourmeter:
+        type: number
+      hull_no:
+        type: string
+      license_plate:
+        type: string
+      manufacturer:
+        type: string
+      notes:
+        type: string
+      odometer:
+        type: number
+      status:
+        type: string
+      unit_year:
+        type: integer
+      vehicle_type:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: 'Application API for the Fleet Management System: authentication, master
+    data, and live vehicle tracking (joined with the telemetry service).'
+  title: Karlo FMS Platform API
+  version: "0.1"
+paths:
+  /public/track/{token}:
+    get:
+      parameters:
+      - description: link token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/trackinglink.PublicResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "410":
+          description: Gone
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Public live view for a shared tracking link (no auth)
+      tags:
+      - tracking-links
+  /v1/alert-taxonomy:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/alert.AlertType'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: The master alert taxonomy
+      tags:
+      - alerts
+  /v1/alerts:
+    get:
+      parameters:
+      - description: search
+        in: query
+        name: q
+        type: string
+      - description: unchecked|checked|false_alert
+        in: query
+        name: check_status
+        type: string
+      - description: gps|camera
+        in: query
+        name: device_source
+        type: string
+      - description: urgent|important|info
+        in: query
+        name: severity
+        type: string
+      - description: taxonomy code
+        in: query
+        name: alert_code
+        type: string
+      - description: vehicle filter
+        in: query
+        name: vehicle_id
+        type: integer
+      - description: RFC3339
+        in: query
+        name: from
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-alert_DTO'
+      security:
+      - BearerAuth: []
+      summary: List alerts (Notification feed)
+      tags:
+      - alerts
+  /v1/alerts/{id}:
+    get:
+      parameters:
+      - description: alert id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/alert.Detail'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Alert detail with surrounding same-vehicle history
+      tags:
+      - alerts
+  /v1/alerts/{id}/check:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: alert id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: status
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/alert.CheckRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/alert.DTO'
+      security:
+      - BearerAuth: []
+      summary: Set an alert's check status (checked / false_alert / unchecked)
+      tags:
+      - alerts
+  /v1/alerts/analytics:
+    get:
+      parameters:
+      - description: RFC3339
+        in: query
+        name: from
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/alert.Analytics'
+      security:
+      - BearerAuth: []
+      summary: Alert analytics for the Safety dashboard
+      tags:
+      - alerts
+  /v1/api-tokens:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-apitoken_DTO'
+      security:
+      - BearerAuth: []
+      summary: List API tokens (admin)
+      tags:
+      - api-tokens
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/apitoken.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/apitoken.DTO'
+      security:
+      - BearerAuth: []
+      summary: Create an API token (admin) — the secret is returned once
+      tags:
+      - api-tokens
+  /v1/api-tokens/{id}:
+    delete:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Revoke an API token (admin)
+      tags:
+      - api-tokens
+  /v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Log in with email + password
+      tags:
+      - auth
+  /v1/auth/logout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: refresh token to revoke
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Revoke a refresh token
+      tags:
+      - auth
+  /v1/auth/me:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.UserDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Current authenticated user
+      tags:
+      - auth
+  /v1/auth/refresh:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Rotate a refresh token for a new token pair
+      tags:
+      - auth
+  /v1/control-tower:
+    get:
+      parameters:
+      - description: RFC3339 window start (default 24h ago)
+        in: query
+        name: from
+        type: string
+      - description: RFC3339 window end (default now)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/controltower.Response'
+      security:
+      - BearerAuth: []
+      summary: 'Control Tower: vehicles grouped by drive state with unresolved alerts'
+      tags:
+      - control-tower
+  /v1/documents:
+    get:
+      parameters:
+      - description: vehicle|driver
+        in: query
+        name: owner_type
+        type: string
+      - description: expired|will_expire|valid|unidentified
+        in: query
+        name: status
+        type: string
+      - description: search number/kind/plate
+        in: query
+        name: q
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/license.Response'
+      security:
+      - BearerAuth: []
+      summary: List documents with expiry status (License module)
+      tags:
+      - license
+  /v1/driver-scorecard:
+    get:
+      parameters:
+      - description: YYYY-MM
+        in: query
+        name: period
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-scorecard_SummaryRow'
+      security:
+      - BearerAuth: []
+      summary: Monthly driver scorecard (all drivers)
+      tags:
+      - scorecard
+  /v1/driver-scorecard/{id}:
+    get:
+      parameters:
+      - description: driver id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: YYYY-MM
+        in: query
+        name: period
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/scorecard.Detail'
+      security:
+      - BearerAuth: []
+      summary: One driver's monthly scorecard breakdown
+      tags:
+      - scorecard
+  /v1/driver-scorecard/config:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/scorecard.Config'
+      security:
+      - BearerAuth: []
+      summary: Driver-score engine configuration (weights + index bands)
+      tags:
+      - scorecard
+  /v1/drivers:
+    get:
+      parameters:
+      - description: search
+        in: query
+        name: q
+        type: string
+      - description: filter role
+        in: query
+        name: role
+        type: string
+      - description: filter status
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-driver_DTO'
+      security:
+      - BearerAuth: []
+      summary: List drivers/employees
+      tags:
+      - drivers
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: driver
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/driver.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/driver.DTO'
+      security:
+      - BearerAuth: []
+      summary: Create a driver
+      tags:
+      - drivers
+  /v1/drivers/{id}:
+    delete:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a driver
+      tags:
+      - drivers
+    get:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/driver.DTO'
+      security:
+      - BearerAuth: []
+      summary: Get a driver
+      tags:
+      - drivers
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/driver.UpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/driver.DTO'
+      security:
+      - BearerAuth: []
+      summary: Update a driver
+      tags:
+      - drivers
+  /v1/fleet-groups:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-fleetgroup_DTO'
+      security:
+      - BearerAuth: []
+      summary: List fleet groups
+      tags:
+      - fleet-groups
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: group
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/fleetgroup.WriteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/fleetgroup.DTO'
+      security:
+      - BearerAuth: []
+      summary: Create a fleet group
+      tags:
+      - fleet-groups
+  /v1/fleet-groups/{id}:
+    delete:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a fleet group
+      tags:
+      - fleet-groups
+    get:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fleetgroup.DTO'
+      security:
+      - BearerAuth: []
+      summary: Get a fleet group
+      tags:
+      - fleet-groups
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: group
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/fleetgroup.WriteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fleetgroup.DTO'
+      security:
+      - BearerAuth: []
+      summary: Update a fleet group
+      tags:
+      - fleet-groups
+  /v1/live-view:
+    get:
+      parameters:
+      - description: filter fleet group
+        in: query
+        name: fleet_group_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-liveview_VehicleLive'
+      security:
+      - BearerAuth: []
+      summary: 'Live map feed: active vehicles + their latest positions'
+      tags:
+      - live-view
+  /v1/live-view/{vehicle_id}:
+    get:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: vehicle_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/liveview.VehicleLive'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Live detail for a single vehicle
+      tags:
+      - live-view
+  /v1/notification-rules:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-notifrule_DTO'
+      security:
+      - BearerAuth: []
+      summary: List notification rules
+      tags:
+      - notification-rules
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: rule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/notifrule.WriteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/notifrule.DTO'
+      security:
+      - BearerAuth: []
+      summary: Create a notification rule
+      tags:
+      - notification-rules
+  /v1/notification-rules/{id}:
+    delete:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a notification rule
+      tags:
+      - notification-rules
+    get:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/notifrule.DTO'
+      security:
+      - BearerAuth: []
+      summary: Get a notification rule
+      tags:
+      - notification-rules
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: rule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/notifrule.WriteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/notifrule.DTO'
+      security:
+      - BearerAuth: []
+      summary: Update a notification rule
+      tags:
+      - notification-rules
+  /v1/reports/catalog:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/report.Meta'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Report template catalog
+      tags:
+      - reports
+  /v1/reports/vehicle-alerts-history:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: RFC3339
+        in: query
+        name: from
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-report_AlertRow'
+      security:
+      - BearerAuth: []
+      summary: Generate a Vehicle Alerts History report
+      tags:
+      - reports
+  /v1/reports/vehicle-trip-history:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: parameters
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/report.TripRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-report_TripRow'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Generate a Vehicle Trip History report
+      tags:
+      - reports
+  /v1/service-schedules:
+    get:
+      parameters:
+      - description: search plate/component
+        in: query
+        name: q
+        type: string
+      - description: normal|due_soon|overdue|in_service
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/maintenance.Response'
+      security:
+      - BearerAuth: []
+      summary: List service schedules with due/overdue counts
+      tags:
+      - maintenance
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: schedule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/maintenance.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              format: int64
+              type: integer
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a service schedule
+      tags:
+      - maintenance
+  /v1/service-schedules/{id}:
+    delete:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a service schedule
+      tags:
+      - maintenance
+  /v1/trackers:
+    get:
+      parameters:
+      - description: search imei/phone
+        in: query
+        name: q
+        type: string
+      - description: filter status
+        in: query
+        name: status
+        type: string
+      - description: filter by vehicle
+        in: query
+        name: vehicle_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-tracker_DTO'
+      security:
+      - BearerAuth: []
+      summary: List trackers
+      tags:
+      - trackers
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: tracker
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tracker.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/tracker.DTO'
+      security:
+      - BearerAuth: []
+      summary: Create a tracker
+      tags:
+      - trackers
+  /v1/trackers/{id}:
+    delete:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a tracker
+      tags:
+      - trackers
+    get:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tracker.DTO'
+      security:
+      - BearerAuth: []
+      summary: Get a tracker
+      tags:
+      - trackers
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tracker.UpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tracker.DTO'
+      security:
+      - BearerAuth: []
+      summary: Update a tracker
+      tags:
+      - trackers
+  /v1/tracking-links:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-trackinglink_DTO'
+      security:
+      - BearerAuth: []
+      summary: List tracking links
+      tags:
+      - tracking-links
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: link
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/trackinglink.WriteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/trackinglink.DTO'
+      security:
+      - BearerAuth: []
+      summary: Create a tracking link
+      tags:
+      - tracking-links
+  /v1/tracking-links/{id}:
+    delete:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a tracking link
+      tags:
+      - tracking-links
+    get:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/trackinglink.DTO'
+      security:
+      - BearerAuth: []
+      summary: Get a tracking link
+      tags:
+      - tracking-links
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: link
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/trackinglink.WriteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/trackinglink.DTO'
+      security:
+      - BearerAuth: []
+      summary: Update a tracking link
+      tags:
+      - tracking-links
+  /v1/users:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-users_DTO'
+      security:
+      - BearerAuth: []
+      summary: List system users (admin)
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: user
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/users.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/users.DTO'
+      security:
+      - BearerAuth: []
+      summary: Create a system user (admin)
+      tags:
+      - users
+  /v1/users/{id}:
+    delete:
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a system user (admin)
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/users.UpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/users.DTO'
+      security:
+      - BearerAuth: []
+      summary: Update a system user (admin)
+      tags:
+      - users
+  /v1/vehicles:
+    get:
+      parameters:
+      - description: search plate/hull
+        in: query
+        name: q
+        type: string
+      - description: filter status
+        in: query
+        name: status
+        type: string
+      - description: filter fleet group
+        in: query
+        name: fleet_group_id
+        type: integer
+      - description: page size
+        in: query
+        name: limit
+        type: integer
+      - description: offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-vehicle_DTO'
+      security:
+      - BearerAuth: []
+      summary: List vehicles
+      tags:
+      - vehicles
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: vehicle
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/vehicle.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/vehicle.DTO'
+      security:
+      - BearerAuth: []
+      summary: Create a vehicle
+      tags:
+      - vehicles
+  /v1/vehicles/{id}:
+    delete:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Archive (soft-delete) a vehicle
+      tags:
+      - vehicles
+    get:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vehicle.DTO'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a vehicle
+      tags:
+      - vehicles
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: vehicle id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/vehicle.UpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vehicle.DTO'
+      security:
+      - BearerAuth: []
+      summary: Update a vehicle
+      tags:
+      - vehicles
+  /v1/vehicles/{id}/assign-driver:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: vehicle id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: driver
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/vehicle.AssignDriverRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vehicle.DTO'
+      security:
+      - BearerAuth: []
+      summary: Assign a driver to a vehicle
+      tags:
+      - vehicles
+  /v1/vehicles/{id}/assign-tracker:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: vehicle id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: tracker
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/vehicle.AssignTrackerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vehicle.DTO'
+      security:
+      - BearerAuth: []
+      summary: Assign/unassign a tracker to a vehicle
+      tags:
+      - vehicles
+  /v1/vehicles/{vehicle_id}/behavior:
+    get:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: vehicle_id
+        required: true
+        type: integer
+      - description: RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: overspeed limit km/h (default 80)
+        in: query
+        name: limit
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/liveview.BehaviorResult'
+      security:
+      - BearerAuth: []
+      summary: Per-vehicle driving behavior (overspeed + harsh accel/brake) from GPS
+      tags:
+      - live-view
+  /v1/vehicles/{vehicle_id}/history:
+    get:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: vehicle_id
+        required: true
+        type: integer
+      - description: RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: cap on returned points
+        in: query
+        name: max_points
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-liveview_TripPoint'
+      security:
+      - BearerAuth: []
+      summary: Vehicle historical track (trip history)
+      tags:
+      - live-view
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and the access token.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

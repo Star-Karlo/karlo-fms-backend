@@ -1,0 +1,115 @@
+// Command api is the FMS application/platform service: auth + RBAC, master-data
+// CRUD (vehicles, trackers, drivers, fleet groups), and a live-view endpoint
+// that joins the registry with positions from the telemetry pipeline.
+//
+//	@title						Karlo FMS Platform API
+//	@version					0.1
+//	@description				Application API for the Fleet Management System: authentication, master data, and live vehicle tracking (joined with the telemetry service).
+//	@BasePath					/
+//	@securityDefinitions.apikey	BearerAuth
+//	@in							header
+//	@name						Authorization
+//	@description				Type "Bearer" followed by a space and the access token.
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
+
+	_ "github.com/karlo/fms-backend/cmd/api/docs"
+	"github.com/karlo/fms-backend/internal/alert"
+	"github.com/karlo/fms-backend/internal/apitoken"
+	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/controltower"
+	"github.com/karlo/fms-backend/internal/driver"
+	"github.com/karlo/fms-backend/internal/fleetgroup"
+	"github.com/karlo/fms-backend/internal/license"
+	"github.com/karlo/fms-backend/internal/liveview"
+	"github.com/karlo/fms-backend/internal/maintenance"
+	"github.com/karlo/fms-backend/internal/notifrule"
+	"github.com/karlo/fms-backend/internal/platform/config"
+	"github.com/karlo/fms-backend/internal/platform/db"
+	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/report"
+	"github.com/karlo/fms-backend/internal/scorecard"
+	"github.com/karlo/fms-backend/internal/telemetry"
+	"github.com/karlo/fms-backend/internal/tracker"
+	"github.com/karlo/fms-backend/internal/trackinglink"
+	"github.com/karlo/fms-backend/internal/users"
+	"github.com/karlo/fms-backend/internal/vehicle"
+)
+
+func main() {
+	ctx := context.Background()
+	cfg := config.Load()
+
+	pool, err := db.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("db connect: %v", err)
+	}
+	defer pool.Close()
+
+	// Components.
+	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	authH := auth.NewHandler(auth.NewService(pool, tm))
+	vehicleH := vehicle.NewHandler(vehicle.NewService(pool))
+	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool))
+	driverH := driver.NewHandler(pool)
+	trackerH := tracker.NewHandler(pool)
+	tel := telemetry.NewClient(cfg.TelemetryBaseURL, cfg.TelemetryAPIKey, cfg.TelemetryTimeout)
+	liveSvc := liveview.NewService(pool, tel)
+	liveH := liveview.NewHandler(liveSvc)
+	alertH := alert.NewHandler(pool)
+	controlH := controltower.NewHandler(controltower.NewService(pool, liveSvc))
+	notifRuleH := notifrule.NewHandler(pool)
+	reportH := report.NewHandler(report.NewService(pool, tel))
+	licenseH := license.NewHandler(pool)
+	maintenanceH := maintenance.NewHandler(pool)
+	scorecardH := scorecard.NewHandler(pool)
+	trackingH := trackinglink.NewHandler(pool, liveSvc)
+	usersH := users.NewHandler(pool)
+	apiTokenH := apitoken.NewHandler(pool)
+
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, middleware.Recoverer)
+	r.Use(httpx.CORS(cfg.CORSOrigins))
+
+	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	r.Get("/swagger/*", httpSwagger.WrapHandler)
+
+	// Public (pre-auth) endpoints.
+	authH.PublicRoutes(r)
+	trackingH.PublicRoutes(r)
+
+	// Authenticated endpoints.
+	r.Group(func(pr chi.Router) {
+		pr.Use(auth.Authenticator(tm))
+		authH.PrivateRoutes(pr)
+		vehicleH.Routes(pr)
+		fleetGroupH.Routes(pr)
+		driverH.Routes(pr)
+		trackerH.Routes(pr)
+		liveH.Routes(pr)
+		alertH.Routes(pr)
+		controlH.Routes(pr)
+		notifRuleH.Routes(pr)
+		reportH.Routes(pr)
+		licenseH.Routes(pr)
+		maintenanceH.Routes(pr)
+		scorecardH.Routes(pr)
+		trackingH.Routes(pr)
+		usersH.Routes(pr)
+		apiTokenH.Routes(pr)
+	})
+
+	log.Printf("fms-backend api on %s  (swagger: http://localhost%s/swagger/index.html)", cfg.Addr, cfg.Addr)
+	log.Fatal(http.ListenAndServe(cfg.Addr, r))
+}

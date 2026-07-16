@@ -1,0 +1,229 @@
+package vehicle
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/platform/httpx"
+)
+
+// Handler exposes vehicle CRUD endpoints.
+type Handler struct{ svc *Service }
+
+// NewHandler builds the vehicle HTTP handler.
+func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// Routes mounts vehicle endpoints. Reads require any authenticated user;
+// mutations require manager+.
+func (h *Handler) Routes(r chi.Router) {
+	r.Get("/v1/vehicles", h.list)
+	r.Get("/v1/vehicles/{id}", h.get)
+	r.Group(func(mr chi.Router) {
+		mr.Use(auth.RequireRole(auth.RoleManager))
+		mr.Post("/v1/vehicles", h.create)
+		mr.Put("/v1/vehicles/{id}", h.update)
+		mr.Delete("/v1/vehicles/{id}", h.archive)
+		mr.Post("/v1/vehicles/{id}/assign-tracker", h.assignTracker)
+		mr.Post("/v1/vehicles/{id}/assign-driver", h.assignDriver)
+	})
+}
+
+func pathID(r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	return id, err == nil
+}
+
+// list godoc
+//
+//	@Summary	List vehicles
+//	@Tags		vehicles
+//	@Security	BearerAuth
+//	@Produce	json
+//	@Param		q				query		string	false	"search plate/hull"
+//	@Param		status			query		string	false	"filter status"
+//	@Param		fleet_group_id	query		int		false	"filter fleet group"
+//	@Param		limit			query		int		false	"page size"
+//	@Param		offset			query		int		false	"offset"
+//	@Success	200	{object}	httpx.List[vehicle.DTO]
+//	@Router		/v1/vehicles [get]
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	p := httpx.ParseList(r)
+	var fg *int64
+	if v := r.URL.Query().Get("fleet_group_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			fg = &id
+		}
+	}
+	items, total, err := h.svc.List(r.Context(), auth.TenantID(r.Context()), p, fg)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: total})
+}
+
+// get godoc
+//
+//	@Summary	Get a vehicle
+//	@Tags		vehicles
+//	@Security	BearerAuth
+//	@Produce	json
+//	@Param		id	path		int	true	"vehicle id"
+//	@Success	200	{object}	vehicle.DTO
+//	@Failure	404	{object}	map[string]string
+//	@Router		/v1/vehicles/{id} [get]
+func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	dto, err := h.svc.Get(r.Context(), auth.TenantID(r.Context()), id)
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "vehicle not found")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, dto)
+}
+
+// create godoc
+//
+//	@Summary	Create a vehicle
+//	@Tags		vehicles
+//	@Security	BearerAuth
+//	@Accept		json
+//	@Produce	json
+//	@Param		body	body		vehicle.CreateRequest	true	"vehicle"
+//	@Success	201		{object}	vehicle.DTO
+//	@Router		/v1/vehicles [post]
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	var req CreateRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.LicensePlate == "" {
+		httpx.Error(w, http.StatusBadRequest, "license_plate is required")
+		return
+	}
+	dto, err := h.svc.Create(r.Context(), auth.TenantID(r.Context()), req)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, dto)
+}
+
+// update godoc
+//
+//	@Summary	Update a vehicle
+//	@Tags		vehicles
+//	@Security	BearerAuth
+//	@Accept		json
+//	@Produce	json
+//	@Param		id		path		int						true	"vehicle id"
+//	@Param		body	body		vehicle.UpdateRequest	true	"fields"
+//	@Success	200		{object}	vehicle.DTO
+//	@Router		/v1/vehicles/{id} [put]
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req UpdateRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	dto, err := h.svc.Update(r.Context(), auth.TenantID(r.Context()), id, req)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, dto)
+}
+
+// archive godoc
+//
+//	@Summary	Archive (soft-delete) a vehicle
+//	@Tags		vehicles
+//	@Security	BearerAuth
+//	@Param		id	path	int	true	"vehicle id"
+//	@Success	204
+//	@Router		/v1/vehicles/{id} [delete]
+func (h *Handler) archive(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.svc.Archive(r.Context(), auth.TenantID(r.Context()), id); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// assignTracker godoc
+//
+//	@Summary	Assign/unassign a tracker to a vehicle
+//	@Tags		vehicles
+//	@Security	BearerAuth
+//	@Accept		json
+//	@Produce	json
+//	@Param		id		path		int								true	"vehicle id"
+//	@Param		body	body		vehicle.AssignTrackerRequest	true	"tracker"
+//	@Success	200		{object}	vehicle.DTO
+//	@Router		/v1/vehicles/{id}/assign-tracker [post]
+func (h *Handler) assignTracker(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req AssignTrackerRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	dto, err := h.svc.AssignTracker(r.Context(), auth.TenantID(r.Context()), id, req.TrackerID)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, dto)
+}
+
+// assignDriver godoc
+//
+//	@Summary	Assign a driver to a vehicle
+//	@Tags		vehicles
+//	@Security	BearerAuth
+//	@Accept		json
+//	@Produce	json
+//	@Param		id		path		int								true	"vehicle id"
+//	@Param		body	body		vehicle.AssignDriverRequest		true	"driver"
+//	@Success	200		{object}	vehicle.DTO
+//	@Router		/v1/vehicles/{id}/assign-driver [post]
+func (h *Handler) assignDriver(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req AssignDriverRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	dto, err := h.svc.AssignDriver(r.Context(), auth.TenantID(r.Context()), id, req.DriverID)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, dto)
+}

@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fms_app
+    ports:
+      - "5433:5432"          # 5433 on host to avoid clashing with the telemetry DB (5432)
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fms_app"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"          # 6380 on host to avoid clashing with the telemetry Redis (6379)
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+
+  # Application API. Opt-in via `make up-app` (profile "app"); plain `make up`
+  # starts only db + redis for local `go run ./cmd/api`.
+  api:
+    build:
+      context: .
+      args:
+        SERVICE: api
+    environment:
+      DATABASE_URL: postgres://fms_app:fms_app@db:5432/fms_app
+      REDIS_ADDR: redis:6379
+      API_ADDR: ":8080"
+      JWT_SECRET: dev-insecure-secret-change-me
+      TELEMETRY_BASE_URL: http://host.docker.internal:8082
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    profiles: ["app"]
+
+volumes:
+  dbdata:
+  redisdata:

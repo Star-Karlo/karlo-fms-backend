@@ -1,0 +1,153 @@
+// Package apitoken manages third-party API tokens (Settings > API Service).
+package apitoken
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/platform/conv"
+	"github.com/karlo/fms-backend/internal/platform/db"
+	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/store"
+)
+
+// DTO is a token's metadata (never the secret, except once on create).
+type DTO struct {
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	TokenPrefix string     `json:"token_prefix"`
+	Revoked     bool       `json:"revoked"`
+	LastUsedAt  *time.Time `json:"last_used_at"`
+	CreatedAt   *time.Time `json:"created_at"`
+	// Token is populated ONLY in the create response (shown once).
+	Token string `json:"token,omitempty"`
+}
+
+// CreateRequest is the create-token body.
+type CreateRequest struct {
+	Name string `json:"name"`
+}
+
+func fromRow(t store.ApiToken) DTO {
+	return DTO{ID: t.ID, Name: t.Name, TokenPrefix: t.TokenPrefix, Revoked: t.RevokedAt.Valid, LastUsedAt: conv.Time(t.LastUsedAt), CreatedAt: conv.Time(t.CreatedAt)}
+}
+
+// Handler exposes API-token endpoints (admin only).
+type Handler struct{ pool *db.Pool }
+
+// NewHandler builds the handler.
+func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
+
+// Routes mounts token endpoints — all require admin.
+func (h *Handler) Routes(r chi.Router) {
+	r.Group(func(ar chi.Router) {
+		ar.Use(auth.RequireRole(auth.RoleAdmin))
+		ar.Get("/v1/api-tokens", h.list)
+		ar.Post("/v1/api-tokens", h.create)
+		ar.Delete("/v1/api-tokens/{id}", h.revoke)
+	})
+}
+
+// list godoc
+//
+//	@Summary	List API tokens (admin)
+//	@Tags		api-tokens
+//	@Security	BearerAuth
+//	@Produce	json
+//	@Success	200	{object}	httpx.List[apitoken.DTO]
+//	@Router		/v1/api-tokens [get]
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	p := httpx.ParseList(r)
+	var items []DTO
+	err := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+		rows, err := store.New(tx).ListApiTokens(r.Context(), store.ListApiTokensParams{Lim: int32(p.Limit), Off: int32(p.Offset)})
+		if err != nil {
+			return err
+		}
+		items = make([]DTO, 0, len(rows))
+		for _, t := range rows {
+			items = append(items, fromRow(t))
+		}
+		return nil
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: int64(len(items))})
+}
+
+// create godoc
+//
+//	@Summary	Create an API token (admin) — the secret is returned once
+//	@Tags		api-tokens
+//	@Security	BearerAuth
+//	@Accept		json
+//	@Produce	json
+//	@Param		body	body		apitoken.CreateRequest	true	"token"
+//	@Success	201		{object}	apitoken.DTO
+//	@Router		/v1/api-tokens [post]
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	var req CreateRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil || req.Name == "" {
+		httpx.Error(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	raw := make([]byte, 24)
+	_, _ = rand.Read(raw)
+	secret := "fms_" + base64.RawURLEncoding.EncodeToString(raw)
+	sum := sha256.Sum256([]byte(secret))
+	prefix := secret[:12]
+
+	tid := auth.TenantID(r.Context())
+	uid := auth.UserID(r.Context())
+	var dto DTO
+	e := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		t, err := store.New(tx).CreateApiToken(r.Context(), store.CreateApiTokenParams{
+			TenantID: tid, Name: req.Name, TokenPrefix: prefix, TokenHash: sum[:], CreatedBy: &uid,
+		})
+		if err != nil {
+			return err
+		}
+		dto = fromRow(t)
+		dto.Token = secret // shown once
+		return nil
+	})
+	if e != nil {
+		httpx.Error(w, http.StatusBadRequest, e.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, dto)
+}
+
+// revoke godoc
+//
+//	@Summary	Revoke an API token (admin)
+//	@Tags		api-tokens
+//	@Security	BearerAuth
+//	@Param		id	path	int	true	"id"
+//	@Success	204
+//	@Router		/v1/api-tokens/{id} [delete]
+func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	e := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+		return store.New(tx).RevokeApiToken(r.Context(), id)
+	})
+	if e != nil {
+		httpx.Error(w, http.StatusInternalServerError, e.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -1,0 +1,21 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    # A trimmed schema (foundation tables only) that sqlc's parser can read —
+    # the RLS/role/DO-block machinery lives in db/migrations and is applied at
+    # runtime, not needed for codegen. Keep db/schema.sql in sync with the
+    # CREATE TABLE statements in db/migrations.
+    schema: "db/schema.sql"
+    queries: "db/queries"
+    gen:
+      go:
+        package: "store"
+        out: "internal/store"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        json_tags_case_style: "snake"
+        overrides:
+          - db_type: "numeric"
+            go_type: "github.com/jackc/pgx/v5/pgtype.Numeric"

@@ -1,0 +1,401 @@
+package alert
+
+import (
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/platform/conv"
+	"github.com/karlo/fms-backend/internal/platform/db"
+	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/store"
+)
+
+// DTO is the JSON shape of an alert (with joined plate/driver + taxonomy label).
+type DTO struct {
+	ID           int64      `json:"id"`
+	VehicleID    *int64     `json:"vehicle_id"`
+	LicensePlate *string    `json:"license_plate"`
+	DriverID     *int64     `json:"driver_id"`
+	DriverName   *string    `json:"driver_name"`
+	Source       *string    `json:"source"`
+	DeviceSource *string    `json:"device_source"`
+	AlertCode    *string    `json:"alert_code"`
+	AlertName    *string    `json:"alert_name"`
+	NameEN       string     `json:"name_en"`
+	Severity     *string    `json:"severity"`
+	OccurredAt   *time.Time `json:"occurred_at"`
+	ActualValue  *float64   `json:"actual_value"`
+	LimitValue   *float64   `json:"limit_value"`
+	Lat          *float64   `json:"lat"`
+	Lon          *float64   `json:"lon"`
+	MediaURL     *string    `json:"media_url"`
+	Address      *string    `json:"address"`
+	CheckStatus  string     `json:"check_status"`
+	Note         *string    `json:"note"`
+	CheckedAt    *time.Time `json:"checked_at"`
+}
+
+// HistoryItem is a compact alert entry for the detail timeline.
+type HistoryItem struct {
+	ID         int64      `json:"id"`
+	AlertCode  *string    `json:"alert_code"`
+	AlertName  *string    `json:"alert_name"`
+	Severity   *string    `json:"severity"`
+	OccurredAt *time.Time `json:"occurred_at"`
+	Lat        *float64   `json:"lat"`
+	Lon        *float64   `json:"lon"`
+}
+
+// Detail is the notification-detail payload: the alert plus its surrounding
+// same-vehicle history (one hour on each side).
+type Detail struct {
+	Alert   DTO           `json:"alert"`
+	History []HistoryItem `json:"history"`
+}
+
+// CheckRequest updates an alert's check status.
+type CheckRequest struct {
+	CheckStatus string  `json:"check_status"` // unchecked | checked | false_alert
+	Note        *string `json:"note"`
+}
+
+func nameEN(code *string) string {
+	if code == nil {
+		return ""
+	}
+	if t, ok := Lookup(*code); ok {
+		return t.NameEN
+	}
+	return ""
+}
+
+func fromList(a store.ListAlertsRow) DTO {
+	return DTO{
+		ID: a.ID, VehicleID: a.VehicleID, LicensePlate: a.LicensePlate,
+		DriverID: a.DriverID, DriverName: a.DriverName, Source: a.Source, DeviceSource: a.DeviceSource,
+		AlertCode: a.AlertCode, AlertName: a.AlertName, NameEN: nameEN(a.AlertCode), Severity: a.Severity,
+		OccurredAt: conv.Time(a.OccurredAt), ActualValue: conv.NumF(a.ActualValue), LimitValue: conv.NumF(a.LimitValue),
+		Lat: a.Lat, Lon: a.Lon, MediaURL: a.MediaUrl, Address: a.Address,
+		CheckStatus: a.CheckStatus, Note: a.Note, CheckedAt: conv.Time(a.CheckedAt),
+	}
+}
+
+func fromGet(a store.GetAlertRow) DTO {
+	return DTO{
+		ID: a.ID, VehicleID: a.VehicleID, LicensePlate: a.LicensePlate,
+		DriverID: a.DriverID, DriverName: a.DriverName, Source: a.Source, DeviceSource: a.DeviceSource,
+		AlertCode: a.AlertCode, AlertName: a.AlertName, NameEN: nameEN(a.AlertCode), Severity: a.Severity,
+		OccurredAt: conv.Time(a.OccurredAt), ActualValue: conv.NumF(a.ActualValue), LimitValue: conv.NumF(a.LimitValue),
+		Lat: a.Lat, Lon: a.Lon, MediaURL: a.MediaUrl, Address: a.Address,
+		CheckStatus: a.CheckStatus, Note: a.Note, CheckedAt: conv.Time(a.CheckedAt),
+	}
+}
+
+// Handler exposes alert + taxonomy endpoints.
+type Handler struct{ pool *db.Pool }
+
+// NewHandler builds the alert handler.
+func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
+
+// Routes mounts alert endpoints.
+func (h *Handler) Routes(r chi.Router) {
+	r.Get("/v1/alert-taxonomy", h.taxonomy)
+	r.Get("/v1/alerts/analytics", h.analytics)
+	r.Get("/v1/alerts", h.list)
+	r.Get("/v1/alerts/{id}", h.get)
+	r.Group(func(mr chi.Router) {
+		mr.Use(auth.RequireRole(auth.RoleOperator))
+		mr.Patch("/v1/alerts/{id}/check", h.check)
+	})
+}
+
+// taxonomy godoc
+//
+//	@Summary	The master alert taxonomy
+//	@Tags		alerts
+//	@Security	BearerAuth
+//	@Produce	json
+//	@Success	200	{array}	alert.AlertType
+//	@Router		/v1/alert-taxonomy [get]
+func (h *Handler) taxonomy(w http.ResponseWriter, _ *http.Request) {
+	httpx.JSON(w, http.StatusOK, Taxonomy)
+}
+
+func tsFromQuery(r *http.Request, key string) pgtype.Timestamptz {
+	if v := r.URL.Query().Get(key); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return pgtype.Timestamptz{Time: t, Valid: true}
+		}
+	}
+	return pgtype.Timestamptz{}
+}
+
+// Analytics is the Safety-tab dashboard payload (all real, from the alerts table).
+type Analytics struct {
+	ByType     []Bucket    `json:"by_type"`
+	BySeverity []Bucket    `json:"by_severity"`
+	ByHour     []HourCount `json:"by_hour"`
+	ByDay      []DayCount  `json:"by_day"`
+	TopVeh     []VehCount  `json:"top_vehicles"`
+	Total      int64       `json:"total"`
+}
+
+// Bucket is a labeled count.
+type Bucket struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+// HourCount is an hour-of-day count.
+type HourCount struct {
+	Hour  int32 `json:"hour"`
+	Count int64 `json:"count"`
+}
+
+// DayCount is a per-day count.
+type DayCount struct {
+	Day   string `json:"day"`
+	Count int64  `json:"count"`
+}
+
+// VehCount is a per-vehicle count.
+type VehCount struct {
+	VehicleID *int64 `json:"vehicle_id"`
+	Plate     string `json:"license_plate"`
+	Count     int64  `json:"count"`
+}
+
+// analytics godoc
+//
+//	@Summary	Alert analytics for the Safety dashboard
+//	@Tags		alerts
+//	@Security	BearerAuth
+//	@Produce	json
+//	@Param		from	query		string	false	"RFC3339"
+//	@Param		to		query		string	false	"RFC3339"
+//	@Success	200	{object}	alert.Analytics
+//	@Router		/v1/alerts/analytics [get]
+func (h *Handler) analytics(w http.ResponseWriter, r *http.Request) {
+	from, to := tsFromQuery(r, "from"), tsFromQuery(r, "to")
+	tid := auth.TenantID(r.Context())
+	var out Analytics
+	out.ByType, out.BySeverity, out.ByHour, out.ByDay, out.TopVeh = []Bucket{}, []Bucket{}, []HourCount{}, []DayCount{}, []VehCount{}
+	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		st := store.New(tx)
+		types, err := st.AlertCountByType(r.Context(), store.AlertCountByTypeParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		for _, t := range types {
+			code := deref(t.AlertCode)
+			out.ByType = append(out.ByType, Bucket{Key: code, Label: deref(t.AlertName), Count: t.Count})
+			out.Total += t.Count
+		}
+		sev, err := st.AlertCountBySeverity(r.Context(), store.AlertCountBySeverityParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		for _, s := range sev {
+			out.BySeverity = append(out.BySeverity, Bucket{Key: deref(s.Severity), Label: deref(s.Severity), Count: s.Count})
+		}
+		hours, err := st.AlertCountByHour(r.Context(), store.AlertCountByHourParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		for _, hc := range hours {
+			out.ByHour = append(out.ByHour, HourCount{Hour: hc.Hour, Count: hc.Count})
+		}
+		days, err := st.AlertCountByDay(r.Context(), store.AlertCountByDayParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		for _, d := range days {
+			out.ByDay = append(out.ByDay, DayCount{Day: d.Day.Time.Format("2006-01-02"), Count: d.Count})
+		}
+		top, err := st.AlertTopVehicles(r.Context(), store.AlertTopVehiclesParams{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		for _, v := range top {
+			out.TopVeh = append(out.TopVeh, VehCount{VehicleID: v.VehicleID, Plate: deref(v.LicensePlate), Count: v.Count})
+		}
+		return nil
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// list godoc
+//
+//	@Summary	List alerts (Notification feed)
+//	@Tags		alerts
+//	@Security	BearerAuth
+//	@Produce	json
+//	@Param		q				query		string	false	"search"
+//	@Param		check_status	query		string	false	"unchecked|checked|false_alert"
+//	@Param		device_source	query		string	false	"gps|camera"
+//	@Param		severity		query		string	false	"urgent|important|info"
+//	@Param		alert_code		query		string	false	"taxonomy code"
+//	@Param		vehicle_id		query		int		false	"vehicle filter"
+//	@Param		from			query		string	false	"RFC3339"
+//	@Param		to				query		string	false	"RFC3339"
+//	@Success	200	{object}	httpx.List[alert.DTO]
+//	@Router		/v1/alerts [get]
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	p := httpx.ParseList(r)
+	q := r.URL.Query()
+	var vehicleID *int64
+	if v := q.Get("vehicle_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			vehicleID = &id
+		}
+	}
+	from, to := tsFromQuery(r, "from"), tsFromQuery(r, "to")
+	tid := auth.TenantID(r.Context())
+	var items []DTO
+	var total int64
+	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		st := store.New(tx)
+		rows, err := st.ListAlerts(r.Context(), store.ListAlertsParams{
+			Q: conv.StrPtr(p.Q), CheckStatus: conv.StrPtr(q.Get("check_status")),
+			DeviceSource: conv.StrPtr(q.Get("device_source")), Severity: conv.StrPtr(q.Get("severity")),
+			AlertCode: conv.StrPtr(q.Get("alert_code")), VehicleID: vehicleID,
+			From: from, To: to, Lim: int32(p.Limit), Off: int32(p.Offset),
+		})
+		if err != nil {
+			return err
+		}
+		items = make([]DTO, 0, len(rows))
+		for _, a := range rows {
+			items = append(items, fromList(a))
+		}
+		total, err = st.CountAlerts(r.Context(), store.CountAlertsParams{
+			Q: conv.StrPtr(p.Q), CheckStatus: conv.StrPtr(q.Get("check_status")),
+			DeviceSource: conv.StrPtr(q.Get("device_source")), Severity: conv.StrPtr(q.Get("severity")),
+			AlertCode: conv.StrPtr(q.Get("alert_code")), VehicleID: vehicleID, From: from, To: to,
+		})
+		return err
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: total})
+}
+
+// get godoc
+//
+//	@Summary	Alert detail with surrounding same-vehicle history
+//	@Tags		alerts
+//	@Security	BearerAuth
+//	@Produce	json
+//	@Param		id	path		int	true	"alert id"
+//	@Success	200	{object}	alert.Detail
+//	@Failure	404	{object}	map[string]string
+//	@Router		/v1/alerts/{id} [get]
+func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	tid := auth.TenantID(r.Context())
+	var detail Detail
+	err = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		st := store.New(tx)
+		a, err := st.GetAlert(r.Context(), id)
+		if err != nil {
+			return err
+		}
+		detail.Alert = fromGet(a)
+		if a.VehicleID != nil && a.OccurredAt.Valid {
+			center := a.OccurredAt.Time
+			hist, err := st.AlertHistoryForVehicle(r.Context(), store.AlertHistoryForVehicleParams{
+				VehicleID: a.VehicleID,
+				From:      pgtype.Timestamptz{Time: center.Add(-time.Hour), Valid: true},
+				To:        pgtype.Timestamptz{Time: center.Add(time.Hour), Valid: true},
+			})
+			if err != nil {
+				return err
+			}
+			for _, hi := range hist {
+				detail.History = append(detail.History, HistoryItem{
+					ID: hi.ID, AlertCode: hi.AlertCode, AlertName: hi.AlertName,
+					Severity: hi.Severity, OccurredAt: conv.Time(hi.OccurredAt), Lat: hi.Lat, Lon: hi.Lon,
+				})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "alert not found")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, detail)
+}
+
+// check godoc
+//
+//	@Summary	Set an alert's check status (checked / false_alert / unchecked)
+//	@Tags		alerts
+//	@Security	BearerAuth
+//	@Accept		json
+//	@Produce	json
+//	@Param		id		path		int					true	"alert id"
+//	@Param		body	body		alert.CheckRequest	true	"status"
+//	@Success	200		{object}	alert.DTO
+//	@Router		/v1/alerts/{id}/check [patch]
+func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req CheckRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	switch req.CheckStatus {
+	case "unchecked", "checked", "false_alert":
+	default:
+		httpx.Error(w, http.StatusBadRequest, "invalid check_status")
+		return
+	}
+	tid := auth.TenantID(r.Context())
+	var dto DTO
+	err = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		a, err := store.New(tx).UpdateAlertCheck(r.Context(), store.UpdateAlertCheckParams{ID: id, CheckStatus: req.CheckStatus, Note: req.Note})
+		if err != nil {
+			return err
+		}
+		dto = DTO{
+			ID: a.ID, VehicleID: a.VehicleID, AlertCode: a.AlertCode, AlertName: a.AlertName,
+			NameEN: nameEN(a.AlertCode), Severity: a.Severity, CheckStatus: a.CheckStatus, Note: a.Note,
+			OccurredAt: conv.Time(a.OccurredAt), CheckedAt: conv.Time(a.CheckedAt),
+		}
+		return nil
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, dto)
+}

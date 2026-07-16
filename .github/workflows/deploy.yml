@@ -1,0 +1,48 @@
+name: deploy-api
+
+# Build the api image, push to ECR, and roll the ECS service on push to main.
+# Repo settings needed (Settings → Secrets and variables → Actions):
+#   Secret: AWS_ROLE_ARN   (terraform output github_deploy_role_arn)
+#   Vars:   AWS_REGION=ap-southeast-1, ECS_CLUSTER=karlo-fms, ECS_SERVICE=api,
+#           ECR_REPO=karlo-fms/api
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write # for AWS OIDC
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPO: ${{ vars.ECR_REPO }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build --platform linux/amd64 --build-arg SERVICE=api \
+            -t "$REGISTRY/$REPO:$TAG" -t "$REGISTRY/$REPO:latest" .
+          docker push "$REGISTRY/$REPO:$TAG"
+          docker push "$REGISTRY/$REPO:latest"
+
+      - name: Roll ECS service
+        run: |
+          aws ecs update-service --cluster "${{ vars.ECS_CLUSTER }}" \
+            --service "${{ vars.ECS_SERVICE }}" --force-new-deployment >/dev/null
+          aws ecs wait services-stable --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}"

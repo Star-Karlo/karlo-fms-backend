@@ -1,0 +1,215 @@
+-- schema.sql — sqlc-only view of the foundation tables. NOT applied to the DB
+-- (db/migrations is the runtime source of truth). Keep the CREATE TABLE columns
+-- here identical to the migrations; the RLS/role/trigger/stub machinery is
+-- intentionally omitted because sqlc's parser only needs table shapes.
+
+CREATE TABLE tenants (
+  id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name       text NOT NULL,
+  slug       text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE fleet_groups (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id   bigint NOT NULL REFERENCES tenants(id),
+  name        text NOT NULL,
+  description text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE users (
+  id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id     bigint NOT NULL REFERENCES tenants(id),
+  email         text NOT NULL UNIQUE,
+  password_hash text NOT NULL,
+  full_name     text,
+  role          text NOT NULL DEFAULT 'operator',
+  status        text NOT NULL DEFAULT 'active',
+  last_login_at timestamptz,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE refresh_tokens (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id   bigint NOT NULL REFERENCES tenants(id),
+  user_id     bigint NOT NULL REFERENCES users(id),
+  token_hash  bytea NOT NULL UNIQUE,
+  expires_at  timestamptz NOT NULL,
+  revoked_at  timestamptz,
+  replaced_by bigint REFERENCES refresh_tokens(id),
+  user_agent  text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE employees (
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id      bigint NOT NULL REFERENCES tenants(id),
+  employee_no    text,
+  full_name      text NOT NULL,
+  phone          text,
+  role           text NOT NULL DEFAULT 'driver',
+  license_no     text,
+  license_class  text,
+  license_expiry date,
+  status         text NOT NULL DEFAULT 'active',
+  external_ref   text,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE trackers (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id   bigint NOT NULL REFERENCES tenants(id),
+  imei        text NOT NULL,
+  phone_no    text,
+  vehicle_id  bigint,
+  status      text NOT NULL DEFAULT 'active',
+  external_ref text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE vehicles (
+  id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id         bigint NOT NULL REFERENCES tenants(id),
+  license_plate     text NOT NULL,
+  manufacturer      text,
+  vehicle_type      text,
+  box_type          text,
+  unit_year         int,
+  hull_no           text,
+  fleet_group_id    bigint REFERENCES fleet_groups(id),
+  status            text NOT NULL DEFAULT 'active',
+  garage            text,
+  odometer          numeric,
+  hourmeter         numeric,
+  tracker_id        bigint REFERENCES trackers(id),
+  current_driver_id bigint REFERENCES employees(id),
+  notes             text,
+  documents         jsonb NOT NULL DEFAULT '[]',
+  external_ref      text,
+  color             text,
+  attributes        jsonb NOT NULL DEFAULT '{}',
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE alerts (
+  id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id    bigint NOT NULL REFERENCES tenants(id),
+  vehicle_id   bigint REFERENCES vehicles(id),
+  tracker_id   bigint REFERENCES trackers(id),
+  driver_id    bigint REFERENCES employees(id),
+  source       text,
+  device_source text,
+  alert_code   text,
+  alert_name   text,
+  severity     text,
+  occurred_at  timestamptz,
+  actual_value numeric,
+  limit_value  numeric,
+  lat          double precision,
+  lon          double precision,
+  media_url    text,
+  address      text,
+  check_status text NOT NULL DEFAULT 'unchecked',
+  note         text,
+  read_at      timestamptz,
+  checked_at   timestamptz,
+  payload      jsonb NOT NULL DEFAULT '{}',
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE notification_rules (
+  id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id         bigint NOT NULL REFERENCES tenants(id),
+  rule_name         text NOT NULL,
+  alert_code        text NOT NULL,
+  notification_name text,
+  urgency           text NOT NULL DEFAULT 'important',
+  status            text NOT NULL DEFAULT 'active',
+  applies_to        text NOT NULL DEFAULT 'all',
+  target            jsonb NOT NULL DEFAULT '{}',
+  threshold         numeric,
+  sent_to_self      boolean NOT NULL DEFAULT false,
+  geofence_scoped   boolean NOT NULL DEFAULT false,
+  time_scoped       boolean NOT NULL DEFAULT false,
+  auto_popup        boolean NOT NULL DEFAULT false,
+  delivery          jsonb NOT NULL DEFAULT '{}',
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE documents (
+  id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id  bigint NOT NULL REFERENCES tenants(id),
+  owner_type text NOT NULL,
+  owner_id   bigint NOT NULL,
+  kind       text,
+  title      text,
+  number     text,
+  s3_key     text,
+  mime       text,
+  expiry     date,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE service_schedules (
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id      bigint NOT NULL REFERENCES tenants(id),
+  vehicle_id     bigint REFERENCES vehicles(id),
+  component      text,
+  scheduler      text,
+  km_interval    numeric,
+  km_reminder    numeric,
+  day_interval   int,
+  day_reminder   int,
+  last_done_at   date,
+  last_odometer  numeric,
+  next_due_at    date,
+  next_odometer  numeric,
+  status         text NOT NULL DEFAULT 'normal',
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE driver_score_events (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id   bigint NOT NULL REFERENCES tenants(id),
+  driver_id   bigint REFERENCES employees(id),
+  vehicle_id  bigint REFERENCES vehicles(id),
+  event_type  text,
+  occurrences int,
+  score       numeric,
+  period      date,
+  metadata    jsonb NOT NULL DEFAULT '{}',
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE tracking_links (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id   bigint NOT NULL REFERENCES tenants(id),
+  token       text NOT NULL UNIQUE,
+  name        text NOT NULL,
+  note        text,
+  status      text NOT NULL DEFAULT 'active',
+  expires_at  timestamptz NOT NULL,
+  show_fields jsonb NOT NULL DEFAULT '{}',
+  vehicle_ids jsonb NOT NULL DEFAULT '[]',
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE api_tokens (
+  id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id    bigint NOT NULL REFERENCES tenants(id),
+  name         text NOT NULL,
+  token_prefix text NOT NULL,
+  token_hash   bytea NOT NULL,
+  created_by   bigint REFERENCES users(id),
+  last_used_at timestamptz,
+  revoked_at   timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
