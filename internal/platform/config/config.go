@@ -25,6 +25,12 @@ type Config struct {
 	TelemetryTimeout time.Duration
 	LiveCacheTTL     time.Duration
 
+	// AWSRegion / BedrockModelID drive AI dashboard composition. Auth is the
+	// task's IAM role — no API key to store or rotate. Nova Pro is exposed in
+	// ap-southeast-1 only as an inference profile, hence the "apac." prefix.
+	AWSRegion      string
+	BedrockModelID string
+
 	// CORSOrigins is the allowlist of browser origins (e.g. https://fms.karlo.id).
 	// Empty ⇒ reflect any origin (fine for local dev behind the Vite proxy).
 	CORSOrigins []string
@@ -34,7 +40,9 @@ type Config struct {
 // defaults so `go run ./cmd/api` works against the compose stack out of the box.
 func Load() Config {
 	return Config{
-		Addr: Env("API_ADDR", ":8080"),
+		Addr:           Env("API_ADDR", ":8080"),
+		AWSRegion:      Env("AWS_REGION", "ap-southeast-1"),
+		BedrockModelID: Env("BEDROCK_MODEL_ID", "apac.amazon.nova-pro-v1:0"),
 		// Host ports 5433/6380 avoid clashing with the telemetry stack (5432/6379).
 		DatabaseURL: Env("DATABASE_URL", "postgres://fms_app:fms_app@localhost:5433/fms_app"),
 		RedisAddr:   Env("REDIS_ADDR", "localhost:6380"),

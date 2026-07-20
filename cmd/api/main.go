@@ -23,6 +23,7 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "github.com/karlo/fms-backend/cmd/api/docs"
+	"github.com/karlo/fms-backend/internal/aidash"
 	"github.com/karlo/fms-backend/internal/alert"
 	"github.com/karlo/fms-backend/internal/apitoken"
 	"github.com/karlo/fms-backend/internal/auth"
@@ -30,20 +31,20 @@ import (
 	"github.com/karlo/fms-backend/internal/dashboard"
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/fleetgroup"
+	"github.com/karlo/fms-backend/internal/geofence"
 	"github.com/karlo/fms-backend/internal/license"
 	"github.com/karlo/fms-backend/internal/liveview"
 	"github.com/karlo/fms-backend/internal/maintenance"
-	"github.com/karlo/fms-backend/internal/geofence"
 	"github.com/karlo/fms-backend/internal/notifengine"
-	"github.com/karlo/fms-backend/internal/prefs"
-	"github.com/karlo/fms-backend/internal/telemetrysync"
 	"github.com/karlo/fms-backend/internal/notifrule"
 	"github.com/karlo/fms-backend/internal/platform/config"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/prefs"
 	"github.com/karlo/fms-backend/internal/report"
 	"github.com/karlo/fms-backend/internal/scorecard"
 	"github.com/karlo/fms-backend/internal/telemetry"
+	"github.com/karlo/fms-backend/internal/telemetrysync"
 	"github.com/karlo/fms-backend/internal/tracker"
 	"github.com/karlo/fms-backend/internal/trackinglink"
 	"github.com/karlo/fms-backend/internal/users"
@@ -81,6 +82,10 @@ func main() {
 	usersH := users.NewHandler(pool)
 	apiTokenH := apitoken.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)
+	// AI dashboard composition (Amazon Nova Pro on Bedrock). A missing or
+	// unauthorised Bedrock config disables just this endpoint (503) rather
+	// than failing startup.
+	aiDashH := aidash.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
 	geofenceH := geofence.NewHandler(pool)
 	prefsH := prefs.NewHandler(pool)
 	telemetrySyncH := telemetrysync.NewHandler(pool)
@@ -128,6 +133,7 @@ func main() {
 		dashboardH.Routes(pr)
 		geofenceH.Routes(pr)
 		telemetrySyncH.Routes(pr)
+		aiDashH.Routes(pr)
 		prefsH.Routes(pr)
 	})
 

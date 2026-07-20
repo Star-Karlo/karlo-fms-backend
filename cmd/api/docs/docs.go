@@ -61,6 +61,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/ai/dashboard/compose": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Given the caller's role, a natural-language description and the\nclient's metric catalog, returns a list of tiles (metric + params +\nvisualisation + layout). The caller validates and may reject them —\nthe model is a proposer, not an authority.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ai"
+                ],
+                "summary": "Compose a dashboard from a description",
+                "parameters": [
+                    {
+                        "description": "prompt + catalog",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/aidash.composeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/aidash.composeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "prompt or catalog missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "AI composition not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/alert-taxonomy": {
             "get": {
                 "security": [
@@ -2936,6 +2993,59 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "aidash.composeRequest": {
+            "type": "object",
+            "properties": {
+                "catalog": {
+                    "description": "built client-side from the metric registry",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "current": {
+                    "description": "existing tiles, so \"add X\" works",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "prompt": {
+                    "type": "string"
+                }
+            }
+        },
+        "aidash.composeResponse": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "tiles": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "usage": {
+                    "$ref": "#/definitions/aidash.usage"
+                }
+            }
+        },
+        "aidash.usage": {
+            "type": "object",
+            "properties": {
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
         "alert.AlertType": {
             "type": "object",
             "properties": {
