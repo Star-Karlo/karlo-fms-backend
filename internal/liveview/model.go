@@ -1,6 +1,7 @@
 package liveview
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/karlo/fms-backend/internal/telemetry"
@@ -46,12 +47,16 @@ type Position struct {
 	Kota      string    `json:"kota"`
 	Provinsi  string    `json:"provinsi"`
 	Jalan     string    `json:"jalan"`
+	// Metadata is the raw per-device sensor blob (fuel, voltages, GSM/GNSS, etc.).
+	// Only populated on the single-vehicle detail path; the bulk list trims it.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 // VehicleLive is a registry vehicle enriched with its live position + state.
 type VehicleLive struct {
 	VehicleID      int64     `json:"vehicle_id"`
 	LicensePlate   string    `json:"license_plate"`
+	VehicleType    *string   `json:"vehicle_type"`
 	RegistryStatus string    `json:"registry_status"`
 	FleetGroupName *string   `json:"fleet_group_name"`
 	Driver         Driver    `json:"driver"`
@@ -60,6 +65,14 @@ type VehicleLive struct {
 	Online         bool      `json:"online"`
 	DriveState     string    `json:"drive_state"`
 	StaleMinutes   *float64  `json:"stale_minutes"`
+	// From the telemetry collector's state table (updated ~2min) — cheap to
+	// join fleet-wide, powers list filters without shipping metadata blobs.
+	BatteryV  *float64 `json:"battery_v"`
+	GsmSignal *float64 `json:"gsm_signal"`
+	// Maintenance context: km driven since the last recorded service. Nil when
+	// unknown; HasServiceRecord=false means no maintenance record exists yet.
+	KmSinceService   *float64 `json:"km_since_service"`
+	HasServiceRecord bool     `json:"has_service_record"`
 }
 
 // enrich merges a telemetry fix into the vehicle, computing online + drive state.
@@ -72,7 +85,7 @@ func enrich(v *VehicleLive, p *telemetry.Position, now time.Time) {
 	pos := &Position{
 		Lat: p.Lat, Lon: p.Lon, Speed: p.Speed, Bearing: p.Bearing, Ignition: p.Ignition,
 		Time: p.Time, Kecamatan: p.Kecamatan, Kabupaten: p.Kabupaten, Kota: p.Kota,
-		Provinsi: p.Provinsi, Jalan: p.Jalan,
+		Provinsi: p.Provinsi, Jalan: p.Jalan, Metadata: p.Metadata,
 	}
 	v.Position = pos
 	stale := now.Sub(p.Time).Minutes()

@@ -41,6 +41,7 @@ type WriteRequest struct {
 	Note        *string         `json:"note"`
 	Status      *string         `json:"status"`
 	DurationDays int            `json:"duration_days"`
+	DurationHours int           `json:"duration_hours"` // takes precedence over days when set
 	ExpiresAt   *string         `json:"expires_at"`
 	ShowFields  json.RawMessage `json:"show_fields"`
 	VehicleIDs  []int64         `json:"vehicle_ids"`
@@ -160,6 +161,9 @@ func expiryFrom(req WriteRequest) (pgtype.Timestamptz, bool) {
 			return pgtype.Timestamptz{Time: t, Valid: true}, true
 		}
 		return pgtype.Timestamptz{}, false
+	}
+	if req.DurationHours > 0 {
+		return pgtype.Timestamptz{Time: time.Now().Add(time.Duration(req.DurationHours) * time.Hour), Valid: true}, true
 	}
 	days := req.DurationDays
 	if days <= 0 {
@@ -301,6 +305,8 @@ type PublicVehicle struct {
 	Plate    string   `json:"license_plate"`
 	Lat      *float64 `json:"lat"`
 	Lon      *float64 `json:"lon"`
+	Bearing  *float64 `json:"bearing"`     // heading for the truck icon
+	State    string   `json:"drive_state"` // moving|idle|parking|offline (icon color)
 	Speed    *float64 `json:"speed,omitempty"`
 	Driver   *string  `json:"driver,omitempty"`
 	LastSeen *string  `json:"last_seen,omitempty"`
@@ -353,9 +359,10 @@ func (h *Handler) public(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		pv := PublicVehicle{Plate: v.LicensePlate, Online: v.Online}
+		pv := PublicVehicle{Plate: v.LicensePlate, Online: v.Online, State: v.DriveState}
 		if v.Position != nil {
 			pv.Lat, pv.Lon = v.Position.Lat, v.Position.Lon
+			pv.Bearing = v.Position.Bearing
 			if show["speed"] {
 				pv.Speed = v.Position.Speed
 			}

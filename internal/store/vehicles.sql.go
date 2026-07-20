@@ -101,7 +101,7 @@ func (q *Queries) AssignVehicleTracker(ctx context.Context, arg AssignVehicleTra
 const countVehicles = `-- name: CountVehicles :one
 SELECT count(*) FROM vehicles v
 WHERE ($1::text IS NULL
-       OR v.license_plate ILIKE '%' || $1 || '%'
+       OR regexp_replace(v.license_plate, '[-[:space:]]', '', 'g') ILIKE '%' || regexp_replace($1, '[-[:space:]]', '', 'g') || '%'
        OR v.hull_no ILIKE '%' || $1 || '%')
   AND ($2::text IS NULL OR v.status = $2)
   AND ($3::bigint IS NULL OR v.fleet_group_id = $3)
@@ -201,6 +201,7 @@ const getLiveViewVehicle = `-- name: GetLiveViewVehicle :one
 SELECT
   v.id            AS vehicle_id,
   v.license_plate,
+  v.vehicle_type,
   v.status,
   fg.name         AS fleet_group_name,
   e.id            AS driver_id,
@@ -218,6 +219,7 @@ WHERE v.id = $1
 type GetLiveViewVehicleRow struct {
 	VehicleID      int64   `json:"vehicle_id"`
 	LicensePlate   string  `json:"license_plate"`
+	VehicleType    *string `json:"vehicle_type"`
 	Status         string  `json:"status"`
 	FleetGroupName *string `json:"fleet_group_name"`
 	DriverID       *int64  `json:"driver_id"`
@@ -233,6 +235,7 @@ func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveView
 	err := row.Scan(
 		&i.VehicleID,
 		&i.LicensePlate,
+		&i.VehicleType,
 		&i.Status,
 		&i.FleetGroupName,
 		&i.DriverID,
@@ -328,6 +331,7 @@ const listLiveViewVehicles = `-- name: ListLiveViewVehicles :many
 SELECT
   v.id            AS vehicle_id,
   v.license_plate,
+  v.vehicle_type,
   v.status,
   fg.name         AS fleet_group_name,
   e.id            AS driver_id,
@@ -347,6 +351,7 @@ WHERE v.status <> 'archive'
 type ListLiveViewVehiclesRow struct {
 	VehicleID      int64   `json:"vehicle_id"`
 	LicensePlate   string  `json:"license_plate"`
+	VehicleType    *string `json:"vehicle_type"`
 	Status         string  `json:"status"`
 	FleetGroupName *string `json:"fleet_group_name"`
 	DriverID       *int64  `json:"driver_id"`
@@ -370,6 +375,7 @@ func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64)
 		if err := rows.Scan(
 			&i.VehicleID,
 			&i.LicensePlate,
+			&i.VehicleType,
 			&i.Status,
 			&i.FleetGroupName,
 			&i.DriverID,
@@ -399,7 +405,7 @@ LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 LEFT JOIN employees e     ON e.id = v.current_driver_id
 LEFT JOIN trackers t      ON t.id = v.tracker_id
 WHERE ($1::text IS NULL
-       OR v.license_plate ILIKE '%' || $1 || '%'
+       OR regexp_replace(v.license_plate, '[-[:space:]]', '', 'g') ILIKE '%' || regexp_replace($1, '[-[:space:]]', '', 'g') || '%'
        OR v.hull_no ILIKE '%' || $1 || '%')
   AND ($2::text IS NULL OR v.status = $2)
   AND ($3::bigint IS NULL OR v.fleet_group_id = $3)

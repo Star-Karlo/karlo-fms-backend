@@ -16,6 +16,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -26,11 +27,16 @@ import (
 	"github.com/karlo/fms-backend/internal/apitoken"
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/controltower"
+	"github.com/karlo/fms-backend/internal/dashboard"
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/fleetgroup"
 	"github.com/karlo/fms-backend/internal/license"
 	"github.com/karlo/fms-backend/internal/liveview"
 	"github.com/karlo/fms-backend/internal/maintenance"
+	"github.com/karlo/fms-backend/internal/geofence"
+	"github.com/karlo/fms-backend/internal/notifengine"
+	"github.com/karlo/fms-backend/internal/prefs"
+	"github.com/karlo/fms-backend/internal/telemetrysync"
 	"github.com/karlo/fms-backend/internal/notifrule"
 	"github.com/karlo/fms-backend/internal/platform/config"
 	"github.com/karlo/fms-backend/internal/platform/db"
@@ -74,6 +80,17 @@ func main() {
 	trackingH := trackinglink.NewHandler(pool, liveSvc)
 	usersH := users.NewHandler(pool)
 	apiTokenH := apitoken.NewHandler(pool)
+	dashboardH := dashboard.NewHandler(pool)
+	geofenceH := geofence.NewHandler(pool)
+	prefsH := prefs.NewHandler(pool)
+	telemetrySyncH := telemetrysync.NewHandler(pool)
+
+	// Background engine: evaluate attached notification rules vs live telemetry
+	// and persist alerts. Runs for the life of the process.
+	go notifengine.New(pool, tel, 60*time.Second).Run(ctx)
+	// Background collector: engine hours, odometer sync, battery tamper and
+	// geofence enter/exit transitions from the live feed.
+	go telemetrysync.New(pool, tel, 2*time.Minute).Run(ctx)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, middleware.Recoverer)
@@ -108,6 +125,10 @@ func main() {
 		trackingH.Routes(pr)
 		usersH.Routes(pr)
 		apiTokenH.Routes(pr)
+		dashboardH.Routes(pr)
+		geofenceH.Routes(pr)
+		telemetrySyncH.Routes(pr)
+		prefsH.Routes(pr)
 	})
 
 	log.Printf("fms-backend api on %s  (swagger: http://localhost%s/swagger/index.html)", cfg.Addr, cfg.Addr)

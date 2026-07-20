@@ -564,6 +564,108 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/coverage": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Signal / terrain coverage grid (proxied GeoJSON from the telemetry service)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "signal | terrain | altitude",
+                        "name": "metric",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "comma-separated: telkomsel,indosat,xl (omit for all)",
+                        "name": "provider",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "minLon,minLat,maxLon,maxLat",
+                        "name": "bbox",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/dashboard/layout": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Get the current user's dashboard layout",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dashboard.LayoutResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Save the current user's dashboard layout",
+                "parameters": [
+                    {
+                        "description": "layout",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dashboard.LayoutResponse"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/v1/documents": {
             "get": {
                 "security": [
@@ -1045,6 +1147,198 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/geofences": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "List geofences",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/geofence.Geofence"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "Create a circle geofence",
+                "parameters": [
+                    {
+                        "description": "geofence",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/geofence.CreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/geofence.Geofence"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/geofences/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "Delete a geofence",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "geofence id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/geofences/{id}/vehicles": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "Vehicles assigned to a geofence (they get Enter/Exit alerts)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "geofence id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/geofence.AssignedVehicle"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/geofences/{id}/vehicles/{vehicleID}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "Assign a vehicle to a geofence (starts Enter/Exit alerts)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "geofence id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicleID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "Unassign a vehicle from a geofence",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "geofence id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicleID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/v1/live-view": {
             "get": {
                 "security": [
@@ -1280,6 +1574,78 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/notifications/mark-all-read": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "alerts"
+                ],
+                "summary": "Mark all unchecked alerts as checked (mark all read)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "integer",
+                                "format": "int64"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/prefs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "prefs"
+                ],
+                "summary": "The calling user's UI preferences (opaque JSON)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "prefs"
+                ],
+                "summary": "Replace the calling user's UI preferences (opaque JSON)",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/v1/reports/catalog": {
             "get": {
                 "security": [
@@ -1390,6 +1756,51 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/reports/{key}/run": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Run any catalog report by key (generic columns + rows)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "report key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "parameters",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/report.RunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/report.Result"
                         }
                     }
                 }
@@ -2311,8 +2722,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "number",
-                        "description": "overspeed limit km/h (default 80)",
+                        "description": "overspeed limit km/h (default 60)",
                         "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "minutes a stop must exceed to count as idle (default 120)",
+                        "name": "idle_threshold",
                         "in": "query"
                     }
                 ],
@@ -2367,6 +2784,12 @@ const docTemplate = `{
                         "description": "cap on returned points",
                         "name": "max_points",
                         "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "overspeed limit km/h for the over_limit flag (default 60)",
+                        "name": "limit",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2374,6 +2797,138 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-liveview_TripPoint"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/vehicles/{vehicle_id}/rules": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notification-rules"
+                ],
+                "summary": "Rules applicable to a vehicle, each flagged attached/not",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-notifrule_VehicleRule"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/vehicles/{vehicle_id}/rules/{rule_id}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "notification-rules"
+                ],
+                "summary": "Attach a rule to a vehicle",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "rule id",
+                        "name": "rule_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "notification-rules"
+                ],
+                "summary": "Detach a rule from a vehicle",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "rule id",
+                        "name": "rule_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/vehicles/{vehicle_id}/telemetry-state": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Accumulated telemetry state for a vehicle (engine hours, odometer, battery)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/telemetrysync.StateResponse"
                         }
                     }
                 }
@@ -2796,6 +3351,17 @@ const docTemplate = `{
                 }
             }
         },
+        "dashboard.LayoutResponse": {
+            "type": "object",
+            "properties": {
+                "layout": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
         "driver.CreateRequest": {
             "type": "object",
             "properties": {
@@ -2923,6 +3489,57 @@ const docTemplate = `{
                 }
             }
         },
+        "geofence.AssignedVehicle": {
+            "type": "object",
+            "properties": {
+                "license_plate": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "geofence.CreateRequest": {
+            "type": "object",
+            "properties": {
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "radius_m": {
+                    "type": "number"
+                }
+            }
+        },
+        "geofence.Geofence": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "radius_m": {
+                    "type": "number"
+                }
+            }
+        },
         "github_com_karlo_fms-backend_internal_platform_httpx.List-alert_DTO": {
             "type": "object",
             "properties": {
@@ -3014,6 +3631,20 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/notifrule.DTO"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_karlo_fms-backend_internal_platform_httpx.List-notifrule_VehicleRule": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/notifrule.VehicleRule"
                     }
                 },
                 "total": {
@@ -3223,8 +3854,17 @@ const docTemplate = `{
                         "$ref": "#/definitions/liveview.BehaviorEvent"
                     }
                 },
+                "idle_threshold_min": {
+                    "type": "number"
+                },
                 "overspeed_limit": {
                     "type": "number"
+                },
+                "stops": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.IdleStop"
+                    }
                 },
                 "summary": {
                     "$ref": "#/definitions/liveview.BehaviorSummary"
@@ -3246,6 +3886,14 @@ const docTemplate = `{
                 "harsh_brake": {
                     "type": "integer"
                 },
+                "idle_count": {
+                    "description": "stops over the idle threshold",
+                    "type": "integer"
+                },
+                "longest_stop_min": {
+                    "description": "longest single stop",
+                    "type": "number"
+                },
                 "max_speed": {
                     "type": "number"
                 },
@@ -3254,6 +3902,10 @@ const docTemplate = `{
                 },
                 "points": {
                     "type": "integer"
+                },
+                "total_idle_min": {
+                    "description": "summed dwell of those stops",
+                    "type": "number"
                 }
             }
         },
@@ -3267,6 +3919,26 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "phone": {
+                    "type": "string"
+                }
+            }
+        },
+        "liveview.IdleStop": {
+            "type": "object",
+            "properties": {
+                "dwell_min": {
+                    "type": "number"
+                },
+                "end_time": {
+                    "type": "string"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "start_time": {
                     "type": "string"
                 }
             }
@@ -3297,6 +3969,13 @@ const docTemplate = `{
                 },
                 "lon": {
                     "type": "number"
+                },
+                "metadata": {
+                    "description": "Metadata is the raw per-device sensor blob (fuel, voltages, GSM/GNSS, etc.).\nOnly populated on the single-vehicle detail path; the bulk list trims it.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "provinsi": {
                     "type": "string"
@@ -3329,6 +4008,10 @@ const docTemplate = `{
                 "bearing": {
                     "type": "number"
                 },
+                "idle_min": {
+                    "description": "IdleMin is how long the vehicle sat at this point's stop (0 while moving).",
+                    "type": "number"
+                },
                 "ignition": {
                     "type": "boolean"
                 },
@@ -3337,6 +4020,10 @@ const docTemplate = `{
                 },
                 "lon": {
                     "type": "number"
+                },
+                "over_limit": {
+                    "description": "OverLimit is true when Speed exceeds the requested limit at this point.",
+                    "type": "boolean"
                 },
                 "speed": {
                     "type": "number"
@@ -3349,6 +4036,10 @@ const docTemplate = `{
         "liveview.VehicleLive": {
             "type": "object",
             "properties": {
+                "battery_v": {
+                    "description": "From the telemetry collector's state table (updated ~2min) — cheap to\njoin fleet-wide, powers list filters without shipping metadata blobs.",
+                    "type": "number"
+                },
                 "drive_state": {
                     "type": "string"
                 },
@@ -3357,6 +4048,16 @@ const docTemplate = `{
                 },
                 "fleet_group_name": {
                     "type": "string"
+                },
+                "gsm_signal": {
+                    "type": "number"
+                },
+                "has_service_record": {
+                    "type": "boolean"
+                },
+                "km_since_service": {
+                    "description": "Maintenance context: km driven since the last recorded service. Nil when\nunknown; HasServiceRecord=false means no maintenance record exists yet.",
+                    "type": "number"
                 },
                 "license_plate": {
                     "type": "string"
@@ -3378,6 +4079,9 @@ const docTemplate = `{
                 },
                 "vehicle_id": {
                     "type": "integer"
+                },
+                "vehicle_type": {
+                    "type": "string"
                 }
             }
         },
@@ -3414,6 +4118,13 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "km_reminder": {
+                    "type": "number"
+                },
+                "last_done_at": {
+                    "description": "When the last service happened and the odometer reading at that time —\nthis is what \"km since last service\" everywhere is computed from.",
+                    "type": "string"
+                },
+                "last_odometer": {
                     "type": "number"
                 },
                 "next_due_at": {
@@ -3544,6 +4255,32 @@ const docTemplate = `{
                 }
             }
         },
+        "notifrule.VehicleRule": {
+            "type": "object",
+            "properties": {
+                "alert_code": {
+                    "type": "string"
+                },
+                "attached": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "rule_name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "threshold": {
+                    "type": "number"
+                },
+                "urgency": {
+                    "type": "string"
+                }
+            }
+        },
         "notifrule.WriteRequest": {
             "type": "object",
             "properties": {
@@ -3626,6 +4363,17 @@ const docTemplate = `{
                 }
             }
         },
+        "report.Column": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                }
+            }
+        },
         "report.Meta": {
             "type": "object",
             "properties": {
@@ -3648,6 +4396,55 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                }
+            }
+        },
+        "report.Result": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/report.Column"
+                    }
+                },
+                "key": {
+                    "type": "string"
+                },
+                "note": {
+                    "description": "e.g. missing-sensor explanation",
+                    "type": "string"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "report.RunRequest": {
+            "type": "object",
+            "properties": {
+                "alert_code": {
+                    "type": "string"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "limit": {
+                    "description": "overspeed limit km/h (default 60)",
+                    "type": "number"
+                },
+                "to": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
                 }
             }
         },
@@ -3824,6 +4621,41 @@ const docTemplate = `{
                 }
             }
         },
+        "telemetrysync.StateResponse": {
+            "type": "object",
+            "properties": {
+                "battery_v": {
+                    "description": "latest external voltage (V)",
+                    "type": "number"
+                },
+                "engine_hours": {
+                    "description": "cumulative hours (ignition-on)",
+                    "type": "number"
+                },
+                "gsm_signal": {
+                    "description": "latest GSM signal (0-5)",
+                    "type": "number"
+                },
+                "km_since_service": {
+                    "type": "number"
+                },
+                "last_sample_at": {
+                    "type": "string"
+                },
+                "last_service_at": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "last_service_km": {
+                    "description": "Maintenance context for the odometer: km driven since the most recent\nrecorded service. Nil when the vehicle has no service records yet.",
+                    "type": "number"
+                },
+                "odometer_km": {
+                    "description": "latest telemetry odometer",
+                    "type": "number"
+                }
+            }
+        },
         "tracker.CreateRequest": {
             "type": "object",
             "properties": {
@@ -3939,6 +4771,14 @@ const docTemplate = `{
         "trackinglink.PublicVehicle": {
             "type": "object",
             "properties": {
+                "bearing": {
+                    "description": "heading for the truck icon",
+                    "type": "number"
+                },
+                "drive_state": {
+                    "description": "moving|idle|parking|offline (icon color)",
+                    "type": "string"
+                },
                 "driver": {
                     "type": "string"
                 },
@@ -3969,6 +4809,10 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "duration_days": {
+                    "type": "integer"
+                },
+                "duration_hours": {
+                    "description": "takes precedence over days when set",
                     "type": "integer"
                 },
                 "expires_at": {

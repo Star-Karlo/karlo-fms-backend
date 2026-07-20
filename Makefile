@@ -39,7 +39,7 @@ reset: down
 
 # Run the API service (Swagger UI at http://localhost:8080/swagger/index.html)
 run-api:
-	go run ./cmd/api
+	@set -a; . ./.env 2>/dev/null || true; set +a; go run ./cmd/api
 
 # Regenerate type-safe DB code from db/migrations + internal/**/queries.sql
 sqlc:

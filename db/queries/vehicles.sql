@@ -61,7 +61,7 @@ LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 LEFT JOIN employees e     ON e.id = v.current_driver_id
 LEFT JOIN trackers t      ON t.id = v.tracker_id
 WHERE (sqlc.narg('q')::text IS NULL
-       OR v.license_plate ILIKE '%' || sqlc.narg('q') || '%'
+       OR regexp_replace(v.license_plate, '[-[:space:]]', '', 'g') ILIKE '%' || regexp_replace(sqlc.narg('q'), '[-[:space:]]', '', 'g') || '%'
        OR v.hull_no ILIKE '%' || sqlc.narg('q') || '%')
   AND (sqlc.narg('status')::text IS NULL OR v.status = sqlc.narg('status'))
   AND (sqlc.narg('fleet_group_id')::bigint IS NULL OR v.fleet_group_id = sqlc.narg('fleet_group_id'))
@@ -71,7 +71,7 @@ LIMIT sqlc.arg('lim') OFFSET sqlc.arg('off');
 -- name: CountVehicles :one
 SELECT count(*) FROM vehicles v
 WHERE (sqlc.narg('q')::text IS NULL
-       OR v.license_plate ILIKE '%' || sqlc.narg('q') || '%'
+       OR regexp_replace(v.license_plate, '[-[:space:]]', '', 'g') ILIKE '%' || regexp_replace(sqlc.narg('q'), '[-[:space:]]', '', 'g') || '%'
        OR v.hull_no ILIKE '%' || sqlc.narg('q') || '%')
   AND (sqlc.narg('status')::text IS NULL OR v.status = sqlc.narg('status'))
   AND (sqlc.narg('fleet_group_id')::bigint IS NULL OR v.fleet_group_id = sqlc.narg('fleet_group_id'));
@@ -82,6 +82,7 @@ WHERE (sqlc.narg('q')::text IS NULL
 SELECT
   v.id            AS vehicle_id,
   v.license_plate,
+  v.vehicle_type,
   v.status,
   fg.name         AS fleet_group_name,
   e.id            AS driver_id,
@@ -101,6 +102,7 @@ WHERE v.status <> 'archive'
 SELECT
   v.id            AS vehicle_id,
   v.license_plate,
+  v.vehicle_type,
   v.status,
   fg.name         AS fleet_group_name,
   e.id            AS driver_id,

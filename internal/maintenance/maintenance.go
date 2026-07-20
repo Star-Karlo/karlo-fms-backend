@@ -58,6 +58,10 @@ type CreateRequest struct {
 	DayReminder *int32   `json:"day_reminder"`
 	NextDueAt   *string  `json:"next_due_at"`
 	Status      *string  `json:"status"`
+	// When the last service happened and the odometer reading at that time —
+	// this is what "km since last service" everywhere is computed from.
+	LastDoneAt   *string  `json:"last_done_at"`
+	LastOdometer *float64 `json:"last_odometer"`
 }
 
 func fromRow(s store.ListServiceSchedulesRow) DTO {
@@ -148,6 +152,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "next_due_at must be YYYY-MM-DD")
 		return
 	}
+	lastDone, err := conv.Date(req.LastDoneAt)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "last_done_at must be YYYY-MM-DD")
+		return
+	}
 	tid := auth.TenantID(r.Context())
 	var id int64
 	e := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
@@ -155,6 +164,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			TenantID: tid, VehicleID: req.VehicleID, Component: req.Component, Scheduler: req.Scheduler,
 			KmInterval: conv.Num(req.KmInterval), KmReminder: conv.Num(req.KmReminder),
 			DayInterval: req.DayInterval, DayReminder: req.DayReminder, NextDueAt: nextDue,
+			LastDoneAt: lastDone, LastOdometer: conv.Num(req.LastOdometer),
 			Status: ifaceStr(req.Status),
 		})
 		if err != nil {

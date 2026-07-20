@@ -143,6 +143,24 @@ CREATE TABLE notification_rules (
   updated_at        timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE dashboard_layouts (
+  id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id  bigint NOT NULL REFERENCES tenants(id),
+  user_id    bigint NOT NULL REFERENCES users(id),
+  layout     jsonb NOT NULL DEFAULT '{}',
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, user_id)
+);
+
+CREATE TABLE rule_vehicles (
+  id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id  bigint NOT NULL REFERENCES tenants(id),
+  rule_id    bigint NOT NULL REFERENCES notification_rules(id) ON DELETE CASCADE,
+  vehicle_id bigint NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, rule_id, vehicle_id)
+);
+
 CREATE TABLE documents (
   id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id  bigint NOT NULL REFERENCES tenants(id),
@@ -200,6 +218,23 @@ CREATE TABLE tracking_links (
   vehicle_ids jsonb NOT NULL DEFAULT '[]',
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE vehicle_telemetry_state (
+  id                   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id            bigint NOT NULL REFERENCES tenants(id),
+  vehicle_id           bigint NOT NULL REFERENCES vehicles(id),
+  engine_hours_seconds bigint NOT NULL DEFAULT 0,
+  last_ignition        boolean,
+  last_odometer_km     numeric,
+  last_voltage_mv      numeric,
+  last_gsm_signal      numeric,
+  last_lat             double precision,
+  last_lon             double precision,
+  last_sample_at       timestamptz,
+  inside_geofences     jsonb NOT NULL DEFAULT '[]',
+  updated_at           timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, vehicle_id)
 );
 
 CREATE TABLE api_tokens (

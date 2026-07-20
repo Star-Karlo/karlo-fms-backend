@@ -274,6 +274,13 @@ definitions:
       worst_severity:
         type: string
     type: object
+  dashboard.LayoutResponse:
+    properties:
+      layout:
+        items:
+          type: integer
+        type: array
+    type: object
   driver.CreateRequest:
     properties:
       employee_no:
@@ -357,6 +364,39 @@ definitions:
       name:
         type: string
     type: object
+  geofence.AssignedVehicle:
+    properties:
+      license_plate:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
+  geofence.CreateRequest:
+    properties:
+      lat:
+        type: number
+      lon:
+        type: number
+      name:
+        type: string
+      radius_m:
+        type: number
+    type: object
+  geofence.Geofence:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      lat:
+        type: number
+      lon:
+        type: number
+      name:
+        type: string
+      radius_m:
+        type: number
+    type: object
   github_com_karlo_fms-backend_internal_platform_httpx.List-alert_DTO:
     properties:
       items:
@@ -416,6 +456,15 @@ definitions:
       items:
         items:
           $ref: '#/definitions/notifrule.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-notifrule_VehicleRule:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/notifrule.VehicleRule'
         type: array
       total:
         type: integer
@@ -552,8 +601,14 @@ definitions:
         items:
           $ref: '#/definitions/liveview.BehaviorEvent'
         type: array
+      idle_threshold_min:
+        type: number
       overspeed_limit:
         type: number
+      stops:
+        items:
+          $ref: '#/definitions/liveview.IdleStop'
+        type: array
       summary:
         $ref: '#/definitions/liveview.BehaviorSummary'
     type: object
@@ -567,12 +622,21 @@ definitions:
         type: integer
       harsh_brake:
         type: integer
+      idle_count:
+        description: stops over the idle threshold
+        type: integer
+      longest_stop_min:
+        description: longest single stop
+        type: number
       max_speed:
         type: number
       overspeed_count:
         type: integer
       points:
         type: integer
+      total_idle_min:
+        description: summed dwell of those stops
+        type: number
     type: object
   liveview.Driver:
     properties:
@@ -581,6 +645,19 @@ definitions:
       name:
         type: string
       phone:
+        type: string
+    type: object
+  liveview.IdleStop:
+    properties:
+      dwell_min:
+        type: number
+      end_time:
+        type: string
+      lat:
+        type: number
+      lon:
+        type: number
+      start_time:
         type: string
     type: object
   liveview.Position:
@@ -601,6 +678,13 @@ definitions:
         type: number
       lon:
         type: number
+      metadata:
+        description: |-
+          Metadata is the raw per-device sensor blob (fuel, voltages, GSM/GNSS, etc.).
+          Only populated on the single-vehicle detail path; the bulk list trims it.
+        items:
+          type: integer
+        type: array
       provinsi:
         type: string
       speed:
@@ -621,12 +705,20 @@ definitions:
         type: string
       bearing:
         type: number
+      idle_min:
+        description: IdleMin is how long the vehicle sat at this point's stop (0 while
+          moving).
+        type: number
       ignition:
         type: boolean
       lat:
         type: number
       lon:
         type: number
+      over_limit:
+        description: OverLimit is true when Speed exceeds the requested limit at this
+          point.
+        type: boolean
       speed:
         type: number
       time:
@@ -634,12 +726,26 @@ definitions:
     type: object
   liveview.VehicleLive:
     properties:
+      battery_v:
+        description: |-
+          From the telemetry collector's state table (updated ~2min) — cheap to
+          join fleet-wide, powers list filters without shipping metadata blobs.
+        type: number
       drive_state:
         type: string
       driver:
         $ref: '#/definitions/liveview.Driver'
       fleet_group_name:
         type: string
+      gsm_signal:
+        type: number
+      has_service_record:
+        type: boolean
+      km_since_service:
+        description: |-
+          Maintenance context: km driven since the last recorded service. Nil when
+          unknown; HasServiceRecord=false means no maintenance record exists yet.
+        type: number
       license_plate:
         type: string
       online:
@@ -654,6 +760,8 @@ definitions:
         $ref: '#/definitions/liveview.Tracker'
       vehicle_id:
         type: integer
+      vehicle_type:
+        type: string
     type: object
   maintenance.Counts:
     properties:
@@ -677,6 +785,13 @@ definitions:
       km_interval:
         type: number
       km_reminder:
+        type: number
+      last_done_at:
+        description: |-
+          When the last service happened and the odometer reading at that time —
+          this is what "km since last service" everywhere is computed from.
+        type: string
+      last_odometer:
         type: number
       next_due_at:
         type: string
@@ -762,6 +877,23 @@ definitions:
       urgency:
         type: string
     type: object
+  notifrule.VehicleRule:
+    properties:
+      alert_code:
+        type: string
+      attached:
+        type: boolean
+      id:
+        type: integer
+      rule_name:
+        type: string
+      status:
+        type: string
+      threshold:
+        type: number
+      urgency:
+        type: string
+    type: object
   notifrule.WriteRequest:
     properties:
       alert_code:
@@ -816,6 +948,13 @@ definitions:
       severity:
         type: string
     type: object
+  report.Column:
+    properties:
+      key:
+        type: string
+      label:
+        type: string
+    type: object
   report.Meta:
     properties:
       category:
@@ -832,6 +971,39 @@ definitions:
         type: string
       title:
         type: string
+    type: object
+  report.Result:
+    properties:
+      columns:
+        items:
+          $ref: '#/definitions/report.Column'
+        type: array
+      key:
+        type: string
+      note:
+        description: e.g. missing-sensor explanation
+        type: string
+      rows:
+        items:
+          additionalProperties: {}
+          type: object
+        type: array
+      title:
+        type: string
+    type: object
+  report.RunRequest:
+    properties:
+      alert_code:
+        type: string
+      from:
+        type: string
+      limit:
+        description: overspeed limit km/h (default 60)
+        type: number
+      to:
+        type: string
+      vehicle_id:
+        type: integer
     type: object
   report.TripRequest:
     properties:
@@ -946,6 +1118,33 @@ definitions:
       weight:
         type: integer
     type: object
+  telemetrysync.StateResponse:
+    properties:
+      battery_v:
+        description: latest external voltage (V)
+        type: number
+      engine_hours:
+        description: cumulative hours (ignition-on)
+        type: number
+      gsm_signal:
+        description: latest GSM signal (0-5)
+        type: number
+      km_since_service:
+        type: number
+      last_sample_at:
+        type: string
+      last_service_at:
+        description: YYYY-MM-DD
+        type: string
+      last_service_km:
+        description: |-
+          Maintenance context for the odometer: km driven since the most recent
+          recorded service. Nil when the vehicle has no service records yet.
+        type: number
+      odometer_km:
+        description: latest telemetry odometer
+        type: number
+    type: object
   tracker.CreateRequest:
     properties:
       imei:
@@ -1021,6 +1220,12 @@ definitions:
     type: object
   trackinglink.PublicVehicle:
     properties:
+      bearing:
+        description: heading for the truck icon
+        type: number
+      drive_state:
+        description: moving|idle|parking|offline (icon color)
+        type: string
       driver:
         type: string
       last_seen:
@@ -1041,6 +1246,9 @@ definitions:
   trackinglink.WriteRequest:
     properties:
       duration_days:
+        type: integer
+      duration_hours:
+        description: takes precedence over days when set
         type: integer
       expires_at:
         type: string
@@ -1560,6 +1768,69 @@ paths:
       summary: 'Control Tower: vehicles grouped by drive state with unresolved alerts'
       tags:
       - control-tower
+  /v1/coverage:
+    get:
+      parameters:
+      - description: signal | terrain | altitude
+        in: query
+        name: metric
+        type: string
+      - description: 'comma-separated: telkomsel,indosat,xl (omit for all)'
+        in: query
+        name: provider
+        type: string
+      - description: minLon,minLat,maxLon,maxLat
+        in: query
+        name: bbox
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Signal / terrain coverage grid (proxied GeoJSON from the telemetry
+        service)
+      tags:
+      - live-view
+  /v1/dashboard/layout:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dashboard.LayoutResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the current user's dashboard layout
+      tags:
+      - dashboard
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: layout
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dashboard.LayoutResponse'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Save the current user's dashboard layout
+      tags:
+      - dashboard
   /v1/documents:
     get:
       parameters:
@@ -1853,6 +2124,123 @@ paths:
       summary: Update a fleet group
       tags:
       - fleet-groups
+  /v1/geofences:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/geofence.Geofence'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List geofences
+      tags:
+      - geofences
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: geofence
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/geofence.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/geofence.Geofence'
+      security:
+      - BearerAuth: []
+      summary: Create a circle geofence
+      tags:
+      - geofences
+  /v1/geofences/{id}:
+    delete:
+      parameters:
+      - description: geofence id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a geofence
+      tags:
+      - geofences
+  /v1/geofences/{id}/vehicles:
+    get:
+      parameters:
+      - description: geofence id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/geofence.AssignedVehicle'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Vehicles assigned to a geofence (they get Enter/Exit alerts)
+      tags:
+      - geofences
+  /v1/geofences/{id}/vehicles/{vehicleID}:
+    delete:
+      parameters:
+      - description: geofence id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: vehicle id
+        in: path
+        name: vehicleID
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Unassign a vehicle from a geofence
+      tags:
+      - geofences
+    post:
+      parameters:
+      - description: geofence id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: vehicle id
+        in: path
+        name: vehicleID
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Assign a vehicle to a geofence (starts Enter/Exit alerts)
+      tags:
+      - geofences
   /v1/live-view:
     get:
       parameters:
@@ -1996,6 +2384,77 @@ paths:
       summary: Update a notification rule
       tags:
       - notification-rules
+  /v1/notifications/mark-all-read:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: int64
+              type: integer
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Mark all unchecked alerts as checked (mark all read)
+      tags:
+      - alerts
+  /v1/prefs:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: The calling user's UI preferences (opaque JSON)
+      tags:
+      - prefs
+    put:
+      consumes:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Replace the calling user's UI preferences (opaque JSON)
+      tags:
+      - prefs
+  /v1/reports/{key}/run:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: report key
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: parameters
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/report.RunRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/report.Result'
+      security:
+      - BearerAuth: []
+      summary: Run any catalog report by key (generic columns + rows)
+      tags:
+      - reports
   /v1/reports/catalog:
     get:
       produces:
@@ -2623,9 +3082,13 @@ paths:
         name: to
         required: true
         type: string
-      - description: overspeed limit km/h (default 80)
+      - description: overspeed limit km/h (default 60)
         in: query
         name: limit
+        type: number
+      - description: minutes a stop must exceed to count as idle (default 120)
+        in: query
+        name: idle_threshold
         type: number
       produces:
       - application/json
@@ -2661,6 +3124,10 @@ paths:
         in: query
         name: max_points
         type: integer
+      - description: overspeed limit km/h for the over_limit flag (default 60)
+        in: query
+        name: limit
+        type: number
       produces:
       - application/json
       responses:
@@ -2671,6 +3138,88 @@ paths:
       security:
       - BearerAuth: []
       summary: Vehicle historical track (trip history)
+      tags:
+      - live-view
+  /v1/vehicles/{vehicle_id}/rules:
+    get:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: vehicle_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-notifrule_VehicleRule'
+      security:
+      - BearerAuth: []
+      summary: Rules applicable to a vehicle, each flagged attached/not
+      tags:
+      - notification-rules
+  /v1/vehicles/{vehicle_id}/rules/{rule_id}:
+    delete:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: vehicle_id
+        required: true
+        type: integer
+      - description: rule id
+        in: path
+        name: rule_id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Detach a rule from a vehicle
+      tags:
+      - notification-rules
+    post:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: vehicle_id
+        required: true
+        type: integer
+      - description: rule id
+        in: path
+        name: rule_id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Attach a rule to a vehicle
+      tags:
+      - notification-rules
+  /v1/vehicles/{vehicle_id}/telemetry-state:
+    get:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: vehicle_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/telemetrysync.StateResponse'
+      security:
+      - BearerAuth: []
+      summary: Accumulated telemetry state for a vehicle (engine hours, odometer,
+        battery)
       tags:
       - live-view
 securityDefinitions:

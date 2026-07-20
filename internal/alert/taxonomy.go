@@ -26,6 +26,17 @@ type AlertType struct {
 	Scorecard bool `json:"scorecard"`
 }
 
+// LabelFor returns the canonical English display name for an alert code
+// (analytics buckets group by code; names carry per-event values).
+func LabelFor(code string) string {
+	for _, t := range Taxonomy {
+		if t.Code == code {
+			return t.NameEN
+		}
+	}
+	return code
+}
+
 // Taxonomy is the master catalog of alert types (the 18+ rules to replicate).
 var Taxonomy = []AlertType{
 	{"FUEL_GAIN", "Penambahan Bahan Bakar", "Fuel Gain", SourceGPS, SevImportant, false},
@@ -37,6 +48,7 @@ var Taxonomy = []AlertType{
 	{"HARSH_ACCEL", "Akselerasi Mendadak", "Harsh Acceleration / Sudden Acceleration", SourceGPS, SevImportant, true},
 	{"SHARP_TURN", "Belokan Tajam", "Sharp Turn", SourceGPS, SevImportant, true},
 	{"OVERSPEED", "Melebihi Batas Kecepatan", "Speed Over Safety Limit", SourceGPS, SevUrgent, true},
+	{"BATTERY_DROP", "Baterai Turun / Terputus", "Battery Drop / Disconnect", SourceGPS, SevUrgent, false},
 	{"DMS_SHOCK", "DMS - Guncangan", "Shock", SourceCamera, SevImportant, false},
 	{"DMS_CAMERA_BLOCKED", "DMS - Kamera Terhalang", "Camera Blocked", SourceCamera, SevImportant, false},
 	{"DMS_SEATBELT", "DMS - Sabuk Pengaman", "Seatbelt", SourceCamera, SevImportant, false},

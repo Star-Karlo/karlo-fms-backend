@@ -46,6 +46,14 @@ type ApiToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type DashboardLayout struct {
+	ID        int64              `json:"id"`
+	TenantID  int64              `json:"tenant_id"`
+	UserID    int64              `json:"user_id"`
+	Layout    []byte             `json:"layout"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Document struct {
 	ID        int64              `json:"id"`
 	TenantID  int64              `json:"tenant_id"`
@@ -128,6 +136,14 @@ type RefreshToken struct {
 	ReplacedBy *int64             `json:"replaced_by"`
 	UserAgent  *string            `json:"user_agent"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type RuleVehicle struct {
+	ID        int64              `json:"id"`
+	TenantID  int64              `json:"tenant_id"`
+	RuleID    int64              `json:"rule_id"`
+	VehicleID int64              `json:"vehicle_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type ServiceSchedule struct {
@@ -217,4 +233,20 @@ type Vehicle struct {
 	Attributes      []byte             `json:"attributes"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type VehicleTelemetryState struct {
+	ID                 int64              `json:"id"`
+	TenantID           int64              `json:"tenant_id"`
+	VehicleID          int64              `json:"vehicle_id"`
+	EngineHoursSeconds int64              `json:"engine_hours_seconds"`
+	LastIgnition       *bool              `json:"last_ignition"`
+	LastOdometerKm     pgtype.Numeric     `json:"last_odometer_km"`
+	LastVoltageMv      pgtype.Numeric     `json:"last_voltage_mv"`
+	LastGsmSignal      pgtype.Numeric     `json:"last_gsm_signal"`
+	LastLat            *float64           `json:"last_lat"`
+	LastLon            *float64           `json:"last_lon"`
+	LastSampleAt       pgtype.Timestamptz `json:"last_sample_at"`
+	InsideGeofences    []byte             `json:"inside_geofences"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }

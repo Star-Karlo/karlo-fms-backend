@@ -32,21 +32,22 @@ type Meta struct {
 // Catalog is the report template catalog (representative subset of the ~29).
 var Catalog = []Meta{
 	{"vehicle-trip-history", "Vehicle Trip History", "Enriched GPS pings for a vehicle over a period.", "Vehicle", "Trip", true},
-	{"vehicle-trip-summary", "Vehicle Trip Summary", "Per-trip distance, duration and stops.", "Vehicle", "Trip", false},
-	{"vehicle-usage-summary", "Vehicle Usage Summary", "Daily utilization per vehicle.", "Vehicle", "Trip", false},
-	{"vehicle-stop-history", "Vehicle Stop History", "Where and how long vehicles stopped.", "Vehicle", "Trip", false},
-	{"gps-connection-history", "GPS Offline/Connection History", "Device online/offline transitions.", "Vehicle", "Trip", false},
-	{"geofence-inout", "Geolocation Entry/Exit", "Geofence enter/exit and dwell time.", "Vehicle", "Geolocation", false},
+	{"vehicle-trip-summary", "Vehicle Trip Summary", "Per-trip distance, duration and stops.", "Vehicle", "Trip", true},
+	{"vehicle-usage-summary", "Vehicle Usage Summary", "Daily utilization per vehicle.", "Vehicle", "Trip", true},
+	{"vehicle-stop-history", "Vehicle Stop History", "Where and how long vehicles stopped.", "Vehicle", "Trip", true},
+	{"gps-connection-history", "GPS Offline/Connection History", "Device online/offline transitions.", "Vehicle", "Trip", true},
+	{"geofence-inout", "Geolocation Entry/Exit", "Geofence enter/exit and dwell time.", "Vehicle", "Geolocation", true},
 	{"vehicle-alerts-history", "Vehicle Alerts History", "All safety/telematics alerts over a period.", "Vehicle", "Alert", true},
-	{"vehicle-alerts-summary", "Vehicle Alerts Summary", "Alert counts by type and vehicle.", "Vehicle", "Alert", false},
-	{"speeding-violations", "Speeding Violations", "Overspeed events with actual vs limit.", "Vehicle", "Alert", false},
-	{"service-scheduling-detail", "Service Scheduling Detail", "Upcoming and overdue services.", "Vehicle", "Service", false},
-	{"fuel-history", "Fuel History", "Fuel level and refuel/theft events.", "Vehicle", "Fuel", false},
-	{"temperature-history", "Temperature History", "Cold-chain temperature over time.", "Vehicle", "Temperature", false},
-	{"door-open-duration", "Door Open Duration", "Door-open events and durations.", "Vehicle", "Door", false},
-	{"pto-active-duration", "PTO Active Duration", "Power-take-off active periods.", "Vehicle", "PTO", false},
-	{"driver-management", "Driver Management", "Driver roster and assignments.", "Driver", "Driver", false},
-	{"driver-operational-summary", "Driver Operational Summary", "Per-driver trips, distance and behavior.", "Driver", "Driver", false},
+	{"vehicle-alerts-summary", "Vehicle Alerts Summary", "Alert counts by type and vehicle.", "Vehicle", "Alert", true},
+	{"speeding-violations", "Speeding Violations", "Overspeed events with actual vs limit.", "Vehicle", "Alert", true},
+	{"harsh-driving", "Harsh Driving Events", "Sudden acceleration / braking from GPS speed deltas.", "Vehicle", "Alert", true},
+	{"service-scheduling-detail", "Service Scheduling Detail", "Upcoming and overdue services.", "Vehicle", "Service", true},
+	{"fuel-history", "Fuel History", "Fuel level and refuel/theft events.", "Vehicle", "Fuel", true},
+	{"temperature-history", "Temperature History", "Cold-chain temperature over time.", "Vehicle", "Temperature", true},
+	{"door-open-duration", "Door Open Duration", "Door-open events and durations.", "Vehicle", "Door", true},
+	{"pto-active-duration", "PTO Active Duration", "Power-take-off active periods.", "Vehicle", "PTO", true},
+	{"driver-management", "Driver Management", "Driver roster and assignments.", "Driver", "Driver", true},
+	{"driver-operational-summary", "Driver Operational Summary", "Per-driver trips, distance and behavior.", "Driver", "Driver", true},
 }
 
 // TripRow is one row of the Vehicle Trip History report.
@@ -93,6 +94,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/reports/catalog", h.catalog)
 	r.Post("/v1/reports/vehicle-trip-history", h.tripHistory)
 	r.Post("/v1/reports/vehicle-alerts-history", h.alertsHistory)
+	// Generic runner for every catalog report (columns + rows).
+	r.Post("/v1/reports/{key}/run", h.run)
 }
 
 // catalog godoc

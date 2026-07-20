@@ -115,6 +115,32 @@ func (c *Client) History(ctx context.Context, imei string, from, to time.Time, f
 	return page.Points, nil
 }
 
+// Coverage proxies the ingest service's /v1/coverage grid (raw GeoJSON), passing
+// the query string (metric, provider, bbox) straight through.
+func (c *Client) Coverage(ctx context.Context, rawQuery string) (json.RawMessage, error) {
+	path := "/v1/coverage"
+	if rawQuery != "" {
+		path += "?" + rawQuery
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.key != "" {
+		req.Header.Set("X-Ingest-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("telemetry %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return io.ReadAll(resp.Body)
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
 	if err != nil {

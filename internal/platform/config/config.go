@@ -45,7 +45,7 @@ func Load() Config {
 
 		TelemetryBaseURL: Env("TELEMETRY_BASE_URL", "http://localhost:8082"),
 		TelemetryAPIKey:  Env("TELEMETRY_API_KEY", ""),
-		TelemetryTimeout: time.Duration(EnvInt("TELEMETRY_TIMEOUT_MS", 4000)) * time.Millisecond,
+		TelemetryTimeout: time.Duration(EnvInt("TELEMETRY_TIMEOUT_MS", 15000)) * time.Millisecond,
 		LiveCacheTTL:     time.Duration(EnvInt("LIVE_CACHE_TTL_SEC", 8)) * time.Second,
 		CORSOrigins:      splitCSV(Env("CORS_ORIGINS", "")),
 	}

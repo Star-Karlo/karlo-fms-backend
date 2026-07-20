@@ -126,11 +126,11 @@ func (q *Queries) AlertCountBySeverity(ctx context.Context, arg AlertCountBySeve
 }
 
 const alertCountByType = `-- name: AlertCountByType :many
-SELECT alert_code, alert_name, count(*)::bigint AS count
+SELECT alert_code, count(*)::bigint AS count
 FROM alerts
 WHERE ($1::timestamptz IS NULL OR occurred_at >= $1)
   AND ($2::timestamptz IS NULL OR occurred_at <= $2)
-GROUP BY alert_code, alert_name ORDER BY count DESC
+GROUP BY alert_code ORDER BY count DESC
 `
 
 type AlertCountByTypeParams struct {
@@ -140,10 +140,11 @@ type AlertCountByTypeParams struct {
 
 type AlertCountByTypeRow struct {
 	AlertCode *string `json:"alert_code"`
-	AlertName *string `json:"alert_name"`
 	Count     int64   `json:"count"`
 }
 
+// Group by CODE only — alert_name carries per-event values (speeds, voltages)
+// and would explode into one bucket per event.
 func (q *Queries) AlertCountByType(ctx context.Context, arg AlertCountByTypeParams) ([]AlertCountByTypeRow, error) {
 	rows, err := q.db.Query(ctx, alertCountByType, arg.From, arg.To)
 	if err != nil {
@@ -153,7 +154,7 @@ func (q *Queries) AlertCountByType(ctx context.Context, arg AlertCountByTypePara
 	items := []AlertCountByTypeRow{}
 	for rows.Next() {
 		var i AlertCountByTypeRow
-		if err := rows.Scan(&i.AlertCode, &i.AlertName, &i.Count); err != nil {
+		if err := rows.Scan(&i.AlertCode, &i.Count); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -308,6 +309,21 @@ func (q *Queries) AlertsInWindow(ctx context.Context, arg AlertsInWindowParams) 
 	return items, nil
 }
 
+const checkAllAlerts = `-- name: CheckAllAlerts :execrows
+UPDATE alerts
+SET check_status = 'checked', checked_at = now()
+WHERE check_status = 'unchecked'
+`
+
+// Mark every currently-unchecked alert as checked (tenant-scoped via RLS).
+func (q *Queries) CheckAllAlerts(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, checkAllAlerts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countAlerts = `-- name: CountAlerts :one
 SELECT count(*) FROM alerts a
 LEFT JOIN vehicles v ON v.id = a.vehicle_id
@@ -346,6 +362,71 @@ func (q *Queries) CountAlerts(ctx context.Context, arg CountAlertsParams) (int64
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countRecentAlert = `-- name: CountRecentAlert :one
+SELECT count(*) FROM alerts
+WHERE tenant_id = $1 AND vehicle_id = $2
+  AND alert_code = $3
+  AND occurred_at > now() - make_interval(mins => $4::int)
+`
+
+type CountRecentAlertParams struct {
+	TenantID    int64   `json:"tenant_id"`
+	VehicleID   *int64  `json:"vehicle_id"`
+	AlertCode   *string `json:"alert_code"`
+	CooldownMin int32   `json:"cooldown_min"`
+}
+
+// Dedup guard: has a same-code alert for this vehicle fired within the cooldown?
+func (q *Queries) CountRecentAlert(ctx context.Context, arg CountRecentAlertParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRecentAlert,
+		arg.TenantID,
+		arg.VehicleID,
+		arg.AlertCode,
+		arg.CooldownMin,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createAlert = `-- name: CreateAlert :one
+INSERT INTO alerts (tenant_id, vehicle_id, alert_code, alert_name, severity,
+                    device_source, occurred_at, actual_value, limit_value, lat, lon, check_status)
+VALUES ($1, $2, $3, $4, $5,
+        'gps', now(), $6, $7, $8, $9, 'unchecked')
+RETURNING id
+`
+
+type CreateAlertParams struct {
+	TenantID    int64          `json:"tenant_id"`
+	VehicleID   *int64         `json:"vehicle_id"`
+	AlertCode   *string        `json:"alert_code"`
+	AlertName   *string        `json:"alert_name"`
+	Severity    *string        `json:"severity"`
+	ActualValue pgtype.Numeric `json:"actual_value"`
+	LimitValue  pgtype.Numeric `json:"limit_value"`
+	Lat         *float64       `json:"lat"`
+	Lon         *float64       `json:"lon"`
+}
+
+// Insert a generated alert (from the notification-rule engine).
+func (q *Queries) CreateAlert(ctx context.Context, arg CreateAlertParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createAlert,
+		arg.TenantID,
+		arg.VehicleID,
+		arg.AlertCode,
+		arg.AlertName,
+		arg.Severity,
+		arg.ActualValue,
+		arg.LimitValue,
+		arg.Lat,
+		arg.Lon,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getAlert = `-- name: GetAlert :one

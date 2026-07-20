@@ -112,7 +112,33 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Group(func(mr chi.Router) {
 		mr.Use(auth.RequireRole(auth.RoleOperator))
 		mr.Patch("/v1/alerts/{id}/check", h.check)
+		// Distinct prefix — "/v1/alerts/check-all" collides with the /v1/alerts/{id}
+		// param route in chi and 405s.
+		mr.Post("/v1/notifications/mark-all-read", h.checkAll)
 	})
+}
+
+// checkAll godoc
+//
+//	@Summary	Mark all unchecked alerts as checked (mark all read)
+//	@Tags		alerts
+//	@Security	BearerAuth
+//	@Produce	json
+//	@Success	200	{object}	map[string]int64
+//	@Router		/v1/notifications/mark-all-read [post]
+func (h *Handler) checkAll(w http.ResponseWriter, r *http.Request) {
+	tid := auth.TenantID(r.Context())
+	var n int64
+	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		var err error
+		n, err = store.New(tx).CheckAllAlerts(r.Context())
+		return err
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]int64{"checked": n})
 }
 
 // taxonomy godoc
@@ -195,7 +221,7 @@ func (h *Handler) analytics(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, t := range types {
 			code := deref(t.AlertCode)
-			out.ByType = append(out.ByType, Bucket{Key: code, Label: deref(t.AlertName), Count: t.Count})
+			out.ByType = append(out.ByType, Bucket{Key: code, Label: LabelFor(code), Count: t.Count})
 			out.Total += t.Count
 		}
 		sev, err := st.AlertCountBySeverity(r.Context(), store.AlertCountBySeverityParams{From: from, To: to})
