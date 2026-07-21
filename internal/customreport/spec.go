@@ -38,6 +38,12 @@ type Spec struct {
 
 	// Format is the default the user picked; the download can override it.
 	Format Format `json:"format"`
+
+	// Narrative overrides the by-format default: prose for pdf/docx, raw tables
+	// for xlsx/csv. Nil means "use the default", which is almost always right —
+	// the point is that the same saved report gives an executive a readable
+	// document and an analyst a spreadsheet, without being configured twice.
+	Narrative *bool `json:"narrative,omitempty"`
 }
 
 // Section is one block of the report: one underlying report, run with params.

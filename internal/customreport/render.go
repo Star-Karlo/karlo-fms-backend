@@ -29,14 +29,19 @@ type Doc struct {
 	RangeLabel string
 	Generated  time.Time
 	Sections   []DocSection
+	// Summary is the executive summary, written at render time from the data
+	// this run produced. Empty for raw-data formats.
+	Summary string
 }
 
 // DocSection is one section's results after column selection has been applied.
 type DocSection struct {
-	Title   string
-	Note    string
-	Headers []string
-	Rows    [][]string
+	Title string
+	// Commentary explains the table beneath it. Empty for raw-data formats.
+	Commentary string
+	Note       string
+	Headers    []string
+	Rows       [][]string
 	// Numeric marks columns whose values are numbers, so Excel writes them as
 	// numbers rather than text. Without it every figure arrives as a string and
 	// the first thing the recipient does is retype the column to sum it —
@@ -111,6 +116,7 @@ func renderXLSX(doc Doc) ([]byte, error) {
 	put("Period", doc.RangeLabel)
 	put("Generated", doc.Generated.Format("2 Jan 2006 15:04"))
 	put("Notes", doc.Notes)
+	put("Summary", doc.Summary)
 
 	used := map[string]int{cover: 1}
 	for i, sec := range doc.Sections {
@@ -297,12 +303,26 @@ func renderPDF(doc Doc) ([]byte, error) {
 		pdf.Ln(1)
 		pdf.MultiCell(usable, 5, tr(doc.Notes), "", "L", false)
 	}
+	if doc.Summary != "" {
+		pdf.Ln(3)
+		pdf.SetFont("Helvetica", "B", 10)
+		pdf.SetTextColor(31, 56, 100)
+		pdf.MultiCell(usable, 5, "Summary", "", "L", false)
+		pdf.SetFont("Helvetica", "", 9.5)
+		pdf.SetTextColor(40, 40, 40)
+		pdf.MultiCell(usable, 5, tr(doc.Summary), "", "L", false)
+	}
 	pdf.Ln(3)
 
 	for _, sec := range doc.Sections {
 		pdf.SetTextColor(0, 0, 0)
 		pdf.SetFont("Helvetica", "B", 11)
 		pdf.MultiCell(usable, 6, tr(sec.Title), "", "L", false)
+		if sec.Commentary != "" {
+			pdf.SetFont("Helvetica", "", 9)
+			pdf.SetTextColor(40, 40, 40)
+			pdf.MultiCell(usable, 4.5, tr(sec.Commentary), "", "L", false)
+		}
 		if sec.Note != "" {
 			pdf.SetFont("Helvetica", "I", 8)
 			pdf.SetTextColor(120, 120, 120)
@@ -477,9 +497,16 @@ func renderDOCX(doc Doc) ([]byte, error) {
 	if doc.Notes != "" {
 		body.WriteString(para(doc.Notes, "", false, 20))
 	}
+	if doc.Summary != "" {
+		body.WriteString(para("Summary", "", true, 24))
+		body.WriteString(para(doc.Summary, "", false, 20))
+	}
 
 	for _, sec := range doc.Sections {
 		body.WriteString(para(sec.Title, "", true, 26))
+		if sec.Commentary != "" {
+			body.WriteString(para(sec.Commentary, "", false, 20))
+		}
 		if sec.Note != "" {
 			body.WriteString(para(sec.Note, "", false, 18))
 		}

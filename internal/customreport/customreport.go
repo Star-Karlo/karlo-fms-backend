@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,10 +36,22 @@ const maxRowsPerSection = 20000
 type Service struct {
 	pool    *db.Pool
 	reports *report.Service
+	// narrator is optional. Without it (Bedrock unconfigured) a document still
+	// renders — tables, no prose — rather than failing, because a report the
+	// user can read beats an error about a feature they did not ask for.
+	narrator Narrator
 }
 
 func NewService(pool *db.Pool, reports *report.Service) *Service {
 	return &Service{pool: pool, reports: reports}
+}
+
+// WithNarrator attaches the prose writer. Separate from the constructor to keep
+// the dependency one-way: the AI package imports this one for its types, so
+// this one must not import the AI package.
+func (s *Service) WithNarrator(n Narrator) *Service {
+	s.narrator = n
+	return s
 }
 
 // Definition is a saved report as stored.
@@ -315,6 +328,23 @@ func cellString(v any) string {
 	}
 }
 
+// narrate adds prose to a document when the format calls for it.
+//
+// Failure is deliberately non-fatal: if the model is unavailable or slow, the
+// user gets their tables. A missing paragraph is a worse report; a failed
+// download is no report at all.
+func (s *Service) narrate(ctx context.Context, doc *Doc, spec Spec, format Format) {
+	if s.narrator == nil || !wantsNarrative(spec, format) {
+		return
+	}
+	n, err := s.narrator.Narrate(ctx, BuildDigest(*doc, spec))
+	if err != nil {
+		log.Printf("customreport: narration unavailable, rendering tables only: %v", err)
+		return
+	}
+	applyNarrative(doc, n)
+}
+
 // ---- storage ----------------------------------------------------------------
 
 func (s *Service) List(ctx context.Context, tenantID, userID int64) ([]Definition, error) {
@@ -548,6 +578,7 @@ func (h *Handler) write(w http.ResponseWriter, r *http.Request, spec Spec) {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.svc.narrate(r.Context(), &doc, spec, format)
 	out, err := Render(doc, format)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "could not render the document")

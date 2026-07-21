@@ -80,7 +80,13 @@ func main() {
 	reportH := report.NewHandler(reportSvc)
 	// Custom reports are a named COMBINATION of the catalog reports above, so
 	// they share that service rather than re-querying anything themselves.
-	customReportH := customreport.NewHandler(customreport.NewService(pool, reportSvc))
+	aiReportH := aireport.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
+	// The AI package writes report prose; the report package renders it. The
+	// dependency runs one way (aireport -> customreport), so the narrator is
+	// injected rather than imported.
+	customReportH := customreport.NewHandler(
+		customreport.NewService(pool, reportSvc).WithNarrator(aiReportH),
+	)
 	licenseH := license.NewHandler(pool)
 	maintenanceH := maintenance.NewHandler(pool)
 	scorecardH := scorecard.NewHandler(pool)
@@ -92,9 +98,6 @@ func main() {
 	// unauthorised Bedrock config disables just this endpoint (503) rather
 	// than failing startup.
 	aiDashH := aidash.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
-	// Report composition builds its catalog from the report package itself —
-	// reports live in the backend, so that is where their columns are known.
-	aiReportH := aireport.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
 	geofenceH := geofence.NewHandler(pool)
 	prefsH := prefs.NewHandler(pool)
 	telemetrySyncH := telemetrysync.NewHandler(pool)
