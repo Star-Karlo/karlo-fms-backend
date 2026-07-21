@@ -307,6 +307,74 @@ definitions:
       tenant_id:
         type: integer
     type: object
+  company.LogoUploadRequest:
+    properties:
+      filename:
+        type: string
+      mime:
+        type: string
+      size:
+        type: integer
+    type: object
+  company.Profile:
+    properties:
+      address:
+        type: string
+      city:
+        type: string
+      country:
+        type: string
+      email:
+        type: string
+      has_logo:
+        description: |-
+          HasLogo rather than the key: the key is an internal detail and the client
+          only needs to know whether to show the logo or the upload prompt.
+        type: boolean
+      id:
+        type: integer
+      legal_name:
+        type: string
+      name:
+        type: string
+      phone:
+        type: string
+      postal_code:
+        type: string
+      province:
+        type: string
+      slug:
+        type: string
+      tax_id:
+        type: string
+      website:
+        type: string
+    type: object
+  company.UpdateRequest:
+    properties:
+      address:
+        type: string
+      city:
+        type: string
+      country:
+        type: string
+      email:
+        type: string
+      legal_name:
+        type: string
+      name:
+        type: string
+      phone:
+        type: string
+      postal_code:
+        type: string
+      province:
+        type: string
+      tax_id:
+        type: string
+      website:
+        type: string
+    type: object
   controltower.AlertLine:
     properties:
       alert_code:
@@ -2347,6 +2415,120 @@ paths:
       summary: Rotate a refresh token for a new token pair
       tags:
       - auth
+  /v1/company:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/company.Profile'
+      security:
+      - BearerAuth: []
+      summary: The signed-in user's company profile
+      tags:
+      - company
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: company profile
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/company.UpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/company.Profile'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update the company profile (admin only)
+      tags:
+      - company
+  /v1/company/logo:
+    delete:
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Remove the company logo (admin only)
+      tags:
+      - company
+    get:
+      description: Longer-lived than a document link because the logo is rendered
+        inline on every page that shows it; a five-minute URL would expire while a
+        report was still open.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Presigned URL to display the company logo
+      tags:
+      - company
+    post:
+      consumes:
+      - application/json
+      description: 'Same two-step flow as document upload: this returns a short-lived
+        S3 PUT URL signed with the exact size and content type. One logo per company
+        — uploading replaces the previous one.'
+      parameters:
+      - description: file metadata
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/company.LogoUploadRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Presigned URL for uploading the company logo (admin only)
+      tags:
+      - company
   /v1/control-tower:
     get:
       parameters:

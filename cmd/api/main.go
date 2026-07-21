@@ -28,6 +28,7 @@ import (
 	"github.com/karlo/fms-backend/internal/alert"
 	"github.com/karlo/fms-backend/internal/apitoken"
 	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/company"
 	"github.com/karlo/fms-backend/internal/controltower"
 	"github.com/karlo/fms-backend/internal/customreport"
 	"github.com/karlo/fms-backend/internal/dashboard"
@@ -121,6 +122,7 @@ func main() {
 	// Document upload/download. An empty DOCUMENTS_BUCKET disables just
 	// these endpoints (503) rather than failing startup.
 	documentH := document.NewHandler(ctx, pool, cfg.AWSRegion, cfg.DocumentsBucket)
+	companyH := company.NewHandler(ctx, pool, cfg.AWSRegion, cfg.DocumentsBucket)
 	prefsH := prefs.NewHandler(pool)
 	telemetrySyncH := telemetrysync.NewHandler(pool)
 
@@ -172,6 +174,7 @@ func main() {
 		documentH.Routes(pr)
 		telemetrySyncH.Routes(pr)
 		aiDashH.Routes(pr)
+		companyH.Routes(pr)
 		prefsH.Routes(pr)
 	})
 
