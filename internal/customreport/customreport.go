@@ -541,7 +541,26 @@ func (h *Handler) renderSaved(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "report not found")
 		return
 	}
-	h.write(w, r, d.Spec)
+
+	// A saved report is a TEMPLATE — which sections, which columns, how they
+	// are named. The period is a property of the RUN, not of the template, so
+	// it can be overridden per download without editing or duplicating the
+	// report. "The same report, for last month" should not require a second
+	// saved report.
+	spec := d.Spec
+	if r.Body != nil && r.ContentLength > 0 {
+		var override struct {
+			Range *Range `json:"range,omitempty"`
+		}
+		if err := httpx.DecodeJSON(r, &override); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		if override.Range != nil {
+			spec.Range = *override.Range
+		}
+	}
+	h.write(w, r, spec)
 }
 
 // renderAdhoc renders a spec that has not been saved.
