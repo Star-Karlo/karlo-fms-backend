@@ -36,6 +36,7 @@ import (
 	"github.com/karlo/fms-backend/internal/geofence"
 	"github.com/karlo/fms-backend/internal/license"
 	"github.com/karlo/fms-backend/internal/liveview"
+	"github.com/karlo/fms-backend/internal/mailer"
 	"github.com/karlo/fms-backend/internal/maintenance"
 	"github.com/karlo/fms-backend/internal/notifengine"
 	"github.com/karlo/fms-backend/internal/notifrule"
@@ -86,9 +87,22 @@ func main() {
 	// The AI package writes report prose; the report package renders it. The
 	// dependency runs one way (aireport -> customreport), so the narrator is
 	// injected rather than imported.
-	customReportH := customreport.NewHandler(
-		customreport.NewService(pool, reportSvc).WithNarrator(aiReportH),
-	)
+	// Scheduled reports need a mail transport. Without MAIL_FROM the service
+	// still serves every report; only the schedule runner stays off, which is
+	// better than a runner that renders reports every morning and drops them.
+	customReportSvc := customreport.NewService(pool, reportSvc).WithNarrator(aiReportH)
+	if cfg.MailFrom != "" {
+		sender, err := mailer.NewSES(ctx, cfg.AWSRegion, cfg.MailFrom)
+		if err != nil {
+			log.Printf("mailer: disabled (%v)", err)
+		} else {
+			customReportSvc = customReportSvc.WithMailer(sender)
+			go customReportSvc.RunSchedules(ctx)
+		}
+	} else {
+		log.Printf("mailer: MAIL_FROM not set; scheduled reports are disabled")
+	}
+	customReportH := customreport.NewHandler(customReportSvc)
 	licenseH := license.NewHandler(pool)
 	maintenanceH := maintenance.NewHandler(pool)
 	scorecardH := scorecard.NewHandler(pool)

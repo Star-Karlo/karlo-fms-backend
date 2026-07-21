@@ -30,6 +30,10 @@ type Config struct {
 	// ap-southeast-1 only as an inference profile, hence the "apac." prefix.
 	AWSRegion      string
 	BedrockModelID string
+	// MailFrom enables scheduled report email. Empty disables the runner
+	// rather than failing startup — a deployment without email should still
+	// serve every other report.
+	MailFrom string
 
 	// CORSOrigins is the allowlist of browser origins (e.g. https://fms.karlo.id).
 	// Empty ⇒ reflect any origin (fine for local dev behind the Vite proxy).
@@ -43,6 +47,7 @@ func Load() Config {
 		Addr:           Env("API_ADDR", ":8080"),
 		AWSRegion:      Env("AWS_REGION", "ap-southeast-1"),
 		BedrockModelID: Env("BEDROCK_MODEL_ID", "apac.amazon.nova-pro-v1:0"),
+		MailFrom:       Env("MAIL_FROM", ""),
 		// Host ports 5433/6380 avoid clashing with the telemetry stack (5432/6379).
 		DatabaseURL: Env("DATABASE_URL", "postgres://fms_app:fms_app@localhost:5433/fms_app"),
 		RedisAddr:   Env("REDIS_ADDR", "localhost:6380"),

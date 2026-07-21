@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/mailer"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 	"github.com/karlo/fms-backend/internal/report"
@@ -40,6 +41,8 @@ type Service struct {
 	// renders — tables, no prose — rather than failing, because a report the
 	// user can read beats an error about a feature they did not ask for.
 	narrator Narrator
+	// mail is the transport for scheduled reports. Nil disables the runner.
+	mail mailer.Sender
 }
 
 func NewService(pool *db.Pool, reports *report.Service) *Service {
@@ -452,6 +455,98 @@ func (h *Handler) Routes(r chi.Router) {
 	// Render without saving, so a proposal can be previewed or downloaded
 	// before the user commits to naming it.
 	r.Post("/v1/reports/custom/render", h.renderAdhoc)
+
+	r.Get("/v1/reports/schedules", h.listSchedules)
+	r.Post("/v1/reports/schedules", h.saveSchedule)
+	r.Delete("/v1/reports/schedules/{id}", h.deleteSchedule)
+	// Send one now, to prove a schedule works before waiting a week for it.
+	r.Post("/v1/reports/schedules/{id}/test", h.testSchedule)
+}
+
+// listSchedules returns the caller's scheduled reports.
+//
+//	@Summary	List scheduled reports
+//	@Tags		reports
+//	@Produce	json
+//	@Success	200	{array}	customreport.Schedule
+//	@Security	BearerAuth
+//	@Router		/v1/reports/schedules [get]
+func (h *Handler) listSchedules(w http.ResponseWriter, r *http.Request) {
+	out, err := h.svc.ListSchedules(r.Context(), auth.TenantID(r.Context()), auth.UserID(r.Context()))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "could not list schedules")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+// saveSchedule creates or updates a scheduled report.
+//
+//	@Summary	Save a scheduled report
+//	@Tags		reports
+//	@Accept		json
+//	@Produce	json
+//	@Success	200	{object}	customreport.Schedule
+//	@Failure	400	{object}	map[string]string
+//	@Security	BearerAuth
+//	@Router		/v1/reports/schedules [post]
+func (h *Handler) saveSchedule(w http.ResponseWriter, r *http.Request) {
+	var sc Schedule
+	if err := httpx.DecodeJSON(r, &sc); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	out, err := h.svc.SaveSchedule(r.Context(), auth.TenantID(r.Context()), auth.UserID(r.Context()), &sc)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+// deleteSchedule removes a scheduled report.
+//
+//	@Summary	Delete a scheduled report
+//	@Tags		reports
+//	@Success	204
+//	@Security	BearerAuth
+//	@Router		/v1/reports/schedules/{id} [delete]
+func (h *Handler) deleteSchedule(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.svc.DeleteSchedule(r.Context(), auth.TenantID(r.Context()), auth.UserID(r.Context()), id); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "could not delete")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// testSchedule sends one immediately.
+//
+// Without this the only way to find out a schedule works is to wait for it, and
+// the failure mode of scheduled email is silence — so the first thing anyone
+// wants is proof it arrives.
+//
+//	@Summary	Send a scheduled report now
+//	@Tags		reports
+//	@Success	200	{object}	map[string]string
+//	@Failure	400	{object}	map[string]string
+//	@Security	BearerAuth
+//	@Router		/v1/reports/schedules/{id}/test [post]
+func (h *Handler) testSchedule(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.svc.SendScheduleNow(r.Context(), auth.TenantID(r.Context()), auth.UserID(r.Context()), id); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"status": "sent"})
 }
 
 // list returns the caller's saved reports.
