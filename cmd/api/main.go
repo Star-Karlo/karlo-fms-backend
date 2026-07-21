@@ -28,6 +28,7 @@ import (
 	"github.com/karlo/fms-backend/internal/apitoken"
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/controltower"
+	"github.com/karlo/fms-backend/internal/customreport"
 	"github.com/karlo/fms-backend/internal/dashboard"
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/fleetgroup"
@@ -74,7 +75,11 @@ func main() {
 	alertH := alert.NewHandler(pool)
 	controlH := controltower.NewHandler(controltower.NewService(pool, liveSvc))
 	notifRuleH := notifrule.NewHandler(pool)
-	reportH := report.NewHandler(report.NewService(pool, tel))
+	reportSvc := report.NewService(pool, tel)
+	reportH := report.NewHandler(reportSvc)
+	// Custom reports are a named COMBINATION of the catalog reports above, so
+	// they share that service rather than re-querying anything themselves.
+	customReportH := customreport.NewHandler(customreport.NewService(pool, reportSvc))
 	licenseH := license.NewHandler(pool)
 	maintenanceH := maintenance.NewHandler(pool)
 	scorecardH := scorecard.NewHandler(pool)
@@ -124,6 +129,7 @@ func main() {
 		controlH.Routes(pr)
 		notifRuleH.Routes(pr)
 		reportH.Routes(pr)
+		customReportH.Routes(pr)
 		licenseH.Routes(pr)
 		maintenanceH.Routes(pr)
 		scorecardH.Routes(pr)
