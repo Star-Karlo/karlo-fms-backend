@@ -39,11 +39,16 @@ type Result struct {
 // RunRequest is the generic report parameter set (a superset; each report uses
 // what it needs).
 type RunRequest struct {
-	VehicleID *int64  `json:"vehicle_id"`
-	From      string  `json:"from"`
-	To        string  `json:"to"`
-	AlertCode string  `json:"alert_code"`
-	Limit     float64 `json:"limit"` // overspeed limit km/h (default 60)
+	VehicleID *int64 `json:"vehicle_id"`
+	// VehicleIDs runs a per-vehicle report for SEVERAL vehicles and stacks the
+	// results into one table. Fleet operators think in terms of "these six
+	// trucks", not one at a time, and re-running a report six times and pasting
+	// the output together is the manual work this removes.
+	VehicleIDs []int64 `json:"vehicle_ids,omitempty"`
+	From       string  `json:"from"`
+	To         string  `json:"to"`
+	AlertCode  string  `json:"alert_code"`
+	Limit      float64 `json:"limit"` // overspeed limit km/h (default 60)
 }
 
 // catalogColumns is every report's column set, declared once.
@@ -92,6 +97,131 @@ func hav(aLat, aLon, bLat, bLon float64) float64 {
 	return R * 2 * math.Atan2(math.Sqrt(x), math.Sqrt(1-x))
 }
 
+// runMany stacks a per-vehicle report across several vehicles.
+//
+// Rows are tagged with the plate so a merged table is readable — several
+// reports (trip summary, stop history, usage) have no vehicle column of their
+// own because they were only ever run for one truck, and without it the
+// combined output is rows from six vehicles with nothing saying which is which.
+func (s *Service) runMany(ctx context.Context, tenantID int64, key string, req RunRequest) (*Result, error) {
+	ids := req.VehicleIDs
+	truncated := 0
+	if len(ids) > maxVehiclesPerRun {
+		truncated = len(ids) - maxVehiclesPerRun
+		ids = ids[:maxVehiclesPerRun]
+	}
+
+	out := &Result{Key: key, Title: titleFor(key), Rows: []map[string]any{}}
+	var failures []string
+	// A vehicle that ran fine but had nothing to report simply contributes no
+	// rows, so picking six trucks and seeing four in the output raises the
+	// question "which two, and why". Naming them answers it.
+	var empty []string
+
+	for _, id := range ids {
+		one := req
+		one.VehicleIDs = nil
+		vid := id
+		one.VehicleID = &vid
+
+		res, err := s.Run(ctx, tenantID, key, one)
+		if err != nil {
+			// One vehicle failing — no tracker, no telemetry — must not cost
+			// the other five. Named at the end rather than swallowed.
+			failures = append(failures, fmt.Sprintf("vehicle %d: %s", id, err.Error()))
+			continue
+		}
+
+		plate := plateOf(res.Rows)
+		if plate == "" {
+			plate = s.plateFor(ctx, tenantID, id)
+		}
+
+		if len(out.Columns) == 0 {
+			out.Columns = res.Columns
+			// Prepend a plate column when the report has none of its own.
+			if !hasColumn(out.Columns, "license_plate") {
+				out.Columns = append([]Column{{Key: "license_plate", Label: "Plate"}}, out.Columns...)
+			}
+		}
+		if len(res.Rows) == 0 {
+			empty = append(empty, plateOrID(plate, id))
+		}
+		for _, row := range res.Rows {
+			if _, ok := row["license_plate"]; !ok {
+				row["license_plate"] = plate
+			}
+			out.Rows = append(out.Rows, row)
+		}
+		if res.Note != "" && out.Note == "" {
+			out.Note = res.Note
+		}
+	}
+
+	// Columns can still be empty when every vehicle failed or returned nothing.
+	if len(out.Columns) == 0 {
+		out.Columns = ColumnsFor(key)
+		if !hasColumn(out.Columns, "license_plate") {
+			out.Columns = append([]Column{{Key: "license_plate", Label: "Plate"}}, out.Columns...)
+		}
+	}
+
+	var notes []string
+	if out.Note != "" {
+		notes = append(notes, out.Note)
+	}
+	if truncated > 0 {
+		notes = append(notes, fmt.Sprintf("Only the first %d vehicles were included; %d more were left out.", maxVehiclesPerRun, truncated))
+	}
+	if len(empty) > 0 {
+		notes = append(notes, fmt.Sprintf("No data in this period for: %s.", strings.Join(empty, ", ")))
+	}
+	if len(failures) > 0 {
+		notes = append(notes, "Could not include — "+strings.Join(failures, "; "))
+	}
+	out.Note = strings.Join(notes, " ")
+	return out, nil
+}
+
+func hasColumn(cols []Column, key string) bool {
+	for _, c := range cols {
+		if c.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func plateOrID(plate string, id int64) string {
+	if plate != "" {
+		return plate
+	}
+	return fmt.Sprintf("vehicle %d", id)
+}
+
+func plateOf(rows []map[string]any) string {
+	for _, r := range rows {
+		if s, ok := r["license_plate"].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// plateFor names a vehicle that produced no rows, so an empty section still
+// says which truck it was empty for.
+func (s *Service) plateFor(ctx context.Context, tenantID, vehicleID int64) string {
+	var plate string
+	_ = db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		v, err := store.New(tx).GetVehicle(ctx, vehicleID)
+		if err == nil {
+			plate = v.LicensePlate
+		}
+		return nil
+	})
+	return plate
+}
+
 // track resolves a vehicle's labels + telemetry history for the range.
 func (s *Service) track(ctx context.Context, tenantID int64, vehicleID int64, from, to time.Time) (store.GetVehicleRow, []telemetry.Position, error) {
 	var veh store.GetVehicleRow
@@ -116,7 +246,25 @@ func (s *Service) track(ctx context.Context, tenantID int64, vehicleID int64, fr
 func plate(v store.GetVehicleRow) string { return v.LicensePlate }
 
 // Run dispatches a report by key and returns a generic Result.
+// maxVehiclesPerRun bounds a multi-vehicle report.
+//
+// Each vehicle costs one HTTP round trip to the telemetry service for up to
+// 5,000 points, so this is a real cost, paid serially, while the user waits.
+// Twenty is a large depot; beyond that the honest answer is a fleet-wide
+// report rather than a slow one that eventually times out.
+const maxVehiclesPerRun = 20
+
 func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRequest) (*Result, error) {
+	// Several vehicles: run each and stack the results. Done before anything
+	// else so every report gets it, and so each run goes through exactly the
+	// same code path as a single-vehicle one.
+	if len(req.VehicleIDs) > 1 {
+		return s.runMany(ctx, tenantID, key, req)
+	}
+	if len(req.VehicleIDs) == 1 && req.VehicleID == nil {
+		req.VehicleID = &req.VehicleIDs[0]
+	}
+
 	from, err1 := time.Parse(time.RFC3339, req.From)
 	to, err2 := time.Parse(time.RFC3339, req.To)
 	needRange := key != "service-scheduling-detail" && key != "driver-management" && key != "driver-operational-summary"
