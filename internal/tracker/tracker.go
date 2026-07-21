@@ -161,7 +161,16 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 //	@Router		/v1/trackers [post]
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var req CreateRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil || req.Imei == "" {
+	// Report a malformed body separately from a missing field. These were
+	// collapsed into one "imei is required" message, which is actively
+	// misleading: httpx.DecodeJSON sets DisallowUnknownFields, so a body that
+	// carries one extra key — an imei included — fails decoding and the caller
+	// is told the field they DID send is missing.
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.Imei == "" {
 		httpx.Error(w, http.StatusBadRequest, "imei is required")
 		return
 	}

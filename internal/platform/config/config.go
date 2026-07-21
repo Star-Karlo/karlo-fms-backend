@@ -35,6 +35,12 @@ type Config struct {
 	// serve every other report.
 	MailFrom string
 
+	// DocumentsBucket enables vehicle/driver document upload (KIR, STNK, SIM).
+	// Empty disables only those endpoints — a deployment without the bucket
+	// still serves the rest of the API, and the existing read-only document
+	// list keeps working for rows imported from the legacy export.
+	DocumentsBucket string
+
 	// CORSOrigins is the allowlist of browser origins (e.g. https://fms.karlo.id).
 	// Empty ⇒ reflect any origin (fine for local dev behind the Vite proxy).
 	CORSOrigins []string
@@ -47,7 +53,8 @@ func Load() Config {
 		Addr:           Env("API_ADDR", ":8080"),
 		AWSRegion:      Env("AWS_REGION", "ap-southeast-1"),
 		BedrockModelID: Env("BEDROCK_MODEL_ID", "apac.amazon.nova-pro-v1:0"),
-		MailFrom:       Env("MAIL_FROM", ""),
+		MailFrom:        Env("MAIL_FROM", ""),
+		DocumentsBucket: Env("DOCUMENTS_BUCKET", ""),
 		// Host ports 5433/6380 avoid clashing with the telemetry stack (5432/6379).
 		DatabaseURL: Env("DATABASE_URL", "postgres://fms_app:fms_app@localhost:5433/fms_app"),
 		RedisAddr:   Env("REDIS_ADDR", "localhost:6380"),

@@ -12,6 +12,13 @@ definitions:
         items:
           type: integer
         type: array
+      locale:
+        description: |-
+          Locale is the user's UI language. Asking the model to "reply in the
+          language of the request" was not enough on its own — an Indonesian
+          request came back with English titles — so the expected language is
+          stated outright rather than inferred.
+        type: string
       prompt:
         type: string
     type: object
@@ -29,6 +36,45 @@ definitions:
         $ref: '#/definitions/aidash.usage'
     type: object
   aidash.usage:
+    properties:
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
+    type: object
+  aireport.composeResponse:
+    properties:
+      attempts:
+        type: integer
+      notes:
+        type: string
+      spec:
+        $ref: '#/definitions/customreport.Spec'
+      unmapped:
+        description: |-
+          Unmapped names spreadsheet headers no report can supply. Surfaced rather
+          than dropped: a report that quietly omits a column the user asked for is
+          worse than one that says it cannot fill it.
+        items:
+          type: string
+        type: array
+      usage:
+        $ref: '#/definitions/aireport.usage'
+    type: object
+  aireport.inspectResponse:
+    properties:
+      headers:
+        items:
+          type: string
+        type: array
+      rows:
+        type: integer
+      sample:
+        type: string
+      sheet:
+        type: string
+    type: object
+  aireport.usage:
     properties:
       input_tokens:
         type: integer
@@ -309,12 +355,255 @@ definitions:
       worst_severity:
         type: string
     type: object
+  customreport.Cadence:
+    enum:
+    - daily
+    - weekly
+    - monthly
+    type: string
+    x-enum-varnames:
+    - CadenceDaily
+    - CadenceWeekly
+    - CadenceMonthly
+  customreport.Column:
+    properties:
+      key:
+        type: string
+      label:
+        description: empty = the source's own label
+        type: string
+    type: object
+  customreport.Definition:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      spec:
+        $ref: '#/definitions/customreport.Spec'
+      updated_at:
+        type: string
+    type: object
+  customreport.Format:
+    enum:
+    - xlsx
+    - pdf
+    - docx
+    - csv
+    type: string
+    x-enum-varnames:
+    - FormatXLSX
+    - FormatPDF
+    - FormatDOCX
+    - FormatCSV
+  customreport.Range:
+    properties:
+      from:
+        description: RFC3339, only when Preset is empty
+        type: string
+      preset:
+        allOf:
+        - $ref: '#/definitions/customreport.RangePreset'
+        description: Preset is one of the RangePreset values. When set, From/To are
+          ignored.
+      to:
+        type: string
+    type: object
+  customreport.RangePreset:
+    enum:
+    - today
+    - yesterday
+    - last_7_days
+    - last_30_days
+    - this_month
+    - last_month
+    - ""
+    type: string
+    x-enum-comments:
+      RangeAbsolute: use From/To
+    x-enum-descriptions:
+    - ""
+    - ""
+    - ""
+    - ""
+    - ""
+    - ""
+    - use From/To
+    x-enum-varnames:
+    - RangeToday
+    - RangeYesterday
+    - Range7Days
+    - Range30Days
+    - RangeThisMonth
+    - RangeLastMonth
+    - RangeAbsolute
+  customreport.Schedule:
+    properties:
+      cadence:
+        $ref: '#/definitions/customreport.Cadence'
+      day_of_month:
+        type: integer
+      day_of_week:
+        description: DayOfWeek is 0=Sunday, weekly only. DayOfMonth is 1-28, monthly
+          only.
+        type: integer
+      enabled:
+        type: boolean
+      format:
+        $ref: '#/definitions/customreport.Format'
+      hour:
+        type: integer
+      id:
+        type: integer
+      last_error:
+        type: string
+      last_run_at:
+        type: string
+      last_status:
+        type: string
+      next_run_at:
+        type: string
+      recipients:
+        items:
+          type: string
+        type: array
+      report_id:
+        type: integer
+      report_name:
+        description: |-
+          ReportName is joined in for display, so a list of schedules is readable
+          without a second request per row.
+        type: string
+      subject:
+        type: string
+      timezone:
+        type: string
+    type: object
+  customreport.Section:
+    properties:
+      columns:
+        description: |-
+          Columns optionally narrows and reorders the source's columns, and can
+          rename them. Empty means "all of them, as the source ordered them".
+
+          Renaming matters more than it looks: the point of a custom report is
+          often that someone downstream expects "Nopol" where we say
+          "license_plate", and forcing them to rename it every month is exactly
+          the friction this feature exists to remove.
+        items:
+          $ref: '#/definitions/customreport.Column'
+        type: array
+      note:
+        description: Note is printed under the section, for context the numbers do
+          not carry.
+        type: string
+      params:
+        additionalProperties: {}
+        type: object
+      source:
+        description: a catalog key, e.g. "vehicle-trip-summary"
+        type: string
+      title:
+        type: string
+    type: object
+  customreport.Spec:
+    properties:
+      format:
+        allOf:
+        - $ref: '#/definitions/customreport.Format'
+        description: Format is the default the user picked; the download can override
+          it.
+      name:
+        type: string
+      narrative:
+        description: |-
+          Narrative overrides the by-format default: prose for pdf/docx, raw tables
+          for xlsx/csv. Nil means "use the default", which is almost always right —
+          the point is that the same saved report gives an executive a readable
+          document and an analyst a spreadsheet, without being configured twice.
+        type: boolean
+      notes:
+        description: free text printed under the title
+        type: string
+      range:
+        $ref: '#/definitions/customreport.Range'
+      sections:
+        items:
+          $ref: '#/definitions/customreport.Section'
+        type: array
+      version:
+        type: integer
+    type: object
   dashboard.LayoutResponse:
     properties:
       layout:
         items:
           type: integer
         type: array
+    type: object
+  document.CreateRequest:
+    properties:
+      expiry:
+        description: YYYY-MM-DD; drives expiry reminders
+        type: string
+      filename:
+        type: string
+      kind:
+        description: STNK | KIR | SIM | INSURANCE | OTHER
+        type: string
+      mime:
+        type: string
+      number:
+        description: document number as printed
+        type: string
+      owner_id:
+        type: integer
+      owner_type:
+        description: vehicle | driver
+        type: string
+      size:
+        type: integer
+    type: object
+  document.CreateResponse:
+    properties:
+      expires_in_seconds:
+        type: integer
+      id:
+        type: integer
+      required_headers:
+        additionalProperties:
+          type: string
+        description: |-
+          The client MUST send exactly these on the PUT or S3 rejects the
+          signature. Returned explicitly so the caller does not have to infer them.
+        type: object
+      s3_key:
+        type: string
+      upload_url:
+        type: string
+    type: object
+  document.VehicleDocument:
+    properties:
+      expiry:
+        type: string
+      has_file:
+        type: boolean
+      id:
+        type: integer
+      kind:
+        type: string
+      mime:
+        type: string
+      number:
+        type: string
+      title:
+        type: string
+      uploaded_at:
+        type: string
     type: object
   driver.CreateRequest:
     properties:
@@ -396,6 +685,35 @@ definitions:
     properties:
       description:
         type: string
+      name:
+        type: string
+    type: object
+  fuel.BrandCount:
+    properties:
+      brand:
+        type: string
+      count:
+        type: integer
+    type: object
+  fuel.ListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/fuel.Station'
+        type: array
+      truncated:
+        type: boolean
+    type: object
+  fuel.Station:
+    properties:
+      brand:
+        type: string
+      id:
+        type: integer
+      lat:
+        type: number
+      lon:
+        type: number
       name:
         type: string
     type: object
@@ -673,6 +991,34 @@ definitions:
         description: summed dwell of those stops
         type: number
     type: object
+  liveview.DayTotals:
+    properties:
+      active:
+        description: |-
+          Active counts vehicles that reported at all; Unused counts those that
+          reported but never moved — an idle asset, not an offline one.
+        type: integer
+      day:
+        type: string
+      distance_km:
+        type: number
+      idle_h:
+        type: number
+      idle_pct:
+        description: |-
+          IdlePct is idle as a share of engine-on time, over vehicles that ACTUALLY
+          MOVED that day. Including never-moved vehicles folds stuck-ignition
+          sensors into the fleet's headline waste number: 13 devices report the
+          engine on for 24h while covering 0 km, and they are a wiring fault, not
+          a driver leaving an engine running.
+        type: number
+      moving_h:
+        type: number
+      parking_h:
+        type: number
+      unused:
+        type: integer
+    type: object
   liveview.Driver:
     properties:
       id:
@@ -681,6 +1027,21 @@ definitions:
         type: string
       phone:
         type: string
+    type: object
+  liveview.FleetHistory:
+    properties:
+      days:
+        items:
+          $ref: '#/definitions/liveview.DayTotals'
+        type: array
+      from:
+        type: string
+      to:
+        type: string
+      vehicles:
+        items:
+          $ref: '#/definitions/liveview.VehicleTotals'
+        type: array
     type: object
   liveview.IdleStop:
     properties:
@@ -793,6 +1154,29 @@ definitions:
         type: number
       tracker:
         $ref: '#/definitions/liveview.Tracker'
+      vehicle_id:
+        type: integer
+      vehicle_type:
+        type: string
+    type: object
+  liveview.VehicleTotals:
+    properties:
+      days_used:
+        type: integer
+      distance_km:
+        type: number
+      fleet_group_name:
+        type: string
+      idle_h:
+        type: number
+      idle_pct:
+        type: number
+      license_plate:
+        type: string
+      max_speed:
+        type: number
+      moving_h:
+        type: number
       vehicle_id:
         type: integer
       vehicle_type:
@@ -1039,6 +1423,15 @@ definitions:
         type: string
       vehicle_id:
         type: integer
+      vehicle_ids:
+        description: |-
+          VehicleIDs runs a per-vehicle report for SEVERAL vehicles and stacks the
+          results into one table. Fleet operators think in terms of "these six
+          trucks", not one at a time, and re-running a report six times and pasting
+          the output together is the manual work this removes.
+        items:
+          type: integer
+        type: array
     type: object
   report.TripRequest:
     properties:
@@ -1533,6 +1926,66 @@ paths:
       summary: Compose a dashboard from a description
       tags:
       - ai
+  /v1/ai/report/compose:
+    post:
+      consumes:
+      - application/json
+      description: Turns a description (and optionally a spreadsheet's headers) into
+        a report spec. The spec is returned for review; nothing is saved.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/aireport.composeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Compose a custom report with AI
+      tags:
+      - ai
+  /v1/ai/report/inspect-file:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Reads column headers and a few sample rows from an .xlsx so a report
+        can be shaped to match it. The file is never stored.
+      parameters:
+      - description: an .xlsx file
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/aireport.inspectResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Inspect an uploaded spreadsheet
+      tags:
+      - ai
   /v1/alert-taxonomy:
     get:
       produces:
@@ -1673,6 +2126,33 @@ paths:
       summary: Alert analytics for the Safety dashboard
       tags:
       - alerts
+  /v1/analytics/history:
+    get:
+      description: Per-day moving/idle/parked hours, distance and idle share, plus
+        per-vehicle totals over the window. Days are Asia/Jakarta.
+      parameters:
+      - description: window length, 1-8 (default 7)
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/liveview.FleetHistory'
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Fleet history (daily)
+      tags:
+      - analytics
   /v1/api-tokens:
     get:
       produces:
@@ -1933,6 +2413,115 @@ paths:
       summary: List documents with expiry status (License module)
       tags:
       - license
+    post:
+      consumes:
+      - application/json
+      description: 'Two-step upload: this creates the row and returns a short-lived
+        S3 PUT URL. The client then PUTs the file directly to that URL with exactly
+        the headers in `required_headers`. The row exists before the file does; until
+        the PUT completes, download returns 404.'
+      parameters:
+      - description: document metadata
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/document.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/document.CreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a document record and get a presigned upload URL
+      tags:
+      - documents
+  /v1/documents/{id}:
+    delete:
+      description: Removes the record and best-effort deletes the S3 object. The bucket
+        is versioned, so a deletion is recoverable by an administrator.
+      parameters:
+      - description: document id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a document and its file
+      tags:
+      - documents
+  /v1/documents/{id}/download:
+    get:
+      description: Returns a short-lived URL rather than the bytes, so the file is
+        served by S3 directly. 404 if the record exists but no file was ever uploaded
+        to it.
+      parameters:
+      - description: document id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Presigned download URL for a document
+      tags:
+      - documents
+  /v1/documents/kinds:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: string
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Document kinds the UI should offer
+      tags:
+      - documents
   /v1/driver-scorecard:
     get:
       parameters:
@@ -2199,6 +2788,59 @@ paths:
       summary: Update a fleet group
       tags:
       - fleet-groups
+  /v1/fuel-stations:
+    get:
+      description: Shared reference data (OpenStreetMap, ODbL) — not tenant-scoped.
+        Pass `bbox` as west,south,east,north in degrees to fetch only the current
+        viewport. `truncated` is true when more stations matched than `limit` allowed;
+        zoom in or raise the limit.
+      parameters:
+      - description: west,south,east,north (degrees)
+        in: query
+        name: bbox
+        type: string
+      - description: 'comma-separated: pertamina,shell,bp,vivo,akr,total,other'
+        in: query
+        name: brand
+        type: string
+      - description: max rows (default and max 10000)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fuel.ListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Fuel stations, optionally within a bounding box
+      tags:
+      - fuel-stations
+  /v1/fuel-stations/brands:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/fuel.BrandCount'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Available fuel-station brands, with counts
+      tags:
+      - fuel-stations
   /v1/geofences:
     get:
       produces:
@@ -2544,6 +3186,156 @@ paths:
       security:
       - BearerAuth: []
       summary: Report template catalog
+      tags:
+      - reports
+  /v1/reports/custom:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/customreport.Definition'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List saved custom reports
+      tags:
+      - reports
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/customreport.Definition'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Save a custom report
+      tags:
+      - reports
+  /v1/reports/custom/{id}:
+    delete:
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a custom report
+      tags:
+      - reports
+  /v1/reports/custom/{id}/render:
+    post:
+      parameters:
+      - description: xlsx | pdf | docx | csv
+        in: query
+        name: format
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: Download a saved custom report
+      tags:
+      - reports
+  /v1/reports/custom/render:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: xlsx | pdf | docx | csv
+        in: query
+        name: format
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: Download an unsaved custom report
+      tags:
+      - reports
+  /v1/reports/schedules:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/customreport.Schedule'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List scheduled reports
+      tags:
+      - reports
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/customreport.Schedule'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Save a scheduled report
+      tags:
+      - reports
+  /v1/reports/schedules/{id}:
+    delete:
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a scheduled report
+      tags:
+      - reports
+  /v1/reports/schedules/{id}/test:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Send a scheduled report now
       tags:
       - reports
   /v1/reports/vehicle-alerts-history:
@@ -3139,6 +3931,28 @@ paths:
       summary: Assign/unassign a tracker to a vehicle
       tags:
       - vehicles
+  /v1/vehicles/{id}/documents:
+    get:
+      parameters:
+      - description: vehicle id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/document.VehicleDocument'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Documents attached to one vehicle
+      tags:
+      - documents
   /v1/vehicles/{vehicle_id}/behavior:
     get:
       parameters:

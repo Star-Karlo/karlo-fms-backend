@@ -33,6 +33,8 @@ import (
 	"github.com/karlo/fms-backend/internal/dashboard"
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/fleetgroup"
+	"github.com/karlo/fms-backend/internal/document"
+	"github.com/karlo/fms-backend/internal/fuel"
 	"github.com/karlo/fms-backend/internal/geofence"
 	"github.com/karlo/fms-backend/internal/license"
 	"github.com/karlo/fms-backend/internal/liveview"
@@ -115,6 +117,10 @@ func main() {
 	// than failing startup.
 	aiDashH := aidash.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
 	geofenceH := geofence.NewHandler(pool)
+	fuelH := fuel.NewHandler(pool)
+	// Document upload/download. An empty DOCUMENTS_BUCKET disables just
+	// these endpoints (503) rather than failing startup.
+	documentH := document.NewHandler(ctx, pool, cfg.AWSRegion, cfg.DocumentsBucket)
 	prefsH := prefs.NewHandler(pool)
 	telemetrySyncH := telemetrysync.NewHandler(pool)
 
@@ -162,6 +168,8 @@ func main() {
 		apiTokenH.Routes(pr)
 		dashboardH.Routes(pr)
 		geofenceH.Routes(pr)
+		fuelH.Routes(pr)
+		documentH.Routes(pr)
 		telemetrySyncH.Routes(pr)
 		aiDashH.Routes(pr)
 		prefsH.Routes(pr)

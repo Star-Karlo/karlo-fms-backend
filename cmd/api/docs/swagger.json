@@ -111,6 +111,98 @@
                 }
             }
         },
+        "/v1/ai/report/compose": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Turns a description (and optionally a spreadsheet's headers) into a report spec. The spec is returned for review; nothing is saved.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ai"
+                ],
+                "summary": "Compose a custom report with AI",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/aireport.composeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/ai/report/inspect-file": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reads column headers and a few sample rows from an .xlsx so a report can be shaped to match it. The file is never stored.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ai"
+                ],
+                "summary": "Inspect an uploaded spreadsheet",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "an .xlsx file",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/aireport.inspectResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/alert-taxonomy": {
             "get": {
                 "security": [
@@ -332,6 +424,48 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/alert.DTO"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/analytics/history": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Per-day moving/idle/parked hours, distance and idle share, plus per-vehicle totals over the window. Days are Asia/Jakarta.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "analytics"
+                ],
+                "summary": "Fleet history (daily)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "window length, 1-8 (default 7)",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.FleetHistory"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -755,6 +889,171 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/license.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Two-step upload: this creates the row and returns a short-lived S3 PUT URL. The client then PUTs the file directly to that URL with exactly the headers in `required_headers`. The row exists before the file does; until the PUT completes, download returns 404.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Create a document record and get a presigned upload URL",
+                "parameters": [
+                    {
+                        "description": "document metadata",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/document.CreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/document.CreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/kinds": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Document kinds the UI should offer",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the record and best-effort deletes the S3 object. The bucket is versioned, so a deletion is recoverable by an administrator.",
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Delete a document and its file",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/download": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a short-lived URL rather than the bytes, so the file is served by S3 directly. 404 if the record exists but no file was ever uploaded to it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Presigned download URL for a document",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -1193,6 +1492,87 @@
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/fuel-stations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Shared reference data (OpenStreetMap, ODbL) — not tenant-scoped. Pass `bbox` as west,south,east,north in degrees to fetch only the current viewport. `truncated` is true when more stations matched than `limit` allowed; zoom in or raise the limit.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "fuel-stations"
+                ],
+                "summary": "Fuel stations, optionally within a bounding box",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "west,south,east,north (degrees)",
+                        "name": "bbox",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "comma-separated: pertamina,shell,bp,vivo,akr,total,other",
+                        "name": "brand",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "max rows (default and max 10000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fuel.ListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/fuel-stations/brands": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "fuel-stations"
+                ],
+                "summary": "Available fuel-station brands, with counts",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/fuel.BrandCount"
+                            }
+                        }
                     }
                 }
             }
@@ -1717,6 +2097,258 @@
                             "type": "array",
                             "items": {
                                 "$ref": "#/definitions/report.Meta"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/reports/custom": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "List saved custom reports",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/customreport.Definition"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Save a custom report",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/customreport.Definition"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/reports/custom/render": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Download an unsaved custom report",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "xlsx | pdf | docx | csv",
+                        "name": "format",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/v1/reports/custom/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Delete a custom report",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/reports/custom/{id}/render": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Download a saved custom report",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "xlsx | pdf | docx | csv",
+                        "name": "format",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/v1/reports/schedules": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "List scheduled reports",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/customreport.Schedule"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Save a scheduled report",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/customreport.Schedule"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/reports/schedules/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Delete a scheduled report",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/reports/schedules/{id}/test": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "reports"
+                ],
+                "summary": "Send a scheduled report now",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
                             }
                         }
                     }
@@ -2734,6 +3366,42 @@
                 }
             }
         },
+        "/v1/vehicles/{id}/documents": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Documents attached to one vehicle",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/document.VehicleDocument"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/vehicles/{vehicle_id}/behavior": {
             "get": {
                 "security": [
@@ -3003,6 +3671,10 @@
                         "type": "integer"
                     }
                 },
+                "locale": {
+                    "description": "Locale is the user's UI language. Asking the model to \"reply in the\nlanguage of the request\" was not enough on its own — an Indonesian\nrequest came back with English titles — so the expected language is\nstated outright rather than inferred.",
+                    "type": "string"
+                },
                 "prompt": {
                     "type": "string"
                 }
@@ -3029,6 +3701,61 @@
             }
         },
         "aidash.usage": {
+            "type": "object",
+            "properties": {
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
+        "aireport.composeResponse": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "spec": {
+                    "$ref": "#/definitions/customreport.Spec"
+                },
+                "unmapped": {
+                    "description": "Unmapped names spreadsheet headers no report can supply. Surfaced rather\nthan dropped: a report that quietly omits a column the user asked for is\nworse than one that says it cannot fill it.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "usage": {
+                    "$ref": "#/definitions/aireport.usage"
+                }
+            }
+        },
+        "aireport.inspectResponse": {
+            "type": "object",
+            "properties": {
+                "headers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "rows": {
+                    "type": "integer"
+                },
+                "sample": {
+                    "type": "string"
+                },
+                "sheet": {
+                    "type": "string"
+                }
+            }
+        },
+        "aireport.usage": {
             "type": "object",
             "properties": {
                 "input_tokens": {
@@ -3454,6 +4181,243 @@
                 }
             }
         },
+        "customreport.Cadence": {
+            "type": "string",
+            "enum": [
+                "daily",
+                "weekly",
+                "monthly"
+            ],
+            "x-enum-varnames": [
+                "CadenceDaily",
+                "CadenceWeekly",
+                "CadenceMonthly"
+            ]
+        },
+        "customreport.Column": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "description": "empty = the source's own label",
+                    "type": "string"
+                }
+            }
+        },
+        "customreport.Definition": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "spec": {
+                    "$ref": "#/definitions/customreport.Spec"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "customreport.Format": {
+            "type": "string",
+            "enum": [
+                "xlsx",
+                "pdf",
+                "docx",
+                "csv"
+            ],
+            "x-enum-varnames": [
+                "FormatXLSX",
+                "FormatPDF",
+                "FormatDOCX",
+                "FormatCSV"
+            ]
+        },
+        "customreport.Range": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "description": "RFC3339, only when Preset is empty",
+                    "type": "string"
+                },
+                "preset": {
+                    "description": "Preset is one of the RangePreset values. When set, From/To are ignored.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/customreport.RangePreset"
+                        }
+                    ]
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
+        "customreport.RangePreset": {
+            "type": "string",
+            "enum": [
+                "today",
+                "yesterday",
+                "last_7_days",
+                "last_30_days",
+                "this_month",
+                "last_month",
+                ""
+            ],
+            "x-enum-comments": {
+                "RangeAbsolute": "use From/To"
+            },
+            "x-enum-descriptions": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "use From/To"
+            ],
+            "x-enum-varnames": [
+                "RangeToday",
+                "RangeYesterday",
+                "Range7Days",
+                "Range30Days",
+                "RangeThisMonth",
+                "RangeLastMonth",
+                "RangeAbsolute"
+            ]
+        },
+        "customreport.Schedule": {
+            "type": "object",
+            "properties": {
+                "cadence": {
+                    "$ref": "#/definitions/customreport.Cadence"
+                },
+                "day_of_month": {
+                    "type": "integer"
+                },
+                "day_of_week": {
+                    "description": "DayOfWeek is 0=Sunday, weekly only. DayOfMonth is 1-28, monthly only.",
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "format": {
+                    "$ref": "#/definitions/customreport.Format"
+                },
+                "hour": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "last_run_at": {
+                    "type": "string"
+                },
+                "last_status": {
+                    "type": "string"
+                },
+                "next_run_at": {
+                    "type": "string"
+                },
+                "recipients": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "report_id": {
+                    "type": "integer"
+                },
+                "report_name": {
+                    "description": "ReportName is joined in for display, so a list of schedules is readable\nwithout a second request per row.",
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                },
+                "timezone": {
+                    "type": "string"
+                }
+            }
+        },
+        "customreport.Section": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "description": "Columns optionally narrows and reorders the source's columns, and can\nrename them. Empty means \"all of them, as the source ordered them\".\n\nRenaming matters more than it looks: the point of a custom report is\noften that someone downstream expects \"Nopol\" where we say\n\"license_plate\", and forcing them to rename it every month is exactly\nthe friction this feature exists to remove.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/customreport.Column"
+                    }
+                },
+                "note": {
+                    "description": "Note is printed under the section, for context the numbers do not carry.",
+                    "type": "string"
+                },
+                "params": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "source": {
+                    "description": "a catalog key, e.g. \"vehicle-trip-summary\"",
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "customreport.Spec": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "description": "Format is the default the user picked; the download can override it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/customreport.Format"
+                        }
+                    ]
+                },
+                "name": {
+                    "type": "string"
+                },
+                "narrative": {
+                    "description": "Narrative overrides the by-format default: prose for pdf/docx, raw tables\nfor xlsx/csv. Nil means \"use the default\", which is almost always right —\nthe point is that the same saved report gives an executive a readable\ndocument and an analyst a spreadsheet, without being configured twice.",
+                    "type": "boolean"
+                },
+                "notes": {
+                    "description": "free text printed under the title",
+                    "type": "string"
+                },
+                "range": {
+                    "$ref": "#/definitions/customreport.Range"
+                },
+                "sections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/customreport.Section"
+                    }
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "dashboard.LayoutResponse": {
             "type": "object",
             "properties": {
@@ -3462,6 +4426,92 @@
                     "items": {
                         "type": "integer"
                     }
+                }
+            }
+        },
+        "document.CreateRequest": {
+            "type": "object",
+            "properties": {
+                "expiry": {
+                    "description": "YYYY-MM-DD; drives expiry reminders",
+                    "type": "string"
+                },
+                "filename": {
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "STNK | KIR | SIM | INSURANCE | OTHER",
+                    "type": "string"
+                },
+                "mime": {
+                    "type": "string"
+                },
+                "number": {
+                    "description": "document number as printed",
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "integer"
+                },
+                "owner_type": {
+                    "description": "vehicle | driver",
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                }
+            }
+        },
+        "document.CreateResponse": {
+            "type": "object",
+            "properties": {
+                "expires_in_seconds": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "required_headers": {
+                    "description": "The client MUST send exactly these on the PUT or S3 rejects the\nsignature. Returned explicitly so the caller does not have to infer them.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "s3_key": {
+                    "type": "string"
+                },
+                "upload_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "document.VehicleDocument": {
+            "type": "object",
+            "properties": {
+                "expiry": {
+                    "type": "string"
+                },
+                "has_file": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "mime": {
+                    "type": "string"
+                },
+                "number": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "uploaded_at": {
+                    "type": "string"
                 }
             }
         },
@@ -3586,6 +4636,51 @@
             "properties": {
                 "description": {
                     "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "fuel.BrandCount": {
+            "type": "object",
+            "properties": {
+                "brand": {
+                    "type": "string"
+                },
+                "count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fuel.ListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fuel.Station"
+                    }
+                },
+                "truncated": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "fuel.Station": {
+            "type": "object",
+            "properties": {
+                "brand": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
                 },
                 "name": {
                     "type": "string"
@@ -4012,6 +5107,37 @@
                 }
             }
         },
+        "liveview.DayTotals": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "description": "Active counts vehicles that reported at all; Unused counts those that\nreported but never moved — an idle asset, not an offline one.",
+                    "type": "integer"
+                },
+                "day": {
+                    "type": "string"
+                },
+                "distance_km": {
+                    "type": "number"
+                },
+                "idle_h": {
+                    "type": "number"
+                },
+                "idle_pct": {
+                    "description": "IdlePct is idle as a share of engine-on time, over vehicles that ACTUALLY\nMOVED that day. Including never-moved vehicles folds stuck-ignition\nsensors into the fleet's headline waste number: 13 devices report the\nengine on for 24h while covering 0 km, and they are a wiring fault, not\na driver leaving an engine running.",
+                    "type": "number"
+                },
+                "moving_h": {
+                    "type": "number"
+                },
+                "parking_h": {
+                    "type": "number"
+                },
+                "unused": {
+                    "type": "integer"
+                }
+            }
+        },
         "liveview.Driver": {
             "type": "object",
             "properties": {
@@ -4023,6 +5149,29 @@
                 },
                 "phone": {
                     "type": "string"
+                }
+            }
+        },
+        "liveview.FleetHistory": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.DayTotals"
+                    }
+                },
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                },
+                "vehicles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.VehicleTotals"
+                    }
                 }
             }
         },
@@ -4179,6 +5328,41 @@
                 },
                 "tracker": {
                     "$ref": "#/definitions/liveview.Tracker"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                },
+                "vehicle_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "liveview.VehicleTotals": {
+            "type": "object",
+            "properties": {
+                "days_used": {
+                    "type": "integer"
+                },
+                "distance_km": {
+                    "type": "number"
+                },
+                "fleet_group_name": {
+                    "type": "string"
+                },
+                "idle_h": {
+                    "type": "number"
+                },
+                "idle_pct": {
+                    "type": "number"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "max_speed": {
+                    "type": "number"
+                },
+                "moving_h": {
+                    "type": "number"
                 },
                 "vehicle_id": {
                     "type": "integer"
@@ -4548,6 +5732,13 @@
                 },
                 "vehicle_id": {
                     "type": "integer"
+                },
+                "vehicle_ids": {
+                    "description": "VehicleIDs runs a per-vehicle report for SEVERAL vehicles and stacks the\nresults into one table. Fleet operators think in terms of \"these six\ntrucks\", not one at a time, and re-running a report six times and pasting\nthe output together is the manual work this removes.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
