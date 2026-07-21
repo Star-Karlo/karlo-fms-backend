@@ -176,8 +176,15 @@ func (s Schedule) location() *time.Location {
 
 // ---- storage ----------------------------------------------------------------
 
+// Two spellings of the same column list. The SELECTs join report_definitions
+// and need the alias; INSERT/UPDATE ... RETURNING has no FROM clause, so a
+// prefixed name there is a "missing FROM-clause entry" error rather than
+// anything that looks like a typo.
 const scheduleCols = `s.id, s.report_id, s.cadence, s.day_of_week, s.day_of_month, s.hour, s.timezone,
 	s.format, s.recipients, s.subject, s.enabled, s.next_run_at, s.last_run_at, s.last_status, s.last_error`
+
+const scheduleColsBare = `id, report_id, cadence, day_of_week, day_of_month, hour, timezone,
+	format, recipients, subject, enabled, next_run_at, last_run_at, last_status, last_error`
 
 func scanSchedule(row pgx.Row, withName bool) (*Schedule, error) {
 	var s Schedule
@@ -246,7 +253,7 @@ INSERT INTO report_schedules
   (tenant_id, user_id, report_id, cadence, day_of_week, day_of_month, hour, timezone,
    format, recipients, subject, enabled, next_run_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-RETURNING ` + scheduleCols
+RETURNING ` + scheduleColsBare
 		args := []any{tenantID, userID, s.ReportID, s.Cadence, s.DayOfWeek, s.DayOfMonth, s.Hour,
 			s.Timezone, s.Format, s.Recipients, s.Subject, s.Enabled, next}
 
@@ -255,8 +262,12 @@ RETURNING ` + scheduleCols
 UPDATE report_schedules SET
   report_id=$3, cadence=$4, day_of_week=$5, day_of_month=$6, hour=$7, timezone=$8,
   format=$9, recipients=$10, subject=$11, enabled=$12, next_run_at=$13, updated_at=now()
-WHERE id=$14 AND user_id=$2
-RETURNING ` + scheduleCols
+-- tenant_id is redundant with RLS and deliberately kept: it also gives $1 a
+-- reference, without which Postgres cannot infer the parameter's type and the
+-- UPDATE fails with "could not determine data type of parameter $1" — an error
+-- that says nothing about the actual mistake.
+WHERE id=$14 AND user_id=$2 AND tenant_id=$1
+RETURNING ` + scheduleColsBare
 			args = append(args, s.ID)
 			args[0] = tenantID
 		}
