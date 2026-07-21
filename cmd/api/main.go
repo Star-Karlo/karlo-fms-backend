@@ -24,6 +24,7 @@ import (
 
 	_ "github.com/karlo/fms-backend/cmd/api/docs"
 	"github.com/karlo/fms-backend/internal/aidash"
+	"github.com/karlo/fms-backend/internal/aireport"
 	"github.com/karlo/fms-backend/internal/alert"
 	"github.com/karlo/fms-backend/internal/apitoken"
 	"github.com/karlo/fms-backend/internal/auth"
@@ -91,6 +92,9 @@ func main() {
 	// unauthorised Bedrock config disables just this endpoint (503) rather
 	// than failing startup.
 	aiDashH := aidash.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
+	// Report composition builds its catalog from the report package itself —
+	// reports live in the backend, so that is where their columns are known.
+	aiReportH := aireport.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
 	geofenceH := geofence.NewHandler(pool)
 	prefsH := prefs.NewHandler(pool)
 	telemetrySyncH := telemetrysync.NewHandler(pool)
@@ -130,6 +134,7 @@ func main() {
 		notifRuleH.Routes(pr)
 		reportH.Routes(pr)
 		customReportH.Routes(pr)
+		aiReportH.Routes(pr)
 		licenseH.Routes(pr)
 		maintenanceH.Routes(pr)
 		scorecardH.Routes(pr)
