@@ -59,6 +59,14 @@ const (
 // never occupies the API at all.
 const maxUploadBytes = 25 << 20
 
+// MaxPerOwner caps how many documents one vehicle (or driver) may hold.
+//
+// Enforced here rather than only in the UI: the limit exists to keep the
+// document drawer legible and the bucket bounded, and a cap that lives only in
+// the form is not a cap at all. Counted per owner, not per kind, so a vehicle
+// can carry any mix — STNK + KIR + insurance, or three pages of one document.
+const MaxPerOwner = 3
+
 // allowedMIME is what a document may be. An allowlist rather than a blocklist:
 // these are scans, and anything outside this set is a mistake or an attempt to
 // use the bucket as general storage.
@@ -238,10 +246,26 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		if req.OwnerType == "driver" {
 			table = "employees"
 		}
+		// FOR UPDATE locks the owner row for the rest of this transaction. It is
+		// what makes the count below safe: under READ COMMITTED two concurrent
+		// uploads would otherwise both read "2 existing" and both insert,
+		// leaving four. Serialising on the owner turns that into one waiting for
+		// the other and correctly seeing 3.
 		var exists bool
 		if err := tx.QueryRow(r.Context(),
-			`SELECT true FROM `+table+` WHERE id = $1`, req.OwnerID).Scan(&exists); err != nil {
+			`SELECT true FROM `+table+` WHERE id = $1 FOR UPDATE`, req.OwnerID).Scan(&exists); err != nil {
 			return fmt.Errorf("%s %d not found", req.OwnerType, req.OwnerID)
+		}
+
+		var n int
+		if err := tx.QueryRow(r.Context(),
+			`SELECT count(*) FROM documents WHERE owner_type = $1 AND owner_id = $2`,
+			req.OwnerType, req.OwnerID).Scan(&n); err != nil {
+			return err
+		}
+		if n >= MaxPerOwner {
+			return fmt.Errorf("this %s already has the maximum of %d documents; delete one first",
+				req.OwnerType, MaxPerOwner)
 		}
 
 		if err := tx.QueryRow(r.Context(), `
