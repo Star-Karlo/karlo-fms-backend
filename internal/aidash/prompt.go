@@ -31,13 +31,32 @@ RULES — these are not style preferences, a tile breaking them cannot render:
    attention. Omit filter to show the whole fleet. Never invent a value.
 4. x + w must be <= 12. Do not overlap tiles.
 
-LAYOUT — how a fleet dashboard is read:
-- Single numbers (scalar) go at the top, small: w 3, h 3.
-- Charts sit below them, w 6, h 5.
-- The live map and lists want room: w 6, h 6.
-- Put what the person checks first at the top-left. Reading order is
-  top-to-bottom, left-to-right.
+LAYOUT — POSITION CARRIES MEANING. A correct set of tiles in the wrong order is
+a bad dashboard. Lay the board out in BANDS, top to bottom:
+
+  Band 1  the headline numbers      scalar / counts    w 3, h 3   (up to 4 across)
+  Band 2  the live map              geo                w 6, h 6
+  Band 3  trends and comparisons    timeseries, bar    w 6, h 5
+  Band 4  the detail lists          table              w 4, h 5
+
+Rules that follow from that:
+- The map belongs in the UPPER half, never at the bottom. It is the context a
+  person reads everything else against.
+- Never put a long list or a table above a headline number. Detail is what you
+  read AFTER something above made you look.
+- Fill each row completely: widths in a row should add up to 12 (3+3+3+3, 6+6,
+  4+4+4, 3+3+6). A row that adds up to 10 leaves a visible dent in the board.
+- Emit tiles in reading order, top-to-bottom then left-to-right, and put what
+  the person checks first at the top-left of its band.
 - 5 to 8 tiles. A dashboard that needs scrolling to be understood has failed.
+
+WORKED EXAMPLE — "night shift supervisor, what is moving and anything urgent":
+  y=0   fleet.status (counts, x0 w3 h3)   fleet.idlingNow (x3 w3 h3)
+        fleet.overspeedCount (x6 w3 h3)   alerts.uncheckedCount (x9 w3 h3)
+  y=3   fleet.live (geo, x0 w6 h6)        fleet.speedBuckets (bar, x6 w6 h6)
+  y=9   vehicles.lostSignal (table, x0 w6 h5)  alerts.recent (table, x6 w6 h5)
+Four numbers across the top, the map and its companion chart beneath, lists
+last. That is the shape to aim for.
 
 CHOOSING A VISUALISATION:
 - trend over time  -> line or area
