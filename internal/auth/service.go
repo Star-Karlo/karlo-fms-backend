@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -107,6 +108,71 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 		}
 		return q.RevokeRefreshToken(ctx, store.RevokeRefreshTokenParams{ID: rt.ID})
 	})
+}
+
+// MinPasswordLen is the floor for a new password.
+//
+// Length alone, deliberately: complexity rules (a digit, a symbol, mixed case)
+// push people towards predictable substitutions and a sticky note, while length
+// is what actually costs an attacker. A passphrase clears this easily.
+const MinPasswordLen = 10
+
+// ErrWrongPassword is returned when the supplied current password does not
+// match. Distinct from ErrInvalidCredentials so the handler can say something
+// useful without that leaking into the login path.
+var ErrWrongPassword = errors.New("current password is incorrect")
+
+// ChangePassword verifies the current password, sets a new one, and returns a
+// fresh token pair.
+//
+// EVERY EXISTING SESSION IS REVOKED. A password change is what someone does
+// when they think a credential is compromised, so leaving other refresh tokens
+// alive would defeat the point — the attacker's session would outlive the
+// change. The caller is then re-issued immediately, so the person doing it
+// stays logged in on this device while every other device is signed out.
+func (s *Service) ChangePassword(ctx context.Context, tenantID, userID int64, current, next, userAgent string) (*TokenResponse, error) {
+	if len(next) < MinPasswordLen {
+		return nil, fmt.Errorf("new password must be at least %d characters", MinPasswordLen)
+	}
+	if current == next {
+		return nil, errors.New("new password must be different from the current one")
+	}
+
+	var user store.User
+	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		u, err := q.GetUserByID(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(current)); err != nil {
+			return ErrWrongPassword
+		}
+		// Cost 12, matching internal/users — a hash written here must be
+		// indistinguishable from one written at user creation.
+		hash, err := bcrypt.GenerateFromPassword([]byte(next), 12)
+		if err != nil {
+			return err
+		}
+		if err := q.UpdateUserPassword(ctx, store.UpdateUserPasswordParams{
+			ID: userID, PasswordHash: string(hash),
+		}); err != nil {
+			return err
+		}
+		// Same transaction as the password write: a revoke that succeeded while
+		// the password change rolled back (or vice versa) would leave the two
+		// disagreeing about which credentials are live.
+		if err := q.RevokeAllUserTokens(ctx, userID); err != nil {
+			return err
+		}
+		u.PasswordHash = string(hash)
+		user = u
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.issue(ctx, user, userAgent)
 }
 
 // Me returns the current user by id (tenant-scoped).

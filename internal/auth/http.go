@@ -27,6 +27,7 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 func (h *Handler) PrivateRoutes(r chi.Router) {
 	r.Post("/v1/auth/logout", h.logout)
 	r.Get("/v1/auth/me", h.me)
+	r.Post("/v1/auth/change-password", h.changePassword)
 }
 
 // login godoc
@@ -122,4 +123,49 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, dto)
+}
+
+// ChangePasswordRequest is the change-password body.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// changePassword godoc
+//
+//	@Summary		Change your own password
+//	@Description	Verifies the current password, then sets a new one. ALL other sessions are signed out — a password change is what someone does when they suspect a credential is compromised, so other refresh tokens must not survive it. A fresh token pair is returned, so the caller stays signed in on this device and should replace its stored tokens with these.
+//	@Tags			auth
+//	@Security		BearerAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		ChangePasswordRequest	true	"current and new password"
+//	@Success		200		{object}	TokenResponse
+//	@Failure		400		{object}	map[string]string
+//	@Failure		401		{object}	map[string]string
+//	@Router			/v1/auth/change-password [post]
+func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+	claims, ok := FromContext(r.Context())
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req ChangePasswordRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	resp, err := h.svc.ChangePassword(r.Context(), claims.TenantID, UserID(r.Context()),
+		req.CurrentPassword, req.NewPassword, r.UserAgent())
+	if err != nil {
+		// A wrong current password is 401; a rejected NEW password is 400. They
+		// are different problems and the form shows them in different places.
+		if errors.Is(err, ErrWrongPassword) {
+			httpx.Error(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, resp)
 }

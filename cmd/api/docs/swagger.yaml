@@ -261,6 +261,13 @@ definitions:
       token_prefix:
         type: string
     type: object
+  auth.ChangePasswordRequest:
+    properties:
+      current_password:
+        type: string
+      new_password:
+        type: string
+    type: object
   auth.LoginRequest:
     properties:
       email:
@@ -2205,6 +2212,46 @@ paths:
       summary: Revoke an API token (admin)
       tags:
       - api-tokens
+  /v1/auth/change-password:
+    post:
+      consumes:
+      - application/json
+      description: Verifies the current password, then sets a new one. ALL other sessions
+        are signed out — a password change is what someone does when they suspect
+        a credential is compromised, so other refresh tokens must not survive it.
+        A fresh token pair is returned, so the caller stays signed in on this device
+        and should replace its stored tokens with these.
+      parameters:
+      - description: current and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change your own password
+      tags:
+      - auth
   /v1/auth/login:
     post:
       consumes:
