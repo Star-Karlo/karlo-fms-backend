@@ -83,9 +83,14 @@ func (s *Service) Build(ctx context.Context, tenantID int64, spec Spec) (Doc, er
 	}
 
 	doc := Doc{
-		Title:      spec.Name,
-		Notes:      spec.Notes,
-		RangeLabel: spec.Range.Label(from, to),
+		Title: spec.Name,
+		Notes: spec.Notes,
+		// Label in FLEET-LOCAL time. An absolute range arrives as UTC — a
+		// browser sending "1 July" in WIB sends 30 Jun 17:00Z — so labelling it
+		// as parsed made a report for 1–21 July announce itself as 30 Jun to 21
+		// Jul. The rows were right and the heading was a day out, which is the
+		// version of wrong that gets believed.
+		RangeLabel: spec.Range.Label(from.In(loc), to.In(loc)),
 		Generated:  time.Now().In(loc),
 	}
 
