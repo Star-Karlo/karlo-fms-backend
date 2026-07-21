@@ -19,6 +19,11 @@ type catalogEntry struct {
 	Shape  string   `json:"shape"`
 	Viz    []string `json:"viz"`
 	Params []string `json:"params"`
+	// Enums carries the legal values for constrained params. Without it the
+	// model can only be told a param EXISTS, and it fills constrained ones with
+	// plausible inventions ("broken", "problem") that match nothing and render
+	// an empty tile which looks exactly like a working one.
+	Enums map[string][]string `json:"enums,omitempty"`
 }
 
 type tileOut struct {
@@ -30,6 +35,39 @@ type tileOut struct {
 	Y      int            `json:"y"`
 	W      int            `json:"w"`
 	H      int            `json:"h"`
+}
+
+// filterAllowed splits a param value against a vocabulary. Handles both a bare
+// string and an array, since a model will send either for a list-valued param.
+func filterAllowed(v any, allowed []string) (any, []string) {
+	ok := func(s string) bool { return contains(allowed, s) }
+	switch val := v.(type) {
+	case string:
+		if ok(val) {
+			return val, nil
+		}
+		return nil, []string{val}
+	case []any:
+		var kept []any
+		var bad []string
+		for _, item := range val {
+			s, isStr := item.(string)
+			if !isStr {
+				bad = append(bad, fmt.Sprintf("%v", item))
+				continue
+			}
+			if ok(s) {
+				kept = append(kept, s)
+			} else {
+				bad = append(bad, s)
+			}
+		}
+		if len(kept) == 0 {
+			return nil, bad
+		}
+		return kept, bad
+	}
+	return v, nil
 }
 
 // validate filters the model's tiles down to those that will actually render,
@@ -76,12 +114,34 @@ func validate(input map[string]any, catalogRaw json.RawMessage) (json.RawMessage
 		// them, and one stray key shouldn't cost an otherwise good tile. But it
 		// IS reported, so the repair pass can stop doing it.
 		if len(t.Params) > 0 {
-			for k := range t.Params {
+			for k, v := range t.Params {
 				if !contains(entry.Params, k) {
 					problems = append(problems, fmt.Sprintf(
 						"tile %d (%s): unknown param %q (dropped); accepted: %s",
 						i, t.Metric, k, orNone(entry.Params)))
 					delete(t.Params, k)
+					continue
+				}
+				allowed, constrained := entry.Enums[k]
+				if !constrained {
+					continue
+				}
+				// Constrained param: keep only values in the vocabulary. Naming
+				// both the offender and the legal set is what lets the repair
+				// pass fix it rather than guess again.
+				kept, dropped := filterAllowed(v, allowed)
+				if len(dropped) > 0 {
+					problems = append(problems, fmt.Sprintf(
+						"tile %d (%s): param %q has invalid value(s) %s; allowed: %s",
+						i, t.Metric, k, strings.Join(dropped, ", "), strings.Join(allowed, ", ")))
+				}
+				if kept == nil {
+					// Everything invalid: unset it. Leaving an empty list would
+					// mean "select nothing", blanking a tile the model plainly
+					// meant to populate.
+					delete(t.Params, k)
+				} else {
+					t.Params[k] = kept
 				}
 			}
 		}

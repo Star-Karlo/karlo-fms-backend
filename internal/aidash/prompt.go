@@ -16,6 +16,7 @@ You are given a CATALOG of available metrics. Each metric declares:
   shape   — scalar | categorical | timeseries | table | geo
   viz     — the visualisation types that metric's shape can render
   params  — the parameters it accepts, if any
+  enums   — for a constrained param, the ONLY values it accepts
 
 Compose a dashboard as a list of tiles. Each tile picks a metric, a visualisation
 from that metric's allowed list, and a position on a 12-column grid.
@@ -24,7 +25,10 @@ RULES — these are not style preferences, a tile breaking them cannot render:
 1. Use only metric ids present in the catalog. Never invent one.
 2. Use only a viz listed for that metric. In particular a timeseries must never
    be a pie: "40% of it happened on Tuesday" is meaningless.
-3. Only pass params the metric declares.
+3. Only pass params the metric declares, and for a param listed in "enums" use
+   ONLY the values given there. fleet.live takes filter as an ARRAY, so
+   filter: ["offline","low_battery"] is a map of just the vehicles needing
+   attention. Omit filter to show the whole fleet. Never invent a value.
 4. x + w must be <= 12. Do not overlap tiles.
 
 LAYOUT — how a fleet dashboard is read:
