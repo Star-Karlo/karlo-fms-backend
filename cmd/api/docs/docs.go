@@ -2011,6 +2011,236 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/insights/action-queue": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Merges unchecked alerts, expiring documents, due services, idle assets and low batteries into one ordered worklist. Alerts respect ` + "`" + `check_status` + "`" + `, so marking one checked removes it from the queue.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "insights"
+                ],
+                "summary": "Everything currently waiting on a person, ranked",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "max items (default 25)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "how far ahead to look for expiries (default 30)",
+                        "name": "horizon_days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/insight.QueueItem"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/insights/anomalies": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Compares each vehicle's last 3 complete days against its own prior daily history, reporting a change only when it exceeds that vehicle's normal day-to-day variation (z-score \u003e= 2) AND moves by a materially useful amount. Today is excluded because it is still being written. At most one finding per vehicle, each with a ready-made headline.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "insights"
+                ],
+                "summary": "Vehicles behaving differently from their own normal",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "max findings (default 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/insight.AnomalyResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/insights/battery-watch": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Readings below 6V are ignored as absent sensors rather than flat batteries. Each finding carries a recommendation and a ` + "`" + `scheduled` + "`" + ` flag; POST to the schedule-service action to book a replacement into the maintenance module.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "insights"
+                ],
+                "summary": "Vehicles with a weak or failing battery, and whether a service is booked",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/insight.BatteryFinding"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/insights/battery-watch/{vehicle_id}/schedule-service": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Turns a battery finding into a real service schedule, so it appears in Maintenance and in the action queue alongside every other due job. Idempotent: if an open battery service already exists for the vehicle it is returned rather than duplicated. A critical reading defaults to due today, a weak one to seven days out.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "insights"
+                ],
+                "summary": "Book a battery replacement into the maintenance schedule",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "optional overrides",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/insight.ScheduleServiceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/insights/utilisation-peers": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Compares each vehicle's distance per active day against the median of its fleet group (or vehicle type when ungrouped). Groups of fewer than 4 are skipped — a \"median\" of two vehicles is not one. Median rather than mean, so parked or broken vehicles do not drag the comparison down and make genuinely underused ones look normal.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "insights"
+                ],
+                "summary": "Vehicles well below the median utilisation of their own group",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "max findings (default 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/insight.PeerComparison"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/live-view": {
             "get": {
                 "security": [
@@ -5300,6 +5530,200 @@ const docTemplate = `{
                     "type": "integer"
                 }
             }
+        },
+        "insight.Anomaly": {
+            "type": "object",
+            "properties": {
+                "baseline": {
+                    "type": "number"
+                },
+                "change_pct": {
+                    "type": "number"
+                },
+                "fleet_group": {
+                    "type": "string"
+                },
+                "headline": {
+                    "description": "Headline is a ready-to-display sentence, built server-side so every client\nand the AI narrator describe a finding identically.",
+                    "type": "string"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "metric": {
+                    "description": "Metric is which measure moved: idle_pct | distance | moving_hours | stopped.",
+                    "type": "string"
+                },
+                "recent": {
+                    "type": "number"
+                },
+                "severity": {
+                    "$ref": "#/definitions/insight.Severity"
+                },
+                "sigma": {
+                    "description": "Sigma is how many standard deviations of this vehicle's OWN daily spread\nthe change represents. Exposed because it is the number that decides\nwhether a finding is real, and hiding it would make the ranking look\narbitrary beside the more eye-catching percentage.",
+                    "type": "number"
+                },
+                "unit": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "insight.AnomalyResponse": {
+            "type": "object",
+            "properties": {
+                "baseline_days": {
+                    "type": "integer"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/insight.Anomaly"
+                    }
+                },
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
+        "insight.BatteryFinding": {
+            "type": "object",
+            "properties": {
+                "battery_v": {
+                    "type": "number"
+                },
+                "detail": {
+                    "type": "string"
+                },
+                "fleet_group": {
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "Kind separates a real battery problem from an implausible reading:\n\"battery\" | \"sensor_fault\". They need different people and different\nparts, so collapsing them into one list wastes a trip.",
+                    "type": "string"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "recommendation": {
+                    "type": "string"
+                },
+                "scheduled": {
+                    "description": "Scheduled reports whether a battery service is ALREADY booked for this\nvehicle, so the client shows \"scheduled\" rather than offering the action\nagain — and so a second click cannot create a duplicate.",
+                    "type": "boolean"
+                },
+                "severity": {
+                    "$ref": "#/definitions/insight.Severity"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "insight.PeerComparison": {
+            "type": "object",
+            "properties": {
+                "deviation_pct": {
+                    "type": "number"
+                },
+                "headline": {
+                    "type": "string"
+                },
+                "idle_pct": {
+                    "type": "number"
+                },
+                "km_per_day": {
+                    "type": "number"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "peer_count": {
+                    "type": "integer"
+                },
+                "peer_group": {
+                    "type": "string"
+                },
+                "peer_median_idle_pct": {
+                    "type": "number"
+                },
+                "peer_median_km_per_day": {
+                    "type": "number"
+                },
+                "severity": {
+                    "$ref": "#/definitions/insight.Severity"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "insight.QueueItem": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "type": "string"
+                },
+                "due_in_days": {
+                    "description": "DueInDays is negative when already overdue, null when not time-based.",
+                    "type": "integer"
+                },
+                "kind": {
+                    "description": "Kind is the source: alert | document | service | idle_asset | battery.",
+                    "type": "string"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "rank": {
+                    "description": "Rank is the computed priority; exposed so the client can show why an item\nsits where it does rather than presenting an inscrutable order.",
+                    "type": "integer"
+                },
+                "ref_id": {
+                    "description": "RefID identifies the row within its kind, so the client can deep-link and\n(for alerts) mark it checked.",
+                    "type": "integer"
+                },
+                "severity": {
+                    "$ref": "#/definitions/insight.Severity"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "insight.ScheduleServiceRequest": {
+            "type": "object",
+            "properties": {
+                "component": {
+                    "type": "string"
+                },
+                "due_in_days": {
+                    "description": "DueInDays defaults by severity when omitted.",
+                    "type": "integer"
+                },
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
+        "insight.Severity": {
+            "type": "string",
+            "enum": [
+                "critical",
+                "warning",
+                "info"
+            ],
+            "x-enum-varnames": [
+                "SevCritical",
+                "SevWarning",
+                "SevInfo"
+            ]
         },
         "license.Counts": {
             "type": "object",

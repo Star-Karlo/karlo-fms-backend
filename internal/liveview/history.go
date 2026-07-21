@@ -31,9 +31,21 @@ import (
 // hour, which is why this is minutes rather than an hour.
 const historyTTL = 5 * time.Minute
 
-// maxHistoryDays bounds the window. The tracking service keeps ~8 days hot;
-// asking for more silently returns fewer days, so the cap makes that explicit.
-const maxHistoryDays = 8
+// maxHistoryDays bounds the window.
+//
+// This was 8, on the assumption that the rollup ages out with the telemetry it
+// is built from. It does not: `telemetry` and `mobile_telemetry` are
+// hypertables with an 8-day retention policy, but `vehicle_day` is a plain
+// table with no policy at all, and /v1/stats/daily happily serves every day it
+// holds. The old cap was therefore discarding history that exists — which
+// mattered most to anything comparing a period against an earlier one, since
+// the comparison silently had almost nothing to compare against.
+//
+// 35 rather than unbounded because the response is per-device per-day: at ~1,900
+// devices a 35-day window is already ~66,000 rows in one JSON body. That covers
+// a full month plus a margin for month-over-month, which is the longest window
+// anything here asks for, and it is cached for historyTTL.
+const maxHistoryDays = 35
 
 // DayTotals is one calendar day, fleet-wide.
 type DayTotals struct {
@@ -258,4 +270,94 @@ func (h *Handler) fleetHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// VehicleDayPoint is one vehicle on one day, un-aggregated.
+type VehicleDayPoint struct {
+	Day        string  `json:"day"`
+	MovingH    float64 `json:"moving_h"`
+	IdleH      float64 `json:"idle_h"`
+	DistanceKm float64 `json:"distance_km"`
+}
+
+// VehicleSeries is a vehicle's daily history, oldest first.
+type VehicleSeries struct {
+	VehicleID    int64
+	LicensePlate string
+	FleetGroup   *string
+	VehicleType  *string
+	Days         []VehicleDayPoint
+}
+
+// FleetDailySeries returns per-vehicle DAILY points rather than window totals.
+//
+// FleetDaily sums each vehicle's days into one row, which is all a report needs.
+// Anything asking whether a change is SIGNIFICANT cannot work from a sum: a
+// truck averaging 79 km/day over six days might have driven 79 every day or
+// have alternated 21 and 461, and those two fleets need completely different
+// responses. The spread is only visible per day, so it is kept here.
+//
+// Shares FleetDaily's upstream call and cache, so asking for both costs one
+// fetch.
+func (s *Service) FleetDailySeries(ctx context.Context, tenantID int64, days int) ([]VehicleSeries, error) {
+	if days < 1 {
+		days = 7
+	}
+	if days > maxHistoryDays {
+		days = maxHistoryDays
+	}
+	loc, err := time.LoadLocation("Asia/Jakarta")
+	if err != nil {
+		loc = time.UTC
+	}
+	today := time.Now().In(loc)
+	from := today.AddDate(0, 0, -(days - 1)).Format("2006-01-02")
+	to := today.Format("2006-01-02")
+
+	vehicles, err := s.List(ctx, tenantID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("registry: %w", err)
+	}
+	byIMEI := make(map[string]*VehicleLive, len(vehicles))
+	for i := range vehicles {
+		if imei := vehicles[i].Tracker.IMEI; imei != "" {
+			byIMEI[imei] = &vehicles[i]
+		}
+	}
+
+	stats, err := s.tel.DailyStats(ctx, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("daily stats: %w", err)
+	}
+
+	agg := map[int64]*VehicleSeries{}
+	for _, st := range stats {
+		v := byIMEI[st.IMEI]
+		if v == nil {
+			continue // a device this tenant cannot see
+		}
+		vs := agg[v.VehicleID]
+		if vs == nil {
+			vs = &VehicleSeries{
+				VehicleID:    v.VehicleID,
+				LicensePlate: v.LicensePlate,
+				FleetGroup:   v.FleetGroupName,
+				VehicleType:  v.VehicleType,
+			}
+			agg[v.VehicleID] = vs
+		}
+		vs.Days = append(vs.Days, VehicleDayPoint{
+			Day:        st.Day,
+			MovingH:    float64(st.MovingS) / 3600,
+			IdleH:      float64(st.IdleS) / 3600,
+			DistanceKm: st.DistanceKm,
+		})
+	}
+
+	out := make([]VehicleSeries, 0, len(agg))
+	for _, vs := range agg {
+		sort.Slice(vs.Days, func(i, j int) bool { return vs.Days[i].Day < vs.Days[j].Day })
+		out = append(out, *vs)
+	}
+	return out, nil
 }

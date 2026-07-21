@@ -960,6 +960,156 @@ definitions:
       total:
         type: integer
     type: object
+  insight.Anomaly:
+    properties:
+      baseline:
+        type: number
+      change_pct:
+        type: number
+      fleet_group:
+        type: string
+      headline:
+        description: |-
+          Headline is a ready-to-display sentence, built server-side so every client
+          and the AI narrator describe a finding identically.
+        type: string
+      license_plate:
+        type: string
+      metric:
+        description: 'Metric is which measure moved: idle_pct | distance | moving_hours
+          | stopped.'
+        type: string
+      recent:
+        type: number
+      severity:
+        $ref: '#/definitions/insight.Severity'
+      sigma:
+        description: |-
+          Sigma is how many standard deviations of this vehicle's OWN daily spread
+          the change represents. Exposed because it is the number that decides
+          whether a finding is real, and hiding it would make the ranking look
+          arbitrary beside the more eye-catching percentage.
+        type: number
+      unit:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
+  insight.AnomalyResponse:
+    properties:
+      baseline_days:
+        type: integer
+      items:
+        items:
+          $ref: '#/definitions/insight.Anomaly'
+        type: array
+      note:
+        type: string
+    type: object
+  insight.BatteryFinding:
+    properties:
+      battery_v:
+        type: number
+      detail:
+        type: string
+      fleet_group:
+        type: string
+      kind:
+        description: |-
+          Kind separates a real battery problem from an implausible reading:
+          "battery" | "sensor_fault". They need different people and different
+          parts, so collapsing them into one list wastes a trip.
+        type: string
+      license_plate:
+        type: string
+      recommendation:
+        type: string
+      scheduled:
+        description: |-
+          Scheduled reports whether a battery service is ALREADY booked for this
+          vehicle, so the client shows "scheduled" rather than offering the action
+          again — and so a second click cannot create a duplicate.
+        type: boolean
+      severity:
+        $ref: '#/definitions/insight.Severity'
+      vehicle_id:
+        type: integer
+    type: object
+  insight.PeerComparison:
+    properties:
+      deviation_pct:
+        type: number
+      headline:
+        type: string
+      idle_pct:
+        type: number
+      km_per_day:
+        type: number
+      license_plate:
+        type: string
+      peer_count:
+        type: integer
+      peer_group:
+        type: string
+      peer_median_idle_pct:
+        type: number
+      peer_median_km_per_day:
+        type: number
+      severity:
+        $ref: '#/definitions/insight.Severity'
+      vehicle_id:
+        type: integer
+    type: object
+  insight.QueueItem:
+    properties:
+      detail:
+        type: string
+      due_in_days:
+        description: DueInDays is negative when already overdue, null when not time-based.
+        type: integer
+      kind:
+        description: 'Kind is the source: alert | document | service | idle_asset
+          | battery.'
+        type: string
+      license_plate:
+        type: string
+      rank:
+        description: |-
+          Rank is the computed priority; exposed so the client can show why an item
+          sits where it does rather than presenting an inscrutable order.
+        type: integer
+      ref_id:
+        description: |-
+          RefID identifies the row within its kind, so the client can deep-link and
+          (for alerts) mark it checked.
+        type: integer
+      severity:
+        $ref: '#/definitions/insight.Severity'
+      title:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
+  insight.ScheduleServiceRequest:
+    properties:
+      component:
+        type: string
+      due_in_days:
+        description: DueInDays defaults by severity when omitted.
+        type: integer
+      note:
+        type: string
+    type: object
+  insight.Severity:
+    enum:
+    - critical
+    - warning
+    - info
+    type: string
+    x-enum-varnames:
+    - SevCritical
+    - SevWarning
+    - SevInfo
   license.Counts:
     properties:
       expired:
@@ -3187,6 +3337,167 @@ paths:
       summary: Assign a vehicle to a geofence (starts Enter/Exit alerts)
       tags:
       - geofences
+  /v1/insights/action-queue:
+    get:
+      description: Merges unchecked alerts, expiring documents, due services, idle
+        assets and low batteries into one ordered worklist. Alerts respect `check_status`,
+        so marking one checked removes it from the queue.
+      parameters:
+      - description: max items (default 25)
+        in: query
+        name: limit
+        type: integer
+      - description: how far ahead to look for expiries (default 30)
+        in: query
+        name: horizon_days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/insight.QueueItem'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Everything currently waiting on a person, ranked
+      tags:
+      - insights
+  /v1/insights/anomalies:
+    get:
+      description: Compares each vehicle's last 3 complete days against its own prior
+        daily history, reporting a change only when it exceeds that vehicle's normal
+        day-to-day variation (z-score >= 2) AND moves by a materially useful amount.
+        Today is excluded because it is still being written. At most one finding per
+        vehicle, each with a ready-made headline.
+      parameters:
+      - description: max findings (default 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/insight.AnomalyResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Vehicles behaving differently from their own normal
+      tags:
+      - insights
+  /v1/insights/battery-watch:
+    get:
+      description: Readings below 6V are ignored as absent sensors rather than flat
+        batteries. Each finding carries a recommendation and a `scheduled` flag; POST
+        to the schedule-service action to book a replacement into the maintenance
+        module.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/insight.BatteryFinding'
+            type: array
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Vehicles with a weak or failing battery, and whether a service is booked
+      tags:
+      - insights
+  /v1/insights/battery-watch/{vehicle_id}/schedule-service:
+    post:
+      consumes:
+      - application/json
+      description: 'Turns a battery finding into a real service schedule, so it appears
+        in Maintenance and in the action queue alongside every other due job. Idempotent:
+        if an open battery service already exists for the vehicle it is returned rather
+        than duplicated. A critical reading defaults to due today, a weak one to seven
+        days out.'
+      parameters:
+      - description: vehicle id
+        in: path
+        name: vehicle_id
+        required: true
+        type: integer
+      - description: optional overrides
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/insight.ScheduleServiceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Book a battery replacement into the maintenance schedule
+      tags:
+      - insights
+  /v1/insights/utilisation-peers:
+    get:
+      description: Compares each vehicle's distance per active day against the median
+        of its fleet group (or vehicle type when ungrouped). Groups of fewer than
+        4 are skipped — a "median" of two vehicles is not one. Median rather than
+        mean, so parked or broken vehicles do not drag the comparison down and make
+        genuinely underused ones look normal.
+      parameters:
+      - description: max findings (default 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/insight.PeerComparison'
+            type: array
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Vehicles well below the median utilisation of their own group
+      tags:
+      - insights
   /v1/live-view:
     get:
       parameters:

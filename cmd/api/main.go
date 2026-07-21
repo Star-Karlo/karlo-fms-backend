@@ -37,6 +37,7 @@ import (
 	"github.com/karlo/fms-backend/internal/document"
 	"github.com/karlo/fms-backend/internal/fuel"
 	"github.com/karlo/fms-backend/internal/geofence"
+	"github.com/karlo/fms-backend/internal/insight"
 	"github.com/karlo/fms-backend/internal/license"
 	"github.com/karlo/fms-backend/internal/liveview"
 	"github.com/karlo/fms-backend/internal/mailer"
@@ -119,6 +120,9 @@ func main() {
 	aiDashH := aidash.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
 	geofenceH := geofence.NewHandler(pool)
 	fuelH := fuel.NewHandler(pool)
+	// Findings rather than figures: each vehicle compared with its own past,
+	// its peers, or a threshold. Reads the daily rollup through liveview.
+	insightH := insight.NewHandler(pool, liveSvc)
 	// Document upload/download. An empty DOCUMENTS_BUCKET disables just
 	// these endpoints (503) rather than failing startup.
 	documentH := document.NewHandler(ctx, pool, cfg.AWSRegion, cfg.DocumentsBucket)
@@ -171,6 +175,7 @@ func main() {
 		dashboardH.Routes(pr)
 		geofenceH.Routes(pr)
 		fuelH.Routes(pr)
+		insightH.Routes(pr)
 		documentH.Routes(pr)
 		telemetrySyncH.Routes(pr)
 		aiDashH.Routes(pr)
