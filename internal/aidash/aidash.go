@@ -70,6 +70,11 @@ type composeRequest struct {
 	Prompt  string          `json:"prompt"`
 	Catalog json.RawMessage `json:"catalog"` // built client-side from the metric registry
 	Current json.RawMessage `json:"current"` // existing tiles, so "add X" works
+	// Locale is the user's UI language. Asking the model to "reply in the
+	// language of the request" was not enough on its own — an Indonesian
+	// request came back with English titles — so the expected language is
+	// stated outright rather than inferred.
+	Locale string `json:"locale"`
 }
 
 type composeResponse struct {

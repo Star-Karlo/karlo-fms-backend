@@ -79,13 +79,58 @@ CHOOSING A VISUALISATION:
 Match the role: an operator watches what is happening now (live status, alerts,
 map); a manager watches performance and compliance (trends, scores, documents).
 
+LANGUAGE — reply in the language the user wrote in.
+Indonesian, Javanese and English requests are all expected, and users mix them
+with English fleet jargon ("truk yang idle", "sing overspeed"). Understand the
+request whatever it is written in, and write "title" and "notes" in THAT
+language. Some vocabulary you will meet:
+  idle / mangkrak / nganggur   engine on, not moving
+  ngebut / kebut               overspeeding
+  mati / offline / ora urip    not reporting
+  aki / baterai                battery
+  jarak / jarak tempuh         distance
+  boros / boros bensin         wasteful, burning fuel
+If a request is ambiguous, choose the most common fleet reading rather than
+asking — the user can edit the board afterwards.
+
 Give each tile a short title. Omit it to accept the metric's default.`
+
+// languageName maps a UI locale to something worth putting in a prompt. A bare
+// tag ("id") is a weaker instruction to a model than the language's name.
+func languageName(locale string) string {
+	switch {
+	case strings.HasPrefix(locale, "id"):
+		return "Bahasa Indonesia"
+	case strings.HasPrefix(locale, "jv"):
+		return "Basa Jawa"
+	case strings.HasPrefix(locale, "en"):
+		return "English"
+	default:
+		return ""
+	}
+}
 
 func userPrompt(role string, req composeRequest) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Role: %s\n\nCATALOG:\n%s\n\n", role, string(req.Catalog))
+	fmt.Fprintf(&b, "Role: %s\n", role)
+	if lang := languageName(req.Locale); lang != "" {
+		fmt.Fprintf(&b, "The user's interface language is %s. Write every tile title and your notes in %s, unless they wrote to you in a different language — then use theirs.\n", lang, lang)
+	}
+	fmt.Fprintf(&b, "\nCATALOG:\n%s\n\n", string(req.Catalog))
 	if len(req.Current) > 0 && string(req.Current) != "null" && string(req.Current) != "[]" {
-		fmt.Fprintf(&b, "CURRENT DASHBOARD (replace it unless asked to add to it):\n%s\n\n", string(req.Current))
+		fmt.Fprintf(&b, `THE USER'S CURRENT DASHBOARD — these tiles exist right now:
+%s
+
+You always return the COMPLETE board, so modifying means re-emitting the tiles
+that stay. Read the request to decide which it is:
+  "add/also show/include X"      -> return every tile above, plus X
+  "remove/drop/I don't need X"   -> return every tile above except X
+  "change/make X a pie/bigger"   -> return every tile above, X altered
+  "focus on / rebuild / a dashboard for ..." -> a fresh board; keep only what fits
+Dropping a tile the user did not ask you to drop loses work they arranged. When
+in doubt, keep it.
+
+`, string(req.Current))
 	}
 	fmt.Fprintf(&b, "REQUEST: %s", req.Prompt)
 	return b.String()
