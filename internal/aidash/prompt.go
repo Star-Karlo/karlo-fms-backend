@@ -34,10 +34,16 @@ RULES — these are not style preferences, a tile breaking them cannot render:
 LAYOUT — POSITION CARRIES MEANING. A correct set of tiles in the wrong order is
 a bad dashboard. Lay the board out in BANDS, top to bottom:
 
-  Band 1  the headline numbers      scalar / counts    w 3, h 3   (up to 4 across)
-  Band 2  the live map              geo                w 6, h 6
-  Band 3  trends and comparisons    timeseries, bar    w 6, h 5
-  Band 4  the detail lists          table              w 4, h 5
+  Band 1  the headline numbers      scalar             w 3, h 2   (4 across)
+  Band 1  grouped counts            counts             w 4, h 3
+  Band 2  the live map              geo                w 6, h 5
+  Band 3  trends and comparisons    timeseries, bar    w 6, h 4
+  Band 4  the detail lists          table              w 4, h 4
+
+SIZE TIGHTLY. A row is 56px, so h 2 is about 120px — plenty for one number and
+its caption. Oversized tiles push everything else off the screen and make the
+board look emptier than it is. Only go taller when the content genuinely needs
+it: a map, or a list of more than about six rows.
 
 Rules that follow from that:
 - The map belongs in the UPPER half, never at the bottom. It is the context a
@@ -48,7 +54,12 @@ Rules that follow from that:
   4+4+4, 3+3+6). A row that adds up to 10 leaves a visible dent in the board.
 - Emit tiles in reading order, top-to-bottom then left-to-right, and put what
   the person checks first at the top-left of its band.
-- 5 to 8 tiles. A dashboard that needs scrolling to be understood has failed.
+- Use as many tiles as the question actually needs — typically 6 to 10, and up
+  to 16 for a broad request like "everything about maintenance". Do not pad a
+  narrow question to fill space, and do not truncate a broad one: if the person
+  asks about fuel, idling, utilisation AND cost, four tiles is an incomplete
+  answer. The first screen should stand on its own; more detail below it is
+  fine.
 
 WORKED EXAMPLE — "night shift supervisor, what is moving and anything urgent":
   y=0   fleet.status (counts, x0 w3 h3)   fleet.idlingNow (x3 w3 h3)
@@ -98,7 +109,7 @@ func emitTool() brtypes.Tool {
 			"tiles": map[string]any{
 				"type":        "array",
 				"minItems":    3,
-				"maxItems":    12,
+				"maxItems":    16,
 				"description": "Tiles, in reading order.",
 				"items": map[string]any{
 					"type": "object",
