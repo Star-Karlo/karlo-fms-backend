@@ -76,7 +76,9 @@ func main() {
 	alertH := alert.NewHandler(pool)
 	controlH := controltower.NewHandler(controltower.NewService(pool, liveSvc))
 	notifRuleH := notifrule.NewHandler(pool)
-	reportSvc := report.NewService(pool, tel)
+	// The report service borrows liveview for the daily rollup join, so the
+	// fleet-wide historical reports do not duplicate it.
+	reportSvc := report.NewService(pool, tel).WithFleetHistory(liveSvc)
 	reportH := report.NewHandler(reportSvc)
 	// Custom reports are a named COMBINATION of the catalog reports above, so
 	// they share that service rather than re-querying anything themselves.

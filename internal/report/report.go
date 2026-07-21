@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/liveview"
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
@@ -48,20 +49,28 @@ var Catalog = []Meta{
 	{"pto-active-duration", "PTO Active Duration", "Power-take-off active periods.", "Vehicle", "PTO", true},
 	{"driver-management", "Driver Management", "Driver roster and assignments.", "Driver", "Driver", true},
 	{"driver-operational-summary", "Driver Operational Summary", "Per-driver trips, distance and behavior.", "Driver", "Driver", true},
+
+	// Fleet-wide historical reports, from the daily telemetry rollup. Everything
+	// above that is trip-shaped covers ONE vehicle; these cover all of them,
+	// which is what a weekly or monthly report actually needs.
+	{"fleet-daily-summary", "Fleet Daily Summary", "Day by day: hours moving and idling, distance, and how much of the fleet worked. Fleet-wide.", "Fleet", "Performance", true},
+	{"vehicle-utilisation", "Vehicle Utilisation", "Per vehicle over the period: hours moving and idling, distance, days used. Fleet-wide.", "Fleet", "Performance", true},
+	{"idle-leaderboard", "Worst Idlers", "Vehicles that spent the largest share of engine-on time idling. Fleet-wide.", "Fleet", "Performance", true},
+	{"unused-vehicles", "Unused Vehicles", "Vehicles that reported but never moved in the period. Fleet-wide.", "Fleet", "Performance", true},
 }
 
 // TripRow is one row of the Vehicle Trip History report.
 type TripRow struct {
-	Date       time.Time `json:"date"`
-	Plate      string    `json:"license_plate"`
-	Type       *string   `json:"vehicle_type"`
-	IMEI       string    `json:"imei"`
-	Driver     *string   `json:"driver"`
-	Lat        *float64  `json:"lat"`
-	Lon        *float64  `json:"lon"`
-	Location   string    `json:"location"`
-	Speed      *float64  `json:"speed"`
-	Ignition   *bool     `json:"acc"`
+	Date     time.Time `json:"date"`
+	Plate    string    `json:"license_plate"`
+	Type     *string   `json:"vehicle_type"`
+	IMEI     string    `json:"imei"`
+	Driver   *string   `json:"driver"`
+	Lat      *float64  `json:"lat"`
+	Lon      *float64  `json:"lon"`
+	Location string    `json:"location"`
+	Speed    *float64  `json:"speed"`
+	Ignition *bool     `json:"acc"`
 }
 
 // TripRequest parameters the trip-history report.
@@ -76,6 +85,8 @@ type TripRequest struct {
 type Service struct {
 	pool *db.Pool
 	tel  *telemetry.Client
+	// fleet supplies the daily rollup joined to the vehicle registry. Optional.
+	fleet *liveview.Service
 }
 
 // NewService builds the report service.

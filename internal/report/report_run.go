@@ -60,6 +60,11 @@ type RunRequest struct {
 // fields it has never been told about. Running a report to discover its shape
 // would mean a 5,000-point telemetry fetch just to populate a dropdown.
 var catalogColumns = map[string][]Column{
+	"fleet-daily-summary": {{"day", "Day"}, {"active", "Vehicles Reporting"}, {"unused", "Did Not Move"}, {"moving_h", "Moving (h)"}, {"idle_h", "Idle (h)"}, {"distance_km", "Distance (km)"}, {"idle_pct", "Idle % of Engine-On"}},
+	"vehicle-utilisation": {{"license_plate", "Plate"}, {"vehicle_type", "Type"}, {"fleet_group", "Group"}, {"moving_h", "Moving (h)"}, {"idle_h", "Idle (h)"}, {"distance_km", "Distance (km)"}, {"days_used", "Days Used"}, {"idle_pct", "Idle %"}, {"max_speed", "Max km/h"}},
+	"idle-leaderboard":    {{"license_plate", "Plate"}, {"vehicle_type", "Type"}, {"idle_h", "Idle (h)"}, {"moving_h", "Moving (h)"}, {"idle_pct", "Idle %"}, {"distance_km", "Distance (km)"}},
+	"unused-vehicles":     {{"license_plate", "Plate"}, {"vehicle_type", "Type"}, {"fleet_group", "Group"}, {"idle_h", "Idle (h)"}},
+
 	"door-open-duration":         {{"opened_at", "Opened"}, {"closed_at", "Closed"}, {"duration_min", "Duration (min)"}},
 	"driver-management":          {{"employee_no", "Emp. No"}, {"full_name", "Name"}, {"phone", "Phone"}, {"license_no", "License"}, {"license_class", "Class"}, {"license_expiry", "Expiry"}, {"status", "Status"}},
 	"driver-operational-summary": {{"full_name", "Driver"}, {"license_no", "License"}, {"status", "Status"}},
@@ -277,6 +282,17 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 	}
 	title := titleFor(key)
 	res := &Result{Key: key, Title: title, Rows: []map[string]any{}}
+
+	// Fleet-wide historical reports come from the rollup, not per-vehicle
+	// telemetry, so they are handled before the per-vehicle requirement below.
+	switch key {
+	case "fleet-daily-summary", "vehicle-utilisation", "idle-leaderboard", "unused-vehicles":
+		res.Columns = ColumnsFor(key)
+		if err := s.runFleetHistory(ctx, tenantID, key, from, to, res); err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
 
 	// Telemetry per-vehicle reports need a vehicle.
 	perVehicle := map[string]bool{

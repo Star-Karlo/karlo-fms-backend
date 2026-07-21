@@ -64,7 +64,13 @@ type ColumnDigest struct {
 	Label string `json:"label"`
 	Kind  string `json:"kind"` // number | text
 
-	// Numbers.
+	// Numbers. Sum is OMITTED for quantities that do not accumulate.
+	//
+	// A daily vehicle count summed over a week produced "the fleet recorded
+	// 11,768 vehicles reporting" for a fleet of 1,700 — arithmetically correct,
+	// factually nonsense, and stated with total confidence. The safest fix is
+	// not to hand over a number that has no meaning: if it is not in the
+	// digest, it cannot be quoted.
 	Sum *float64 `json:"sum,omitempty"`
 	Avg *float64 `json:"avg,omitempty"`
 	Min *float64 `json:"min,omitempty"`
@@ -113,6 +119,7 @@ func BuildDigest(doc Doc, spec Spec) Digest {
 
 			if numeric {
 				col.Kind = "number"
+				additive := isAdditive(header)
 				var sum float64
 				var n int
 				var min, max float64
@@ -135,7 +142,10 @@ func BuildDigest(doc Doc, spec Spec) Digest {
 				}
 				if n > 0 {
 					avg := sum / float64(n)
-					col.Sum, col.Avg, col.Min, col.Max = &sum, &avg, &min, &max
+					col.Avg, col.Min, col.Max = &avg, &min, &max
+					if additive {
+						col.Sum = &sum
+					}
 				}
 			} else {
 				counts := map[string]int{}
@@ -176,6 +186,32 @@ func describe(key string) string {
 		}
 	}
 	return ""
+}
+
+// isAdditive says whether adding a column's values up means anything.
+//
+// Hours, kilometres and event counts accumulate: seven daily totals sum to a
+// weekly total. Percentages and per-day headcounts do not — adding Monday's
+// 1,681 vehicles to Tuesday's counts the same trucks twice.
+//
+// A label check is a blunt instrument, but the alternative is threading an
+// aggregation kind through every report's column definition for the sake of
+// one consumer. It errs toward NOT summing: a missing figure costs a sentence,
+// a wrong one costs the reader's trust in the whole document.
+func isAdditive(label string) bool {
+	l := strings.ToLower(label)
+	for _, frag := range []string{"%", "pct", "percent", "share", "ratio", "avg", "average", "max", "min", "rate", "utilization", "utilisation"} {
+		if strings.Contains(l, frag) {
+			return false
+		}
+	}
+	// A count of vehicles is a headcount per row, not a quantity to accumulate.
+	for _, frag := range []string{"vehicles", "trucks", "reporting", "did not move", "days used"} {
+		if strings.Contains(l, frag) {
+			return false
+		}
+	}
+	return true
 }
 
 // wantsNarrative decides whether prose belongs in this document.

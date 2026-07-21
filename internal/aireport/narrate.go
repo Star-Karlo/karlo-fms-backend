@@ -40,6 +40,10 @@ describing three sections in the first paragraph leaves the other two tables
 bare and puts commentary above the wrong data.
 
 THE ONE RULE THAT MATTERS: every number you write must appear in the digest.
+A column's "sum" is given only where adding it up is meaningful. Where there is
+no sum — percentages, per-day vehicle counts — do NOT add the values yourself;
+use the average or the range instead. Adding Monday's vehicle count to
+Tuesday's counts the same trucks twice.
 Do not calculate, extrapolate, estimate, or compare against a period you were
 not given. If the digest says a column totals 1,240 you may write 1,240; you
 may not write "up from last month", because last month is not in front of you.

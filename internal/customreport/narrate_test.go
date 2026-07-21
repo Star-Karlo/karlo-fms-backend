@@ -128,3 +128,57 @@ func TestNilNarrativeLeavesTheDocumentAlone(t *testing.T) {
 		t.Error("a failed narration must leave the tables untouched")
 	}
 }
+
+// Adding a column up is only meaningful for quantities that accumulate. A
+// daily vehicle count summed over a week produced "the fleet recorded 11,768
+// vehicles reporting" for a fleet of 1,700 — arithmetically correct, factually
+// nonsense, stated with total confidence.
+func TestNonAdditiveColumnsGetNoSum(t *testing.T) {
+	doc := Doc{Sections: []DocSection{{
+		Title:   "Daily",
+		Headers: []string{"Distance (km)", "Idle % of Engine-On", "Vehicles Reporting", "Moving (h)"},
+		Rows:    [][]string{{"100", "40", "1681", "12"}, {"120", "38", "1685", "14"}},
+		Numeric: []bool{true, true, true, true},
+	}}}
+	cols := BuildDigest(doc, Spec{Sections: []Section{{Source: "fleet-daily-summary"}}}).Sections[0].Columns
+
+	byLabel := map[string]ColumnDigest{}
+	for _, c := range cols {
+		byLabel[c.Label] = c
+	}
+
+	for _, label := range []string{"Distance (km)", "Moving (h)"} {
+		if byLabel[label].Sum == nil {
+			t.Errorf("%s should have a sum; distance and hours accumulate", label)
+		}
+	}
+	for _, label := range []string{"Idle % of Engine-On", "Vehicles Reporting"} {
+		if byLabel[label].Sum != nil {
+			t.Errorf("%s has sum=%v; adding it up is meaningless and the model will quote it",
+				label, *byLabel[label].Sum)
+		}
+		// The average and range still are, so there is something true to say.
+		if byLabel[label].Avg == nil || byLabel[label].Max == nil {
+			t.Errorf("%s lost its average/range too; that leaves nothing sayable", label)
+		}
+	}
+}
+
+func TestIsAdditive(t *testing.T) {
+	for label, want := range map[string]bool{
+		"Distance (km)":       true,
+		"Moving (h)":          true,
+		"Count":               true,
+		"Idle % of Engine-On": false,
+		"Idle %":              false,
+		"Utilisation":         false,
+		"Vehicles Reporting":  false,
+		"Did Not Move":        false,
+		"Days Used":           false,
+		"Max km/h":            false,
+	} {
+		if got := isAdditive(label); got != want {
+			t.Errorf("isAdditive(%q) = %v, want %v", label, got, want)
+		}
+	}
+}
