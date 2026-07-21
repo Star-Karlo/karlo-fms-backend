@@ -1,5 +1,40 @@
 basePath: /
 definitions:
+  aidash.composeRequest:
+    properties:
+      catalog:
+        description: built client-side from the metric registry
+        items:
+          type: integer
+        type: array
+      current:
+        description: existing tiles, so "add X" works
+        items:
+          type: integer
+        type: array
+      prompt:
+        type: string
+    type: object
+  aidash.composeResponse:
+    properties:
+      attempts:
+        type: integer
+      notes:
+        type: string
+      tiles:
+        items:
+          type: integer
+        type: array
+      usage:
+        $ref: '#/definitions/aidash.usage'
+    type: object
+  aidash.usage:
+    properties:
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
+    type: object
   alert.AlertType:
     properties:
       code:
@@ -1458,6 +1493,46 @@ paths:
       summary: Public live view for a shared tracking link (no auth)
       tags:
       - tracking-links
+  /v1/ai/dashboard/compose:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Given the caller's role, a natural-language description and the
+        client's metric catalog, returns a list of tiles (metric + params +
+        visualisation + layout). The caller validates and may reject them —
+        the model is a proposer, not an authority.
+      parameters:
+      - description: prompt + catalog
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/aidash.composeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/aidash.composeResponse'
+        "400":
+          description: prompt or catalog missing
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: AI composition not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Compose a dashboard from a description
+      tags:
+      - ai
   /v1/alert-taxonomy:
     get:
       produces:

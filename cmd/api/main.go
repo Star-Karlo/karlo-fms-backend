@@ -23,27 +23,31 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "github.com/karlo/fms-backend/cmd/api/docs"
+	"github.com/karlo/fms-backend/internal/aidash"
+	"github.com/karlo/fms-backend/internal/aireport"
 	"github.com/karlo/fms-backend/internal/alert"
 	"github.com/karlo/fms-backend/internal/apitoken"
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/controltower"
+	"github.com/karlo/fms-backend/internal/customreport"
 	"github.com/karlo/fms-backend/internal/dashboard"
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/fleetgroup"
+	"github.com/karlo/fms-backend/internal/geofence"
 	"github.com/karlo/fms-backend/internal/license"
 	"github.com/karlo/fms-backend/internal/liveview"
+	"github.com/karlo/fms-backend/internal/mailer"
 	"github.com/karlo/fms-backend/internal/maintenance"
-	"github.com/karlo/fms-backend/internal/geofence"
 	"github.com/karlo/fms-backend/internal/notifengine"
-	"github.com/karlo/fms-backend/internal/prefs"
-	"github.com/karlo/fms-backend/internal/telemetrysync"
 	"github.com/karlo/fms-backend/internal/notifrule"
 	"github.com/karlo/fms-backend/internal/platform/config"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/prefs"
 	"github.com/karlo/fms-backend/internal/report"
 	"github.com/karlo/fms-backend/internal/scorecard"
 	"github.com/karlo/fms-backend/internal/telemetry"
+	"github.com/karlo/fms-backend/internal/telemetrysync"
 	"github.com/karlo/fms-backend/internal/tracker"
 	"github.com/karlo/fms-backend/internal/trackinglink"
 	"github.com/karlo/fms-backend/internal/users"
@@ -73,7 +77,32 @@ func main() {
 	alertH := alert.NewHandler(pool)
 	controlH := controltower.NewHandler(controltower.NewService(pool, liveSvc))
 	notifRuleH := notifrule.NewHandler(pool)
-	reportH := report.NewHandler(report.NewService(pool, tel))
+	// The report service borrows liveview for the daily rollup join, so the
+	// fleet-wide historical reports do not duplicate it.
+	reportSvc := report.NewService(pool, tel).WithFleetHistory(liveSvc)
+	reportH := report.NewHandler(reportSvc)
+	// Custom reports are a named COMBINATION of the catalog reports above, so
+	// they share that service rather than re-querying anything themselves.
+	aiReportH := aireport.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
+	// The AI package writes report prose; the report package renders it. The
+	// dependency runs one way (aireport -> customreport), so the narrator is
+	// injected rather than imported.
+	// Scheduled reports need a mail transport. Without MAIL_FROM the service
+	// still serves every report; only the schedule runner stays off, which is
+	// better than a runner that renders reports every morning and drops them.
+	customReportSvc := customreport.NewService(pool, reportSvc).WithNarrator(aiReportH)
+	if cfg.MailFrom != "" {
+		sender, err := mailer.NewSES(ctx, cfg.AWSRegion, cfg.MailFrom)
+		if err != nil {
+			log.Printf("mailer: disabled (%v)", err)
+		} else {
+			customReportSvc = customReportSvc.WithMailer(sender)
+			go customReportSvc.RunSchedules(ctx)
+		}
+	} else {
+		log.Printf("mailer: MAIL_FROM not set; scheduled reports are disabled")
+	}
+	customReportH := customreport.NewHandler(customReportSvc)
 	licenseH := license.NewHandler(pool)
 	maintenanceH := maintenance.NewHandler(pool)
 	scorecardH := scorecard.NewHandler(pool)
@@ -81,6 +110,10 @@ func main() {
 	usersH := users.NewHandler(pool)
 	apiTokenH := apitoken.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)
+	// AI dashboard composition (Amazon Nova Pro on Bedrock). A missing or
+	// unauthorised Bedrock config disables just this endpoint (503) rather
+	// than failing startup.
+	aiDashH := aidash.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
 	geofenceH := geofence.NewHandler(pool)
 	prefsH := prefs.NewHandler(pool)
 	telemetrySyncH := telemetrysync.NewHandler(pool)
@@ -119,6 +152,8 @@ func main() {
 		controlH.Routes(pr)
 		notifRuleH.Routes(pr)
 		reportH.Routes(pr)
+		customReportH.Routes(pr)
+		aiReportH.Routes(pr)
 		licenseH.Routes(pr)
 		maintenanceH.Routes(pr)
 		scorecardH.Routes(pr)
@@ -128,6 +163,7 @@ func main() {
 		dashboardH.Routes(pr)
 		geofenceH.Routes(pr)
 		telemetrySyncH.Routes(pr)
+		aiDashH.Routes(pr)
 		prefsH.Routes(pr)
 	})
 

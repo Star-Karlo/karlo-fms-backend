@@ -39,20 +39,53 @@ type Result struct {
 // RunRequest is the generic report parameter set (a superset; each report uses
 // what it needs).
 type RunRequest struct {
-	VehicleID *int64  `json:"vehicle_id"`
-	From      string  `json:"from"`
-	To        string  `json:"to"`
-	AlertCode string  `json:"alert_code"`
-	Limit     float64 `json:"limit"` // overspeed limit km/h (default 60)
+	VehicleID *int64 `json:"vehicle_id"`
+	// VehicleIDs runs a per-vehicle report for SEVERAL vehicles and stacks the
+	// results into one table. Fleet operators think in terms of "these six
+	// trucks", not one at a time, and re-running a report six times and pasting
+	// the output together is the manual work this removes.
+	VehicleIDs []int64 `json:"vehicle_ids,omitempty"`
+	From       string  `json:"from"`
+	To         string  `json:"to"`
+	AlertCode  string  `json:"alert_code"`
+	Limit      float64 `json:"limit"` // overspeed limit km/h (default 60)
 }
 
-func cols(pairs ...string) []Column {
-	out := make([]Column, 0, len(pairs)/2)
-	for i := 0; i+1 < len(pairs); i += 2 {
-		out = append(out, Column{Key: pairs[i], Label: pairs[i+1]})
-	}
-	return out
+// catalogColumns is every report's column set, declared once.
+//
+// Lifted out of the Run() switch so the columns of a report can be known
+// WITHOUT running it. That matters for two callers: the custom-report builder,
+// which lets a user pick and rename columns before any data is fetched, and
+// the AI composer, which cannot map a customer's spreadsheet headers onto
+// fields it has never been told about. Running a report to discover its shape
+// would mean a 5,000-point telemetry fetch just to populate a dropdown.
+var catalogColumns = map[string][]Column{
+	"fleet-daily-summary": {{"day", "Day"}, {"active", "Vehicles Reporting"}, {"unused", "Did Not Move"}, {"moving_h", "Moving (h)"}, {"idle_h", "Idle (h)"}, {"distance_km", "Distance (km)"}, {"idle_pct", "Idle % of Engine-On"}},
+	"vehicle-utilisation": {{"license_plate", "Plate"}, {"vehicle_type", "Type"}, {"fleet_group", "Group"}, {"moving_h", "Moving (h)"}, {"idle_h", "Idle (h)"}, {"distance_km", "Distance (km)"}, {"days_used", "Days Used"}, {"idle_pct", "Idle %"}, {"max_speed", "Max km/h"}},
+	"idle-leaderboard":    {{"license_plate", "Plate"}, {"vehicle_type", "Type"}, {"idle_h", "Idle (h)"}, {"moving_h", "Moving (h)"}, {"idle_pct", "Idle %"}, {"distance_km", "Distance (km)"}},
+	"unused-vehicles":     {{"license_plate", "Plate"}, {"vehicle_type", "Type"}, {"fleet_group", "Group"}, {"idle_h", "Idle (h)"}},
+
+	"door-open-duration":         {{"opened_at", "Opened"}, {"closed_at", "Closed"}, {"duration_min", "Duration (min)"}},
+	"driver-management":          {{"employee_no", "Emp. No"}, {"full_name", "Name"}, {"phone", "Phone"}, {"license_no", "License"}, {"license_class", "Class"}, {"license_expiry", "Expiry"}, {"status", "Status"}},
+	"driver-operational-summary": {{"full_name", "Driver"}, {"license_no", "License"}, {"status", "Status"}},
+	"fuel-history":               {{"date", "Date"}, {"fuel_level", "Fuel %"}, {"event", "Event"}},
+	"geofence-inout":             {{"geofence", "Geofence"}, {"event", "Event"}, {"at", "At"}, {"dwell_min", "Dwell (min)"}},
+	"gps-connection-history":     {{"offline_from", "Offline From"}, {"offline_to", "Back Online"}, {"duration_min", "Gap (min)"}, {"last_location", "Last Known Location"}, {"lat", "Lat"}, {"lon", "Lon"}},
+	"harsh-driving":              {{"date", "Date"}, {"license_plate", "Plate"}, {"event", "Event"}, {"speed", "Speed (km/h)"}, {"rate", "Δ km/h per s"}, {"location", "Location"}},
+	"pto-active-duration":        {{"started_at", "Started"}, {"ended_at", "Ended"}, {"duration_min", "Duration (min)"}},
+	"service-scheduling-detail":  {{"license_plate", "Plate"}, {"component", "Component"}, {"scheduler", "Scheduler"}, {"next_due_at", "Next Due"}, {"status", "Status"}, {"current_odometer", "Current km"}, {"next_odometer", "Due at km"}},
+	"speeding-violations":        {{"date", "Date"}, {"license_plate", "Plate"}, {"location", "Location"}, {"speed", "Speed"}, {"limit", "Limit"}, {"over_by", "Over by"}},
+	"temperature-history":        {{"date", "Date"}, {"temperature_c", "Temp °C"}},
+	"vehicle-alerts-history":     {{"date", "Date"}, {"license_plate", "Plate"}, {"alert_name", "Alert"}, {"severity", "Severity"}, {"actual", "Actual"}, {"limit", "Limit"}, {"address", "Address"}, {"check_status", "Status"}},
+	"vehicle-alerts-summary":     {{"alert_code", "Code"}, {"alert_name", "Alert"}, {"count", "Count"}, {"urgent", "Urgent"}, {"unchecked", "Unchecked"}},
+	"vehicle-stop-history":       {{"start", "Start"}, {"end", "End"}, {"duration_min", "Duration (min)"}, {"location", "Location"}},
+	"vehicle-trip-history":       {{"date", "Date"}, {"license_plate", "Plate"}, {"location", "Location"}, {"speed", "Speed (km/h)"}, {"acc", "ACC"}},
+	"vehicle-trip-summary":       {{"trip", "Trip"}, {"start", "Start"}, {"end", "End"}, {"duration_min", "Duration (min)"}, {"distance_km", "Distance (km)"}, {"max_speed", "Max km/h"}, {"idle_engine_min", "Idle w/ Engine (min)"}},
+	"vehicle-usage-summary":      {{"day", "Day"}, {"distance_km", "Distance (km)"}, {"moving_min", "Moving (min)"}, {"idle_min", "Idle (min)"}, {"utilization", "Utilization %"}},
 }
+
+// ColumnsFor returns a report's columns, or nil for an unknown key.
+func ColumnsFor(key string) []Column { return catalogColumns[key] }
 
 func ts(t time.Time) string {
 	if t.IsZero() {
@@ -67,6 +100,131 @@ func hav(aLat, aLon, bLat, bLon float64) float64 {
 	dLon := (bLon - aLon) * math.Pi / 180
 	x := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(aLat*math.Pi/180)*math.Cos(bLat*math.Pi/180)*math.Sin(dLon/2)*math.Sin(dLon/2)
 	return R * 2 * math.Atan2(math.Sqrt(x), math.Sqrt(1-x))
+}
+
+// runMany stacks a per-vehicle report across several vehicles.
+//
+// Rows are tagged with the plate so a merged table is readable — several
+// reports (trip summary, stop history, usage) have no vehicle column of their
+// own because they were only ever run for one truck, and without it the
+// combined output is rows from six vehicles with nothing saying which is which.
+func (s *Service) runMany(ctx context.Context, tenantID int64, key string, req RunRequest) (*Result, error) {
+	ids := req.VehicleIDs
+	truncated := 0
+	if len(ids) > maxVehiclesPerRun {
+		truncated = len(ids) - maxVehiclesPerRun
+		ids = ids[:maxVehiclesPerRun]
+	}
+
+	out := &Result{Key: key, Title: titleFor(key), Rows: []map[string]any{}}
+	var failures []string
+	// A vehicle that ran fine but had nothing to report simply contributes no
+	// rows, so picking six trucks and seeing four in the output raises the
+	// question "which two, and why". Naming them answers it.
+	var empty []string
+
+	for _, id := range ids {
+		one := req
+		one.VehicleIDs = nil
+		vid := id
+		one.VehicleID = &vid
+
+		res, err := s.Run(ctx, tenantID, key, one)
+		if err != nil {
+			// One vehicle failing — no tracker, no telemetry — must not cost
+			// the other five. Named at the end rather than swallowed.
+			failures = append(failures, fmt.Sprintf("vehicle %d: %s", id, err.Error()))
+			continue
+		}
+
+		plate := plateOf(res.Rows)
+		if plate == "" {
+			plate = s.plateFor(ctx, tenantID, id)
+		}
+
+		if len(out.Columns) == 0 {
+			out.Columns = res.Columns
+			// Prepend a plate column when the report has none of its own.
+			if !hasColumn(out.Columns, "license_plate") {
+				out.Columns = append([]Column{{Key: "license_plate", Label: "Plate"}}, out.Columns...)
+			}
+		}
+		if len(res.Rows) == 0 {
+			empty = append(empty, plateOrID(plate, id))
+		}
+		for _, row := range res.Rows {
+			if _, ok := row["license_plate"]; !ok {
+				row["license_plate"] = plate
+			}
+			out.Rows = append(out.Rows, row)
+		}
+		if res.Note != "" && out.Note == "" {
+			out.Note = res.Note
+		}
+	}
+
+	// Columns can still be empty when every vehicle failed or returned nothing.
+	if len(out.Columns) == 0 {
+		out.Columns = ColumnsFor(key)
+		if !hasColumn(out.Columns, "license_plate") {
+			out.Columns = append([]Column{{Key: "license_plate", Label: "Plate"}}, out.Columns...)
+		}
+	}
+
+	var notes []string
+	if out.Note != "" {
+		notes = append(notes, out.Note)
+	}
+	if truncated > 0 {
+		notes = append(notes, fmt.Sprintf("Only the first %d vehicles were included; %d more were left out.", maxVehiclesPerRun, truncated))
+	}
+	if len(empty) > 0 {
+		notes = append(notes, fmt.Sprintf("No data in this period for: %s.", strings.Join(empty, ", ")))
+	}
+	if len(failures) > 0 {
+		notes = append(notes, "Could not include — "+strings.Join(failures, "; "))
+	}
+	out.Note = strings.Join(notes, " ")
+	return out, nil
+}
+
+func hasColumn(cols []Column, key string) bool {
+	for _, c := range cols {
+		if c.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func plateOrID(plate string, id int64) string {
+	if plate != "" {
+		return plate
+	}
+	return fmt.Sprintf("vehicle %d", id)
+}
+
+func plateOf(rows []map[string]any) string {
+	for _, r := range rows {
+		if s, ok := r["license_plate"].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// plateFor names a vehicle that produced no rows, so an empty section still
+// says which truck it was empty for.
+func (s *Service) plateFor(ctx context.Context, tenantID, vehicleID int64) string {
+	var plate string
+	_ = db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		v, err := store.New(tx).GetVehicle(ctx, vehicleID)
+		if err == nil {
+			plate = v.LicensePlate
+		}
+		return nil
+	})
+	return plate
 }
 
 // track resolves a vehicle's labels + telemetry history for the range.
@@ -93,7 +251,25 @@ func (s *Service) track(ctx context.Context, tenantID int64, vehicleID int64, fr
 func plate(v store.GetVehicleRow) string { return v.LicensePlate }
 
 // Run dispatches a report by key and returns a generic Result.
+// maxVehiclesPerRun bounds a multi-vehicle report.
+//
+// Each vehicle costs one HTTP round trip to the telemetry service for up to
+// 5,000 points, so this is a real cost, paid serially, while the user waits.
+// Twenty is a large depot; beyond that the honest answer is a fleet-wide
+// report rather than a slow one that eventually times out.
+const maxVehiclesPerRun = 20
+
 func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRequest) (*Result, error) {
+	// Several vehicles: run each and stack the results. Done before anything
+	// else so every report gets it, and so each run goes through exactly the
+	// same code path as a single-vehicle one.
+	if len(req.VehicleIDs) > 1 {
+		return s.runMany(ctx, tenantID, key, req)
+	}
+	if len(req.VehicleIDs) == 1 && req.VehicleID == nil {
+		req.VehicleID = &req.VehicleIDs[0]
+	}
+
 	from, err1 := time.Parse(time.RFC3339, req.From)
 	to, err2 := time.Parse(time.RFC3339, req.To)
 	needRange := key != "service-scheduling-detail" && key != "driver-management" && key != "driver-operational-summary"
@@ -106,6 +282,17 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 	}
 	title := titleFor(key)
 	res := &Result{Key: key, Title: title, Rows: []map[string]any{}}
+
+	// Fleet-wide historical reports come from the rollup, not per-vehicle
+	// telemetry, so they are handled before the per-vehicle requirement below.
+	switch key {
+	case "fleet-daily-summary", "vehicle-utilisation", "idle-leaderboard", "unused-vehicles":
+		res.Columns = ColumnsFor(key)
+		if err := s.runFleetHistory(ctx, tenantID, key, from, to, res); err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
 
 	// Telemetry per-vehicle reports need a vehicle.
 	perVehicle := map[string]bool{
@@ -124,7 +311,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		if err != nil {
 			return nil, err
 		}
-		res.Columns = cols("date", "Date", "license_plate", "Plate", "location", "Location", "speed", "Speed (km/h)", "acc", "ACC")
+		res.Columns = ColumnsFor(key)
 		for _, p := range pos {
 			res.Rows = append(res.Rows, map[string]any{
 				"date": ts(p.Time), "license_plate": plate(veh), "location": joinLoc(p),
@@ -137,8 +324,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		if err != nil {
 			return nil, err
 		}
-		res.Columns = cols("trip", "Trip", "start", "Start", "end", "End", "duration_min", "Duration (min)",
-			"distance_km", "Distance (km)", "max_speed", "Max km/h", "idle_engine_min", "Idle w/ Engine (min)")
+		res.Columns = ColumnsFor(key)
 		trips := segmentTrips(pos)
 		for i, t := range trips {
 			idle := any("—")
@@ -161,7 +347,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		if err != nil {
 			return nil, err
 		}
-		res.Columns = cols("start", "Start", "end", "End", "duration_min", "Duration (min)", "location", "Location")
+		res.Columns = ColumnsFor(key)
 		for _, c := range clusters(pos) {
 			if c.dwellMin < 5 { // ignore trivial pauses
 				continue
@@ -176,7 +362,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		if err != nil {
 			return nil, err
 		}
-		res.Columns = cols("day", "Day", "distance_km", "Distance (km)", "moving_min", "Moving (min)", "idle_min", "Idle (min)", "utilization", "Utilization %")
+		res.Columns = ColumnsFor(key)
 		for _, d := range usageByDay(pos) {
 			res.Rows = append(res.Rows, map[string]any{
 				"day": d.day, "distance_km": round1(d.distKm), "moving_min": round1(d.movingMin), "idle_min": round1(d.idleMin), "utilization": round1(d.util),
@@ -188,7 +374,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		if err != nil {
 			return nil, err
 		}
-		res.Columns = cols("date", "Date", "license_plate", "Plate", "location", "Location", "speed", "Speed", "limit", "Limit", "over_by", "Over by")
+		res.Columns = ColumnsFor(key)
 		for _, p := range pos {
 			if p.Speed == nil || *p.Speed <= limit {
 				continue
@@ -205,8 +391,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 			return nil, err
 		}
 		// Last known fix before each gap = where tracking was lost (dead zones).
-		res.Columns = cols("offline_from", "Offline From", "offline_to", "Back Online", "duration_min", "Gap (min)",
-			"last_location", "Last Known Location", "lat", "Lat", "lon", "Lon")
+		res.Columns = ColumnsFor(key)
 		const gapMin = 15.0
 		for i := 1; i < len(pos); i++ {
 			gap := pos[i].Time.Sub(pos[i-1].Time).Minutes()
@@ -219,7 +404,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		}
 
 	case "vehicle-alerts-history":
-		res.Columns = cols("date", "Date", "license_plate", "Plate", "alert_name", "Alert", "severity", "Severity", "actual", "Actual", "limit", "Limit", "address", "Address", "check_status", "Status")
+		res.Columns = ColumnsFor(key)
 		rows, err := s.alertRows(ctx, tenantID, req, from, to)
 		if err != nil {
 			return nil, err
@@ -227,7 +412,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		res.Rows = rows
 
 	case "vehicle-alerts-summary":
-		res.Columns = cols("alert_code", "Code", "alert_name", "Alert", "count", "Count", "urgent", "Urgent", "unchecked", "Unchecked")
+		res.Columns = ColumnsFor(key)
 		rows, err := s.alertSummary(ctx, tenantID, from, to)
 		if err != nil {
 			return nil, err
@@ -235,7 +420,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		res.Rows = rows
 
 	case "service-scheduling-detail":
-		res.Columns = cols("license_plate", "Plate", "component", "Component", "scheduler", "Scheduler", "next_due_at", "Next Due", "status", "Status", "current_odometer", "Current km", "next_odometer", "Due at km")
+		res.Columns = ColumnsFor(key)
 		rows, err := s.serviceRows(ctx, tenantID)
 		if err != nil {
 			return nil, err
@@ -243,7 +428,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		res.Rows = rows
 
 	case "driver-management":
-		res.Columns = cols("employee_no", "Emp. No", "full_name", "Name", "phone", "Phone", "license_no", "License", "license_class", "Class", "license_expiry", "Expiry", "status", "Status")
+		res.Columns = ColumnsFor(key)
 		rows, err := s.driverRows(ctx, tenantID)
 		if err != nil {
 			return nil, err
@@ -251,7 +436,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		res.Rows = rows
 
 	case "driver-operational-summary":
-		res.Columns = cols("full_name", "Driver", "license_no", "License", "status", "Status")
+		res.Columns = ColumnsFor(key)
 		rows, err := s.driverRows(ctx, tenantID)
 		if err != nil {
 			return nil, err
@@ -266,19 +451,19 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 	// ---- Sensor-dependent reports: structured but empty until the sensor/data
 	// source exists. The columns are ready so the report renders + exports.
 	case "fuel-history":
-		res.Columns = cols("date", "Date", "fuel_level", "Fuel %", "event", "Event")
+		res.Columns = ColumnsFor(key)
 		res.Note = "No fuel-sensor data for this vehicle. Fuel history will populate for units with a fuel sensor."
 	case "temperature-history":
-		res.Columns = cols("date", "Date", "temperature_c", "Temp °C")
+		res.Columns = ColumnsFor(key)
 		res.Note = "No temperature-sensor data. Populates for cold-chain units with a temperature probe."
 	case "door-open-duration":
-		res.Columns = cols("opened_at", "Opened", "closed_at", "Closed", "duration_min", "Duration (min)")
+		res.Columns = ColumnsFor(key)
 		res.Note = "No door-sensor data. Populates for units wired with a door sensor."
 	case "pto-active-duration":
-		res.Columns = cols("started_at", "Started", "ended_at", "Ended", "duration_min", "Duration (min)")
+		res.Columns = ColumnsFor(key)
 		res.Note = "No PTO-sensor data. Populates for units wired with a PTO input."
 	case "geofence-inout":
-		res.Columns = cols("geofence", "Geofence", "event", "Event", "at", "At", "dwell_min", "Dwell (min)")
+		res.Columns = ColumnsFor(key)
 		rows, err := s.geofenceRows(ctx, tenantID, *req.VehicleID, from, to)
 		if err != nil {
 			return nil, err
@@ -293,8 +478,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		if err != nil {
 			return nil, err
 		}
-		res.Columns = cols("date", "Date", "license_plate", "Plate", "event", "Event",
-			"speed", "Speed (km/h)", "rate", "Δ km/h per s", "location", "Location")
+		res.Columns = ColumnsFor(key)
 		const harshAccel, harshBrake, maxGapSec = 10.0, -12.0, 30.0
 		for i := 1; i < len(pos); i++ {
 			p, prev := pos[i], pos[i-1]

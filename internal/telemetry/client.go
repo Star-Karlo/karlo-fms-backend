@@ -115,6 +115,29 @@ func (c *Client) History(ctx context.Context, imei string, from, to time.Time, f
 	return page.Points, nil
 }
 
+// VehicleDay is one device's rolled-up day from the tracking service.
+type VehicleDay struct {
+	IMEI       string   `json:"imei"`
+	Day        string   `json:"day"`
+	MovingS    int64    `json:"moving_s"`
+	IdleS      int64    `json:"idle_s"`
+	ParkingS   int64    `json:"parking_s"`
+	DistanceKm float64  `json:"distance_km"`
+	MaxSpeed   *float64 `json:"max_speed"`
+	Samples    int64    `json:"samples"`
+}
+
+// DailyStats fetches the pre-aggregated daily rollup for every device.
+//
+// Deliberately unfiltered by IMEI: the tracking service holds ~2k rows per day
+// and the caller drops what its tenant cannot see anyway, so one cached call
+// beats a URL carrying two thousand IMEIs.
+func (c *Client) DailyStats(ctx context.Context, from, to string) ([]VehicleDay, error) {
+	var out []VehicleDay
+	err := c.getJSON(ctx, fmt.Sprintf("/v1/stats/daily?from=%s&to=%s", url.QueryEscape(from), url.QueryEscape(to)), &out)
+	return out, err
+}
+
 // Coverage proxies the ingest service's /v1/coverage grid (raw GeoJSON), passing
 // the query string (metric, provider, bbox) straight through.
 func (c *Client) Coverage(ctx context.Context, rawQuery string) (json.RawMessage, error) {
