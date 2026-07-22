@@ -80,7 +80,15 @@ for f in 0024_fuel_stations 0025_company_profile 0026_hangars; do
 done
 
 echo "==> loading fuel stations (Overpass; takes a few minutes)"
-DATABASE_URL="postgres://${USER}:${PASS}@${HOST}:${PORT}/fms_app?sslmode=require" \
+# KEYWORD/VALUE DSN, not a URL.
+#
+# AWS generates RDS passwords containing characters like / + = and #, which are
+# structural inside a URL's userinfo section. psql tolerated the URL form only
+# because the password actually travelled via PGPASSWORD; the Go client parsed
+# the URL for real and failed with "invalid userinfo". The keyword form has no
+# reserved characters to collide with, so no escaping is needed and no password
+# can break it.
+DATABASE_URL="host=${HOST} port=${PORT} user=${USER} password=${PASS} dbname=fms_app sslmode=require" \
   go run ./cmd/import-fuel -region all
 
 echo "==> verifying"
