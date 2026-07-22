@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -74,11 +75,29 @@ type ORS struct {
 	client  *http.Client
 }
 
+// defaultORSBase is the host ORS is migrating to.
+//
+// User management moved to HeiGIT in early 2025 and the API host followed;
+// api.openrouteservice.org still answers today but is deprecated in favour of
+// api.heigit.org/openrouteservice. Both were probed and behave identically, so
+// the new one is the default rather than inheriting a host with a stated
+// end-of-life. Note there is NO trailing slash — with one, the path becomes a
+// double slash and the API answers 405.
+const defaultORSBase = "https://api.heigit.org/openrouteservice"
+
 // NewORS builds an OpenRouteService router. An empty key disables it.
+//
+// The key is sent as the Authorization header VERBATIM. Classic ORS keys are
+// sent bare, while HeiGIT now issues JWT-shaped keys which some clients send as
+// "Bearer <key>". Probing with an invalid key cannot tell the two apart — both
+// return the same 403 — so rather than guessing a prefix that might be wrong,
+// the configured value becomes the header exactly. If a key turns out to need
+// the prefix, set ORS_API_KEY="Bearer eyJ..." and it works with no code change.
 func NewORS(apiKey, baseURL string) *ORS {
 	if baseURL == "" {
-		baseURL = "https://api.openrouteservice.org"
+		baseURL = defaultORSBase
 	}
+	baseURL = strings.TrimRight(baseURL, "/")
 	return &ORS{
 		apiKey:  apiKey,
 		baseURL: baseURL,
@@ -156,7 +175,9 @@ func (o *ORS) Route(ctx context.Context, from, to Point) (*Route, error) {
 		return nil, fmt.Errorf("routing provider: %s", out.Error.Message)
 	}
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("routing quota exhausted or key rejected (HTTP %d)", resp.StatusCode)
+		return nil, fmt.Errorf(
+			"routing key rejected or quota exhausted (HTTP %d). If the key is JWT-shaped (starts with \"ey\"), it may need the Bearer prefix — set ORS_API_KEY=\"Bearer <key>\"",
+			resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("routing provider returned HTTP %d", resp.StatusCode)
