@@ -121,14 +121,30 @@ func userPrompt(role string, req composeRequest) string {
 		fmt.Fprintf(&b, `THE USER'S CURRENT DASHBOARD — these tiles exist right now:
 %s
 
-You always return the COMPLETE board, so modifying means re-emitting the tiles
-that stay. Read the request to decide which it is:
-  "add/also show/include X"      -> return every tile above, plus X
-  "remove/drop/I don't need X"   -> return every tile above except X
-  "change/make X a pie/bigger"   -> return every tile above, X altered
-  "focus on / rebuild / a dashboard for ..." -> a fresh board; keep only what fits
-Dropping a tile the user did not ask you to drop loses work they arranged. When
-in doubt, keep it.
+You always return the COMPLETE board, so any change means re-emitting the tiles
+that stay.
+
+DEFAULT TO REPLACING. A request that describes what someone wants to see is a
+request for THAT board, not for their old one with extras bolted on. Build what
+was asked for and carry over an existing tile only when it genuinely belongs to
+that answer.
+
+Only these phrasings are INCREMENTAL — they refer to the current board, so
+re-emit it and apply the change:
+  "add / also show / include / plus X"   -> every tile above, plus X
+  "remove / drop / I don't need X"       -> every tile above except X
+  "change / make X a pie / make X bigger"-> every tile above, X altered
+  "keep ... but ..."                     -> every tile above, adjusted
+
+Everything else is a FRESH BOARD:
+  "a dashboard for fuel costs", "I want to see driver behaviour",
+  "focus on maintenance", "rebuild this for a workshop manager"
+-> compose the best board for that request. Do not append it to what is already
+   there; a tile from the old board earns its place only by being one of the
+   best answers to the NEW request.
+
+The old board is shown so you can honour "add" and "remove", not so you can
+preserve it by default.
 
 `, string(req.Current))
 	}
