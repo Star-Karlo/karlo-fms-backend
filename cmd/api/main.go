@@ -32,9 +32,9 @@ import (
 	"github.com/karlo/fms-backend/internal/controltower"
 	"github.com/karlo/fms-backend/internal/customreport"
 	"github.com/karlo/fms-backend/internal/dashboard"
+	"github.com/karlo/fms-backend/internal/document"
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/fleetgroup"
-	"github.com/karlo/fms-backend/internal/document"
 	"github.com/karlo/fms-backend/internal/fuel"
 	"github.com/karlo/fms-backend/internal/geofence"
 	"github.com/karlo/fms-backend/internal/hangar"
@@ -50,6 +50,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 	"github.com/karlo/fms-backend/internal/prefs"
 	"github.com/karlo/fms-backend/internal/report"
+	"github.com/karlo/fms-backend/internal/routing"
 	"github.com/karlo/fms-backend/internal/scorecard"
 	"github.com/karlo/fms-backend/internal/telemetry"
 	"github.com/karlo/fms-backend/internal/telemetrysync"
@@ -124,7 +125,15 @@ func main() {
 	// Findings rather than figures: each vehicle compared with its own past,
 	// its peers, or a threshold. Reads the daily rollup through liveview.
 	insightH := insight.NewHandler(pool, liveSvc)
-	hangarH := hangar.NewHandler(pool, liveSvc)
+	// Routing: OpenRouteService today, a self-hosted OSRM later. Nil when no
+	// provider is configured, which the route endpoint answers as 503.
+	router := routing.New(cfg.RoutingProvider, cfg.ORSAPIKey, cfg.ORSBaseURL, cfg.OSRMBaseURL)
+	if router == nil {
+		log.Printf("routing: no provider configured; vehicle-to-hangar routes are disabled")
+	} else {
+		log.Printf("routing: using %s", router.Name())
+	}
+	hangarH := hangar.NewHandler(pool, liveSvc).WithRouter(router)
 	// Document upload/download. An empty DOCUMENTS_BUCKET disables just
 	// these endpoints (503) rather than failing startup.
 	documentH := document.NewHandler(ctx, pool, cfg.AWSRegion, cfg.DocumentsBucket)

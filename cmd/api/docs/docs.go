@@ -2155,6 +2155,65 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/hangars/{id}/route": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Planned on the heavy-goods profile, so weight and height restrictions are respected — a car route that sends a 40ft trailer down a residential shortcut is worse than none. ` + "`" + `duration_min` + "`" + ` is a free-flow estimate with no traffic, loading or break time in it. Returns ` + "`" + `already_there` + "`" + ` without a route when the vehicle is inside the hangar radius.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hangars"
+                ],
+                "summary": "Drivable route from a vehicle's current position to a hangar",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "hangar id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/hangar.RouteToHangar"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/hangars/{id}/vehicles": {
             "get": {
                 "security": [
@@ -5806,6 +5865,47 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "hangar.RouteToHangar": {
+            "type": "object",
+            "properties": {
+                "already_there": {
+                    "description": "AlreadyThere is true when the vehicle is inside the hangar radius, in\nwhich case no route was requested at all.",
+                    "type": "boolean"
+                },
+                "distance_km": {
+                    "type": "number"
+                },
+                "duration_min": {
+                    "description": "DurationMin is the provider's free-flow estimate. Named plainly rather\nthan \"ETA\" because it contains no traffic, no loading time and no driver\nbreak — calling it an ETA would promise something it cannot know.",
+                    "type": "number"
+                },
+                "geometry": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
+                    }
+                },
+                "hangar_id": {
+                    "type": "integer"
+                },
+                "hangar_name": {
+                    "type": "string"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "provider": {
                     "type": "string"
                 },
                 "vehicle_id": {

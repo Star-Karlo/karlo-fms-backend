@@ -41,6 +41,18 @@ type Config struct {
 	// list keeps working for rows imported from the legacy export.
 	DocumentsBucket string
 
+	// Routing provider for vehicle-to-hangar directions.
+	//
+	// "ors" (default) uses OpenRouteService's hosted API and needs only a key —
+	// the right trade at low volume. "osrm" points at a self-hosted Open Source
+	// Routing Machine, which costs a server but removes the quota and, unlike
+	// ORS, can map-match a GPS trace to roads. Empty leaves routing disabled
+	// and every other endpoint working.
+	RoutingProvider string
+	ORSAPIKey       string
+	ORSBaseURL      string
+	OSRMBaseURL     string
+
 	// CORSOrigins is the allowlist of browser origins (e.g. https://fms.karlo.id).
 	// Empty ⇒ reflect any origin (fine for local dev behind the Vite proxy).
 	CORSOrigins []string
@@ -50,11 +62,15 @@ type Config struct {
 // defaults so `go run ./cmd/api` works against the compose stack out of the box.
 func Load() Config {
 	return Config{
-		Addr:           Env("API_ADDR", ":8080"),
-		AWSRegion:      Env("AWS_REGION", "ap-southeast-1"),
-		BedrockModelID: Env("BEDROCK_MODEL_ID", "apac.amazon.nova-pro-v1:0"),
+		Addr:            Env("API_ADDR", ":8080"),
+		AWSRegion:       Env("AWS_REGION", "ap-southeast-1"),
+		BedrockModelID:  Env("BEDROCK_MODEL_ID", "apac.amazon.nova-pro-v1:0"),
 		MailFrom:        Env("MAIL_FROM", ""),
 		DocumentsBucket: Env("DOCUMENTS_BUCKET", ""),
+		RoutingProvider: Env("ROUTING_PROVIDER", "ors"),
+		ORSAPIKey:       Env("ORS_API_KEY", ""),
+		ORSBaseURL:      Env("ORS_BASE_URL", ""),
+		OSRMBaseURL:     Env("OSRM_BASE_URL", ""),
 		// Host ports 5433/6380 avoid clashing with the telemetry stack (5432/6379).
 		DatabaseURL: Env("DATABASE_URL", "postgres://fms_app:fms_app@localhost:5433/fms_app"),
 		RedisAddr:   Env("REDIS_ADDR", "localhost:6380"),

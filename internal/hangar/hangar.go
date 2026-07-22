@@ -30,6 +30,7 @@ import (
 	"github.com/karlo/fms-backend/internal/liveview"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/routing"
 )
 
 // Hangar is one maintenance facility.
@@ -66,8 +67,9 @@ type UpsertRequest struct {
 
 // Handler serves hangar endpoints.
 type Handler struct {
-	pool *pgxpool.Pool
-	live *liveview.Service
+	pool   *pgxpool.Pool
+	live   *liveview.Service
+	router routing.Router
 }
 
 func NewHandler(pool *pgxpool.Pool, live *liveview.Service) *Handler {
@@ -82,6 +84,7 @@ func NewHandler(pool *pgxpool.Pool, live *liveview.Service) *Handler {
 func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/hangars", h.list)
 	r.Get("/v1/hangars/{id}/vehicles", h.vehicles)
+	r.Get("/v1/hangars/{id}/route", h.routeToHangar)
 	r.Get("/v1/maintenance/in-progress", h.inProgress)
 	r.Group(func(ar chi.Router) {
 		ar.Use(auth.RequireRole(auth.RoleAdmin))
@@ -523,4 +526,127 @@ func metersBetween(lat1, lon1, lat2, lon2 float64) float64 {
 	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
 		math.Cos(rad(lat1))*math.Cos(rad(lat2))*math.Sin(dLon/2)*math.Sin(dLon/2)
 	return 2 * earthR * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
+
+// ---------------------------------------------------------------------------
+// Routing a vehicle to its hangar
+// ---------------------------------------------------------------------------
+
+// WithRouter attaches a routing provider. Optional: without one the route
+// endpoint answers 503 and every other hangar endpoint keeps working.
+func (h *Handler) WithRouter(r routing.Router) *Handler {
+	h.router = r
+	return h
+}
+
+// RouteToHangar is a drivable path from where a vehicle is now to a hangar.
+type RouteToHangar struct {
+	VehicleID    int64   `json:"vehicle_id"`
+	LicensePlate string  `json:"license_plate"`
+	HangarID     int64   `json:"hangar_id"`
+	HangarName   string  `json:"hangar_name"`
+	DistanceKm   float64 `json:"distance_km"`
+	// DurationMin is the provider's free-flow estimate. Named plainly rather
+	// than "ETA" because it contains no traffic, no loading time and no driver
+	// break — calling it an ETA would promise something it cannot know.
+	DurationMin float64      `json:"duration_min"`
+	Geometry    [][2]float64 `json:"geometry"`
+	Provider    string       `json:"provider"`
+	// AlreadyThere is true when the vehicle is inside the hangar radius, in
+	// which case no route was requested at all.
+	AlreadyThere bool `json:"already_there"`
+}
+
+// routeToHangar godoc
+//
+//	@Summary		Drivable route from a vehicle's current position to a hangar
+//	@Description	Planned on the heavy-goods profile, so weight and height restrictions are respected — a car route that sends a 40ft trailer down a residential shortcut is worse than none. `duration_min` is a free-flow estimate with no traffic, loading or break time in it. Returns `already_there` without a route when the vehicle is inside the hangar radius.
+//	@Tags			hangars
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			id			path		int	true	"hangar id"
+//	@Param			vehicle_id	query		int	true	"vehicle id"
+//	@Success		200			{object}	hangar.RouteToHangar
+//	@Failure		400			{object}	map[string]string
+//	@Failure		503			{object}	map[string]string
+//	@Router			/v1/hangars/{id}/route [get]
+func (h *Handler) routeToHangar(w http.ResponseWriter, r *http.Request) {
+	if h.router == nil {
+		httpx.Error(w, http.StatusServiceUnavailable,
+			"routing is not configured on this deployment")
+		return
+	}
+	hangarID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid hangar id")
+		return
+	}
+	vehicleID, err := strconv.ParseInt(r.URL.Query().Get("vehicle_id"), 10, 64)
+	if err != nil || vehicleID <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "vehicle_id is required")
+		return
+	}
+	tenantID := auth.TenantID(r.Context())
+
+	var g *Hangar
+	if err := db.Tx(r.Context(), h.pool, tenantID, func(tx pgx.Tx) error {
+		var e error
+		g, e = scan(tx.QueryRow(r.Context(), `SELECT `+cols+` FROM hangars WHERE id = $1`, hangarID))
+		return e
+	}); err != nil {
+		httpx.Error(w, http.StatusNotFound, "hangar not found")
+		return
+	}
+
+	if h.live == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "live positions are unavailable")
+		return
+	}
+	vehicles, err := h.live.List(r.Context(), tenantID, nil)
+	if err != nil {
+		httpx.Error(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var veh *liveview.VehicleLive
+	for i := range vehicles {
+		if vehicles[i].VehicleID == vehicleID {
+			veh = &vehicles[i]
+			break
+		}
+	}
+	if veh == nil {
+		httpx.Error(w, http.StatusNotFound, "vehicle not found")
+		return
+	}
+	if veh.Position == nil || veh.Position.Lat == nil || veh.Position.Lon == nil {
+		httpx.Error(w, http.StatusBadRequest,
+			"this vehicle has no recent position, so a route cannot be planned from it")
+		return
+	}
+
+	out := RouteToHangar{
+		VehicleID: vehicleID, LicensePlate: veh.LicensePlate,
+		HangarID: g.ID, HangarName: g.Name,
+	}
+
+	// Already inside the radius: skip the provider entirely. Routing a truck to
+	// where it is standing burns quota to draw a dot.
+	if metersBetween(*veh.Position.Lat, *veh.Position.Lon, g.Lat, g.Lon) <= float64(g.RadiusM) {
+		out.AlreadyThere = true
+		httpx.JSON(w, http.StatusOK, out)
+		return
+	}
+
+	route, err := h.router.Route(r.Context(),
+		routing.Point{Lat: *veh.Position.Lat, Lon: *veh.Position.Lon},
+		routing.Point{Lat: g.Lat, Lon: g.Lon})
+	if err != nil {
+		httpx.Error(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	out.DistanceKm = float64(int(route.DistanceM/100+0.5)) / 10
+	out.DurationMin = float64(int(route.DurationS/6+0.5)) / 10
+	out.Geometry = route.Geometry
+	out.Provider = route.Provider
+	httpx.JSON(w, http.StatusOK, out)
 }

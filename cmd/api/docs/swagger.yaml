@@ -1012,6 +1012,39 @@ definitions:
       vehicle_id:
         type: integer
     type: object
+  hangar.RouteToHangar:
+    properties:
+      already_there:
+        description: |-
+          AlreadyThere is true when the vehicle is inside the hangar radius, in
+          which case no route was requested at all.
+        type: boolean
+      distance_km:
+        type: number
+      duration_min:
+        description: |-
+          DurationMin is the provider's free-flow estimate. Named plainly rather
+          than "ETA" because it contains no traffic, no loading time and no driver
+          break — calling it an ETA would promise something it cannot know.
+        type: number
+      geometry:
+        items:
+          items:
+            format: float64
+            type: number
+          type: array
+        type: array
+      hangar_id:
+        type: integer
+      hangar_name:
+        type: string
+      license_plate:
+        type: string
+      provider:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
   hangar.UpsertRequest:
     properties:
       active:
@@ -3523,6 +3556,48 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a hangar (admin only)
+      tags:
+      - hangars
+  /v1/hangars/{id}/route:
+    get:
+      description: Planned on the heavy-goods profile, so weight and height restrictions
+        are respected — a car route that sends a 40ft trailer down a residential shortcut
+        is worse than none. `duration_min` is a free-flow estimate with no traffic,
+        loading or break time in it. Returns `already_there` without a route when
+        the vehicle is inside the hangar radius.
+      parameters:
+      - description: hangar id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: vehicle id
+        in: query
+        name: vehicle_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/hangar.RouteToHangar'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Drivable route from a vehicle's current position to a hangar
       tags:
       - hangars
   /v1/hangars/{id}/vehicles:
