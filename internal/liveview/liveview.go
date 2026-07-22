@@ -18,6 +18,7 @@ import (
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/routing"
 	"github.com/karlo/fms-backend/internal/store"
 	"github.com/karlo/fms-backend/internal/telemetry"
 )
@@ -163,7 +164,12 @@ func (s *Service) One(ctx context.Context, tenantID, vehicleID int64) (*VehicleL
 }
 
 // Handler exposes the live-view endpoints.
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc *Service
+	// matcher is optional; nil means road snapping is unavailable and its
+	// endpoint answers 503 while everything else keeps working.
+	matcher routing.Matcher
+}
 
 // NewHandler builds the live-view HTTP handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
@@ -173,6 +179,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/live-view", h.list)
 	r.Get("/v1/live-view/{vehicle_id}", h.one)
 	r.Get("/v1/vehicles/{vehicle_id}/history", h.history)
+	r.Get("/v1/vehicles/{vehicle_id}/history/snapped", h.snapHistory)
 	r.Get("/v1/analytics/history", h.fleetHistory)
 	r.Get("/v1/analytics/fleet", h.fleetAnalytics)
 	r.Get("/v1/vehicles/{vehicle_id}/behavior", h.behavior)

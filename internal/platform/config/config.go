@@ -43,12 +43,15 @@ type Config struct {
 
 	// Routing provider for vehicle-to-hangar directions.
 	//
-	// "ors" (default) uses OpenRouteService's hosted API and needs only a key —
-	// the right trade at low volume. "osrm" points at a self-hosted Open Source
-	// Routing Machine, which costs a server but removes the quota and, unlike
-	// ORS, can map-match a GPS trace to roads. Empty leaves routing disabled
-	// and every other endpoint working.
+	// "geoapify" (default) is the hosted option whose free tier permits
+	// commercial use AND offers map matching — ORS has no matching endpoint at
+	// all, and Stadia and GraphHopper forbid commercial use when free. "ors"
+	// remains selectable; "osrm" points at a self-hosted engine, which costs a
+	// server but removes the quota and keeps fleet positions in-house. Empty
+	// leaves routing disabled and every other endpoint working.
 	RoutingProvider string
+	GeoapifyAPIKey  string
+	GeoapifyBaseURL string
 	ORSAPIKey       string
 	ORSBaseURL      string
 	OSRMBaseURL     string
@@ -67,7 +70,9 @@ func Load() Config {
 		BedrockModelID:  Env("BEDROCK_MODEL_ID", "apac.amazon.nova-pro-v1:0"),
 		MailFrom:        Env("MAIL_FROM", ""),
 		DocumentsBucket: Env("DOCUMENTS_BUCKET", ""),
-		RoutingProvider: Env("ROUTING_PROVIDER", "ors"),
+		RoutingProvider: Env("ROUTING_PROVIDER", "geoapify"),
+		GeoapifyAPIKey:  Env("GEOAPIFY_API_KEY", ""),
+		GeoapifyBaseURL: Env("GEOAPIFY_BASE_URL", ""),
 		ORSAPIKey:       Env("ORS_API_KEY", ""),
 		ORSBaseURL:      Env("ORS_BASE_URL", ""),
 		OSRMBaseURL:     Env("OSRM_BASE_URL", ""),

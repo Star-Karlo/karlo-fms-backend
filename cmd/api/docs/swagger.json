@@ -4252,6 +4252,72 @@
                 }
             }
         },
+        "/v1/vehicles/{vehicle_id}/history/snapped": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Map-matches the raw GPS trace so the line follows roads instead of cutting corners and wandering through buildings. Costs one provider request, so it is requested explicitly rather than being folded into the history response — and the raw trace remains available, because the matched line is an interpretation and the fixes themselves are what matter in a dispute. `distance_km` is measured along roads and is usually shorter than the raw distance.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "A vehicle's travelled path, snapped to the road network",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339 start",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339 end",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.SnappedHistory"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/vehicles/{vehicle_id}/rules": {
             "get": {
                 "security": [
@@ -6449,6 +6515,37 @@
                 },
                 "time": {
                     "type": "string"
+                }
+            }
+        },
+        "liveview.SnappedHistory": {
+            "type": "object",
+            "properties": {
+                "distance_km": {
+                    "description": "DistanceKm is measured along roads. Expect it to be SHORTER than the raw\nfigure: GPS scatter around a stationary vehicle inflates raw distance\nwith movement that never happened.",
+                    "type": "number"
+                },
+                "geometry": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
+                    }
+                },
+                "points_in": {
+                    "type": "integer"
+                },
+                "points_used": {
+                    "type": "integer"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
                 }
             }
         },

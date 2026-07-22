@@ -127,11 +127,23 @@ func main() {
 	insightH := insight.NewHandler(pool, liveSvc)
 	// Routing: OpenRouteService today, a self-hosted OSRM later. Nil when no
 	// provider is configured, which the route endpoint answers as 503.
-	router := routing.New(cfg.RoutingProvider, cfg.ORSAPIKey, cfg.ORSBaseURL, cfg.OSRMBaseURL)
+	router := routing.New(routing.Config{
+		Provider:     cfg.RoutingProvider,
+		GeoapifyKey:  cfg.GeoapifyAPIKey,
+		GeoapifyBase: cfg.GeoapifyBaseURL,
+		ORSKey:       cfg.ORSAPIKey,
+		ORSBase:      cfg.ORSBaseURL,
+		OSRMBase:     cfg.OSRMBaseURL,
+	})
 	if router == nil {
-		log.Printf("routing: no provider configured; vehicle-to-hangar routes are disabled")
+		log.Printf("routing: no provider configured; routes and road snapping are disabled")
+	} else if m, ok := routing.AsMatcher(router); ok {
+		// Matching is optional per provider — ORS has no such endpoint — so it
+		// is attached only when the chosen one actually supports it.
+		liveH.WithMatcher(m)
+		log.Printf("routing: using %s (with road snapping)", router.Name())
 	} else {
-		log.Printf("routing: using %s", router.Name())
+		log.Printf("routing: using %s (no road snapping — provider has no map matching)", router.Name())
 	}
 	hangarH := hangar.NewHandler(pool, liveSvc).WithRouter(router)
 	// Document upload/download. An empty DOCUMENTS_BUCKET disables just

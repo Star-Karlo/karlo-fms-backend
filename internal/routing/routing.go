@@ -266,21 +266,50 @@ func (o *OSRM) Route(ctx context.Context, from, to Point) (*Route, error) {
 	}, nil
 }
 
-// New picks a provider from configuration. Returns nil when none is set up,
-// which callers surface as 503 rather than treating as a failure.
-func New(provider, orsKey, orsURL, osrmURL string) Router {
-	switch provider {
+// Config selects and configures a provider.
+type Config struct {
+	Provider     string // geoapify | ors | osrm
+	GeoapifyKey  string
+	GeoapifyBase string
+	ORSKey       string
+	ORSBase      string
+	OSRMBase     string
+}
+
+// New picks a provider. Returns nil when none is set up, which callers surface
+// as 503 rather than treating as a failure.
+//
+// Geoapify is the default because it is the only hosted option here that both
+// permits commercial use on its free tier AND offers map matching.
+func New(c Config) Router {
+	switch c.Provider {
 	case "osrm":
-		if osrmURL == "" {
+		if c.OSRMBase == "" {
 			return nil
 		}
-		return NewOSRM(osrmURL)
-	case "ors", "":
-		if orsKey == "" {
+		return NewOSRM(c.OSRMBase)
+	case "ors":
+		if c.ORSKey == "" {
 			return nil
 		}
-		return NewORS(orsKey, orsURL)
+		return NewORS(c.ORSKey, c.ORSBase)
+	case "geoapify", "":
+		if c.GeoapifyKey == "" {
+			return nil
+		}
+		return NewGeoapify(c.GeoapifyKey, c.GeoapifyBase)
 	default:
 		return nil
 	}
+}
+
+// AsMatcher reports whether a Router can also snap traces to roads.
+//
+// A type assertion at the call site rather than a fatter Router interface,
+// because matching is genuinely optional: ORS cannot do it at all, and forcing
+// it into the interface would mean an implementation that only ever returns
+// "not supported".
+func AsMatcher(r Router) (Matcher, bool) {
+	m, ok := r.(Matcher)
+	return m, ok
 }
