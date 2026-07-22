@@ -106,6 +106,22 @@ type FleetGroup struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Hangar struct {
+	ID        int64              `json:"id"`
+	TenantID  int64              `json:"tenant_id"`
+	Name      string             `json:"name"`
+	Address   *string            `json:"address"`
+	Phone     *string            `json:"phone"`
+	Notes     *string            `json:"notes"`
+	Lat       float64            `json:"lat"`
+	Lon       float64            `json:"lon"`
+	RadiusM   int32              `json:"radius_m"`
+	Capacity  *int32             `json:"capacity"`
+	Active    bool               `json:"active"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type NotificationRule struct {
 	ID               int64              `json:"id"`
 	TenantID         int64              `json:"tenant_id"`
@@ -162,6 +178,7 @@ type ServiceSchedule struct {
 	NextOdometer pgtype.Numeric     `json:"next_odometer"`
 	Status       string             `json:"status"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	HangarID     *int64             `json:"hangar_id"`
 }
 
 type Tenant struct {

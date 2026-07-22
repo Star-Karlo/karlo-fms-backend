@@ -62,6 +62,11 @@ type CreateRequest struct {
 	// this is what "km since last service" everywhere is computed from.
 	LastDoneAt   *string  `json:"last_done_at"`
 	LastOdometer *float64 `json:"last_odometer"`
+	// HangarID books the work into a maintenance hangar. Optional: plenty of
+	// service happens roadside or at a third party, and forcing a hangar would
+	// make the field a lie rather than a fact. Setting it is what puts the
+	// vehicle on that hangar's list and makes it routable there.
+	HangarID *int64 `json:"hangar_id"`
 }
 
 func fromRow(s store.ListServiceSchedulesRow) DTO {
@@ -165,7 +170,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			KmInterval: conv.Num(req.KmInterval), KmReminder: conv.Num(req.KmReminder),
 			DayInterval: req.DayInterval, DayReminder: req.DayReminder, NextDueAt: nextDue,
 			LastDoneAt: lastDone, LastOdometer: conv.Num(req.LastOdometer),
-			Status: ifaceStr(req.Status),
+			Status: ifaceStr(req.Status), HangarID: req.HangarID,
 		})
 		if err != nil {
 			return err

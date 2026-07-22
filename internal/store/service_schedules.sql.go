@@ -33,14 +33,16 @@ func (q *Queries) CountServiceSchedules(ctx context.Context, arg CountServiceSch
 const createServiceSchedule = `-- name: CreateServiceSchedule :one
 INSERT INTO service_schedules (
   tenant_id, vehicle_id, component, scheduler, km_interval, km_reminder,
-  day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status
+  day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status,
+  hangar_id
 ) VALUES (
   $1, $2, $3, $4,
   $5, $6, $7, $8,
   $9, $10, $11, $12,
-  COALESCE($13, 'normal')
+  COALESCE($13, 'normal'),
+  $14
 )
-RETURNING id, tenant_id, vehicle_id, component, scheduler, km_interval, km_reminder, day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status, created_at
+RETURNING id, tenant_id, vehicle_id, component, scheduler, km_interval, km_reminder, day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status, created_at, hangar_id
 `
 
 type CreateServiceScheduleParams struct {
@@ -57,6 +59,7 @@ type CreateServiceScheduleParams struct {
 	NextDueAt    pgtype.Date    `json:"next_due_at"`
 	NextOdometer pgtype.Numeric `json:"next_odometer"`
 	Status       interface{}    `json:"status"`
+	HangarID     *int64         `json:"hangar_id"`
 }
 
 func (q *Queries) CreateServiceSchedule(ctx context.Context, arg CreateServiceScheduleParams) (ServiceSchedule, error) {
@@ -74,6 +77,7 @@ func (q *Queries) CreateServiceSchedule(ctx context.Context, arg CreateServiceSc
 		arg.NextDueAt,
 		arg.NextOdometer,
 		arg.Status,
+		arg.HangarID,
 	)
 	var i ServiceSchedule
 	err := row.Scan(
@@ -92,6 +96,7 @@ func (q *Queries) CreateServiceSchedule(ctx context.Context, arg CreateServiceSc
 		&i.NextOdometer,
 		&i.Status,
 		&i.CreatedAt,
+		&i.HangarID,
 	)
 	return i, err
 }
@@ -106,7 +111,7 @@ func (q *Queries) DeleteServiceSchedule(ctx context.Context, id int64) error {
 }
 
 const listServiceSchedules = `-- name: ListServiceSchedules :many
-SELECT s.id, s.tenant_id, s.vehicle_id, s.component, s.scheduler, s.km_interval, s.km_reminder, s.day_interval, s.day_reminder, s.last_done_at, s.last_odometer, s.next_due_at, s.next_odometer, s.status, s.created_at, v.license_plate, v.vehicle_type, v.odometer AS current_odometer, v.hourmeter AS current_hourmeter
+SELECT s.id, s.tenant_id, s.vehicle_id, s.component, s.scheduler, s.km_interval, s.km_reminder, s.day_interval, s.day_reminder, s.last_done_at, s.last_odometer, s.next_due_at, s.next_odometer, s.status, s.created_at, s.hangar_id, v.license_plate, v.vehicle_type, v.odometer AS current_odometer, v.hourmeter AS current_hourmeter
 FROM service_schedules s
 LEFT JOIN vehicles v ON v.id = s.vehicle_id
 WHERE ($1::text IS NULL OR v.license_plate ILIKE '%' || $1 || '%' OR s.component ILIKE '%' || $1 || '%')
@@ -138,6 +143,7 @@ type ListServiceSchedulesRow struct {
 	NextOdometer     pgtype.Numeric     `json:"next_odometer"`
 	Status           string             `json:"status"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	HangarID         *int64             `json:"hangar_id"`
 	LicensePlate     *string            `json:"license_plate"`
 	VehicleType      *string            `json:"vehicle_type"`
 	CurrentOdometer  pgtype.Numeric     `json:"current_odometer"`
@@ -174,6 +180,7 @@ func (q *Queries) ListServiceSchedules(ctx context.Context, arg ListServiceSched
 			&i.NextOdometer,
 			&i.Status,
 			&i.CreatedAt,
+			&i.HangarID,
 			&i.LicensePlate,
 			&i.VehicleType,
 			&i.CurrentOdometer,

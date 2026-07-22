@@ -190,7 +190,8 @@ CREATE TABLE service_schedules (
   next_due_at    date,
   next_odometer  numeric,
   status         text NOT NULL DEFAULT 'normal',
-  created_at     timestamptz NOT NULL DEFAULT now()
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  hangar_id     bigint
 );
 
 CREATE TABLE driver_score_events (
@@ -247,4 +248,22 @@ CREATE TABLE api_tokens (
   last_used_at timestamptz,
   revoked_at   timestamptz,
   created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- Maintenance hangars (0026). Trimmed: the generated geography column, RLS
+-- policy and trigger live in db/migrations and are not needed for codegen.
+CREATE TABLE hangars (
+  id         bigserial PRIMARY KEY,
+  tenant_id  bigint NOT NULL,
+  name       text NOT NULL,
+  address    text,
+  phone      text,
+  notes      text,
+  lat        double precision NOT NULL,
+  lon        double precision NOT NULL,
+  radius_m   integer NOT NULL DEFAULT 150,
+  capacity   integer,
+  active     boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );

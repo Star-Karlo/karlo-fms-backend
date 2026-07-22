@@ -6721,6 +6721,10 @@ const docTemplate = `{
                 "day_reminder": {
                     "type": "integer"
                 },
+                "hangar_id": {
+                    "description": "HangarID books the work into a maintenance hangar. Optional: plenty of\nservice happens roadside or at a third party, and forcing a hangar would\nmake the field a lie rather than a fact. Setting it is what puts the\nvehicle on that hangar's list and makes it routable there.",
+                    "type": "integer"
+                },
                 "km_interval": {
                     "type": "number"
                 },

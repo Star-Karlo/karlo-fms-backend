@@ -24,12 +24,14 @@ FROM service_schedules;
 -- name: CreateServiceSchedule :one
 INSERT INTO service_schedules (
   tenant_id, vehicle_id, component, scheduler, km_interval, km_reminder,
-  day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status
+  day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status,
+  hangar_id
 ) VALUES (
   $1, sqlc.narg('vehicle_id'), sqlc.narg('component'), sqlc.narg('scheduler'),
   sqlc.narg('km_interval'), sqlc.narg('km_reminder'), sqlc.narg('day_interval'), sqlc.narg('day_reminder'),
   sqlc.narg('last_done_at'), sqlc.narg('last_odometer'), sqlc.narg('next_due_at'), sqlc.narg('next_odometer'),
-  COALESCE(sqlc.narg('status'), 'normal')
+  COALESCE(sqlc.narg('status'), 'normal'),
+  sqlc.narg('hangar_id')
 )
 RETURNING *;
 
