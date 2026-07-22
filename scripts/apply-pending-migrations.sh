@@ -76,6 +76,21 @@ cd "$(dirname "$0")/.."
 # --import-only skips straight to the fuel load, for when the schema is already
 # in place and only the data is missing. Re-running migrations is safe but
 # reprints a wall of "already exists" notices that buries the real outcome.
+# --drivers <csv> runs ONLY the driver import. It reuses this script for the
+# security-group open/revoke and the Secrets Manager lookup, which is the part
+# worth not repeating — the import itself is a separate command.
+if [ "${1:-}" = "--drivers" ]; then
+  CSV="${2:?usage: $0 --drivers <path-to-csv>}"
+  echo "==> importing drivers from ${CSV}"
+  DATABASE_URL="host=${HOST} port=${PORT} user=${USER} password=${PASS} dbname=fms_app sslmode=require" \
+    go run ./cmd/import-drivers -csv "$CSV" -tenant 1
+  echo
+  echo "############################################################"
+  echo "#  SUCCESS — drivers imported.                             #"
+  echo "############################################################"
+  exit 0
+fi
+
 if [ "${1:-}" = "--import-only" ]; then
   echo "==> skipping migrations (--import-only)"
 else
