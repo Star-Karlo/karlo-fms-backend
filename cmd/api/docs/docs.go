@@ -2011,6 +2011,186 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/hangars": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "` + "`" + `booked` + "`" + ` counts open service schedules assigned here; ` + "`" + `present` + "`" + ` counts vehicles whose last position is inside the radius. They are deliberately separate — booked-but-absent is a no-show, present-but-unbooked is unplanned work.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hangars"
+                ],
+                "summary": "Maintenance hangars, with how many vehicles are booked and present",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/hangar.Hangar"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hangars"
+                ],
+                "summary": "Add a maintenance hangar (admin only)",
+                "parameters": [
+                    {
+                        "description": "hangar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/hangar.UpsertRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/hangar.Hangar"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/hangars/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hangars"
+                ],
+                "summary": "Update a hangar (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "hangar id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "hangar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/hangar.UpsertRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/hangar.Hangar"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Service schedules pointing here are kept and their hangar is cleared, rather than the delete being blocked — losing the maintenance history to tidy up a location would be the worse trade.",
+                "tags": [
+                    "hangars"
+                ],
+                "summary": "Delete a hangar (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "hangar id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/hangars/{id}/vehicles": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hangars"
+                ],
+                "summary": "Vehicles booked at, or currently sitting in, one hangar",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "hangar id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/hangar.VehicleAtHangar"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/insights/action-queue": {
             "get": {
                 "security": [
@@ -2309,6 +2489,34 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": {
                                 "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/maintenance/in-progress": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A vehicle counts as in maintenance when it has an open service schedule. ` + "`" + `present` + "`" + ` says whether it has actually arrived at the hangar it was booked into.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hangars"
+                ],
+                "summary": "Every vehicle currently in for maintenance, across all hangars",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/hangar.InMaintenance"
                             }
                         }
                     }
@@ -5527,6 +5735,140 @@ const docTemplate = `{
                     }
                 },
                 "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "hangar.Hangar": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "address": {
+                    "type": "string"
+                },
+                "booked": {
+                    "description": "Booked counts open service schedules pointing here; Present counts\nvehicles physically inside the radius right now. See the package comment:\nthese are different numbers and the gap between them is the signal.",
+                    "type": "integer"
+                },
+                "capacity": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "present": {
+                    "type": "integer"
+                },
+                "radius_m": {
+                    "type": "integer"
+                }
+            }
+        },
+        "hangar.InMaintenance": {
+            "type": "object",
+            "properties": {
+                "component": {
+                    "type": "string"
+                },
+                "distance_m": {
+                    "type": "integer"
+                },
+                "due_at": {
+                    "type": "string"
+                },
+                "hangar_id": {
+                    "type": "integer"
+                },
+                "hangar_name": {
+                    "type": "string"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "present": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "hangar.UpsertRequest": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "address": {
+                    "type": "string"
+                },
+                "capacity": {
+                    "type": "integer"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "radius_m": {
+                    "type": "integer"
+                }
+            }
+        },
+        "hangar.VehicleAtHangar": {
+            "type": "object",
+            "properties": {
+                "component": {
+                    "type": "string"
+                },
+                "distance_m": {
+                    "description": "DistanceM is how far away it is, so a no-show can be chased.",
+                    "type": "integer"
+                },
+                "due_at": {
+                    "type": "string"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "present": {
+                    "description": "Present is whether the vehicle is physically here right now, which is not\nthe same as being booked here.",
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "vehicle_id": {
                     "type": "integer"
                 }
             }
