@@ -87,6 +87,13 @@ for f in 0024_fuel_stations 0025_company_profile 0026_hangars; do
 done
 fi
 
+# Prefer the pre-fetched seed. Overpass takes minutes and needs internet and
+# database reachability from the SAME machine — the seed needs only the
+# database, so the slow half can have been done anywhere, at any time.
+if [ -f db/seed/fuel_stations.sql ]; then
+  echo "==> loading fuel stations from db/seed (fast path)"
+  psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f db/seed/fuel_stations.sql
+else
 echo "==> loading fuel stations (Overpass; takes a few minutes)"
 # KEYWORD/VALUE DSN, not a URL.
 #
@@ -98,6 +105,7 @@ echo "==> loading fuel stations (Overpass; takes a few minutes)"
 # can break it.
 DATABASE_URL="host=${HOST} port=${PORT} user=${USER} password=${PASS} dbname=fms_app sslmode=require" \
   go run ./cmd/import-fuel -region all
+fi
 
 echo "==> verifying"
 psql "$DB_URL" -X -c "
