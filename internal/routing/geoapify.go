@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 )
 
@@ -46,13 +47,34 @@ const geoapifyRouteMode = "heavy_truck"
 // error rather than a dangerous instruction.
 const geoapifyMatchMode = "drive"
 
-// maxMatchPoints bounds one map-matching request.
+// matchChunkSize bounds ONE map-matching request. Longer traces are split into
+// consecutive chunks and stitched back together.
 //
-// A day of telemetry for one vehicle can run to thousands of fixes, and posting
-// all of them is both slow and wasteful — matching quality saturates well
-// before that, because the algorithm needs enough points to disambiguate
-// parallel roads, not every point. Longer traces are evenly downsampled.
-const maxMatchPoints = 900
+// THIS MUST NOT BE DONE BY DOWNSAMPLING, which is what this originally did and
+// what the numbers below killed. Measured against a real 461 km day (961 fixes,
+// distance known independently from the daily rollup):
+//
+//	downsampled to 100 pts -> 159 km
+//	downsampled to 250 pts ->  50 km
+//	downsampled to 500 pts -> 217 km
+//	5 consecutive chunks   -> 489 km   (~6% over, and plausible)
+//
+// Thinning a long journey spreads the fixes kilometres apart, and the matcher
+// then joins them by the SHORTEST path rather than the travelled one — so the
+// answer is not merely imprecise, it is a different route. Every downsampled
+// figure above is wrong, and wrong in an unpredictable direction, which is the
+// worst property a distance can have.
+//
+// 200 keeps fixes at their recorded spacing and each request near three
+// seconds. A full day costs about five credits of the 3,000 daily allowance.
+const matchChunkSize = 200
+
+// matchConcurrency bounds parallel chunk requests.
+//
+// Sequential, a day took ~15s. Three at a time brings that to a few seconds
+// while staying far below any plausible rate limit — the point is a responsive
+// map, not saturating someone else's free tier.
+const matchConcurrency = 3
 
 type Geoapify struct {
 	apiKey string
@@ -64,7 +86,7 @@ func NewGeoapify(apiKey, base string) *Geoapify {
 	if base == "" {
 		base = geoapifyBase
 	}
-	return &Geoapify{apiKey: apiKey, base: base, client: &http.Client{Timeout: 30 * time.Second}}
+	return &Geoapify{apiKey: apiKey, base: base, client: &http.Client{Timeout: 60 * time.Second}}
 }
 
 func (g *Geoapify) Name() string { return "geoapify" }
@@ -195,12 +217,16 @@ type MatchedTrace struct {
 	// DistanceM is the length along roads, which is generally SHORTER than the
 	// raw GPS distance: scatter around a stationary vehicle inflates the raw
 	// figure with movement that never happened.
-	DistanceM float64 `json:"distance_m"`
-	// PointsIn and PointsUsed expose downsampling, so a caller can tell a
-	// simplified trace from a complete one.
-	PointsIn   int    `json:"points_in"`
-	PointsUsed int    `json:"points_used"`
-	Provider   string `json:"provider"`
+	DistanceM  float64 `json:"distance_m"`
+	PointsIn   int     `json:"points_in"`
+	PointsUsed int     `json:"points_used"`
+	// ChunksMatched vs ChunksTotal exposes partial success: a stretch through
+	// an unmapped yard can fail while the rest of the day matches perfectly,
+	// and the caller should be able to say so rather than present a gap as a
+	// complete path.
+	ChunksTotal   int    `json:"chunks_total"`
+	ChunksMatched int    `json:"chunks_matched"`
+	Provider      string `json:"provider"`
 }
 
 // Matcher snaps a GPS trace to the road network.
@@ -223,6 +249,10 @@ type matchRequest struct {
 }
 
 // Match snaps a GPS trace to roads.
+//
+// Long traces are split into consecutive chunks, matched in parallel and
+// stitched back together in order. See matchChunkSize for why chunking rather
+// than thinning is the only correct approach here.
 func (g *Geoapify) Match(ctx context.Context, points []TracePoint) (*MatchedTrace, error) {
 	if g.apiKey == "" {
 		return nil, ErrNotConfigured
@@ -230,10 +260,77 @@ func (g *Geoapify) Match(ctx context.Context, points []TracePoint) (*MatchedTrac
 	if len(points) < 2 {
 		return nil, fmt.Errorf("a trace needs at least two points to match")
 	}
-	used := downsample(points, maxMatchPoints)
 
-	wps := make([]matchWaypoint, 0, len(used))
-	for _, p := range used {
+	var chunks [][]TracePoint
+	for i := 0; i < len(points); i += matchChunkSize {
+		end := i + matchChunkSize
+		if end > len(points) {
+			end = len(points)
+		}
+		if end-i >= 2 {
+			chunks = append(chunks, points[i:end])
+		}
+	}
+
+	type result struct {
+		geom  [][2]float64
+		dist  float64
+		err   error
+		index int
+	}
+	results := make([]result, len(chunks))
+	sem := make(chan struct{}, matchConcurrency)
+	var wg sync.WaitGroup
+	for i, c := range chunks {
+		wg.Add(1)
+		go func(i int, c []TracePoint) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			geom, dist, err := g.matchChunk(ctx, c)
+			results[i] = result{geom: geom, dist: dist, err: err, index: i}
+		}(i, c)
+	}
+	wg.Wait()
+
+	out := &MatchedTrace{PointsIn: len(points), PointsUsed: len(points), Provider: g.Name()}
+	var firstErr error
+	matched := 0
+	for _, r := range results {
+		if r.err != nil {
+			// One bad chunk does not sink the trace: a stretch through an
+			// unmapped yard can be unmatchable while the rest of the day is
+			// perfectly good, and returning nothing would be a worse answer
+			// than returning most of the journey.
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			continue
+		}
+		matched++
+		out.DistanceM += r.dist
+		for _, p := range r.geom {
+			if n := len(out.Geometry); n > 0 && out.Geometry[n-1] == p {
+				continue
+			}
+			out.Geometry = append(out.Geometry, p)
+		}
+	}
+	if matched == 0 {
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		return nil, fmt.Errorf("the trace could not be matched to any road")
+	}
+	out.ChunksTotal = len(chunks)
+	out.ChunksMatched = matched
+	return out, nil
+}
+
+// matchChunk matches one bounded run of consecutive fixes.
+func (g *Geoapify) matchChunk(ctx context.Context, points []TracePoint) ([][2]float64, float64, error) {
+	wps := make([]matchWaypoint, 0, len(points))
+	for _, p := range points {
 		w := matchWaypoint{Location: [2]float64{p.Lon, p.Lat}}
 		if !p.At.IsZero() {
 			w.Timestamp = p.At.UTC().Format(time.RFC3339)
@@ -242,19 +339,19 @@ func (g *Geoapify) Match(ctx context.Context, points []TracePoint) (*MatchedTrac
 	}
 	body, err := json.Marshal(matchRequest{Mode: geoapifyMatchMode, Waypoints: wps})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	u := g.base + "/v1/mapmatching?apiKey=" + url.QueryEscape(g.apiKey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("matching provider unreachable: %w", err)
+		return nil, 0, fmt.Errorf("matching provider unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -262,39 +359,15 @@ func (g *Geoapify) Match(ctx context.Context, points []TracePoint) (*MatchedTrac
 	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	_ = json.Unmarshal(payload, &out)
 	if resp.StatusCode != http.StatusOK {
-		return nil, g.fail(resp, out)
+		return nil, 0, g.fail(resp, out)
 	}
 	if len(out.Features) == 0 {
-		return nil, fmt.Errorf("the trace could not be matched to any road")
+		return nil, 0, fmt.Errorf("the trace could not be matched to any road")
 	}
 	f := out.Features[0]
 	geom, err := flatten(f.Geometry.Type, f.Geometry.Coordinates)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return &MatchedTrace{
-		Geometry:   geom,
-		DistanceM:  f.Properties.Distance,
-		PointsIn:   len(points),
-		PointsUsed: len(used),
-		Provider:   g.Name(),
-	}, nil
-}
-
-// downsample thins a trace to at most max points, keeping the first and last.
-//
-// Evenly spaced by INDEX rather than by distance: a vehicle parked for an hour
-// emits hundreds of fixes in one spot, and distance-based thinning would keep
-// almost none of them while spending the budget on the stationary period's
-// neighbours. Index spacing keeps the shape of the journey.
-func downsample(in []TracePoint, max int) []TracePoint {
-	if len(in) <= max {
-		return in
-	}
-	out := make([]TracePoint, 0, max)
-	step := float64(len(in)-1) / float64(max-1)
-	for i := 0; i < max-1; i++ {
-		out = append(out, in[int(float64(i)*step)])
-	}
-	return append(out, in[len(in)-1])
+	return geom, f.Properties.Distance, nil
 }

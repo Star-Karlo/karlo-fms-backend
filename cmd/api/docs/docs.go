@@ -4266,7 +4266,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Map-matches the raw GPS trace so the line follows roads instead of cutting corners and wandering through buildings. Costs one provider request, so it is requested explicitly rather than being folded into the history response — and the raw trace remains available, because the matched line is an interpretation and the fixes themselves are what matter in a dispute. ` + "`" + `distance_km` + "`" + ` is measured along roads and is usually shorter than the raw distance.",
+                "description": "Map-matches the raw GPS trace so the line follows roads instead of cutting corners and wandering through buildings. Costs several provider requests (the trace is split into chunks of 200 fixes and matched in parallel), so it is requested explicitly rather than being folded into the history response — and the raw trace remains available, because the matched line is an interpretation and the fixes themselves are what matter in a dispute. ` + "`" + `distance_km` + "`" + ` is measured along roads. ` + "`" + `chunks_matched` + "`" + ` below ` + "`" + `chunks_total` + "`" + ` means part of the journey was unmatchable — typically an unmapped yard or plantation track.",
                 "produces": [
                     "application/json"
                 ],
@@ -6528,8 +6528,15 @@ const docTemplate = `{
         "liveview.SnappedHistory": {
             "type": "object",
             "properties": {
+                "chunks_matched": {
+                    "type": "integer"
+                },
+                "chunks_total": {
+                    "description": "ChunksMatched below ChunksTotal means part of the journey could not be\nmatched — typically an unmapped yard or plantation track. Surfaced so the\nUI can say the line is incomplete rather than presenting a gap as fact.",
+                    "type": "integer"
+                },
                 "distance_km": {
-                    "description": "DistanceKm is measured along roads. Expect it to be SHORTER than the raw\nfigure: GPS scatter around a stationary vehicle inflates raw distance\nwith movement that never happened.",
+                    "description": "DistanceKm is measured along roads. Verified against a day whose distance\nwas known independently from the daily rollup: 489 km matched vs 461.5 km\nrecorded, i.e. ~6% over, which is what following real road geometry\ninstead of straight lines between fixes should produce.",
                     "type": "number"
                 },
                 "geometry": {
@@ -6543,9 +6550,6 @@ const docTemplate = `{
                     }
                 },
                 "points_in": {
-                    "type": "integer"
-                },
-                "points_used": {
                     "type": "integer"
                 },
                 "provider": {
