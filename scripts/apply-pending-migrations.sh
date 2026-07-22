@@ -72,12 +72,20 @@ if ! nc -z -G 15 "$HOST" 5432 2>/dev/null; then
 fi
 
 cd "$(dirname "$0")/.."
+
+# --import-only skips straight to the fuel load, for when the schema is already
+# in place and only the data is missing. Re-running migrations is safe but
+# reprints a wall of "already exists" notices that buries the real outcome.
+if [ "${1:-}" = "--import-only" ]; then
+  echo "==> skipping migrations (--import-only)"
+else
 for f in 0024_fuel_stations 0025_company_profile 0026_hangars; do
   echo "==> applying ${f}"
   # ON_ERROR_STOP so a failure halts here rather than leaving half a schema.
   # Every one of these migrations is written to be re-runnable.
   psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f "db/migrations/${f}.sql"
 done
+fi
 
 echo "==> loading fuel stations (Overpass; takes a few minutes)"
 # KEYWORD/VALUE DSN, not a URL.

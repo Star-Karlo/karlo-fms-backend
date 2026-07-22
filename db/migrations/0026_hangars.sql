@@ -71,5 +71,10 @@ CREATE POLICY tenant_isolation ON hangars
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON hangars TO fms_app;
 
+-- DROP-then-CREATE because PostgreSQL has no CREATE TRIGGER IF NOT EXISTS.
+-- Every other statement in this file is guarded, so without this the migration
+-- succeeds once and then fails on re-run — which is exactly the shape of
+-- failure that makes a half-applied schema hard to reason about.
+DROP TRIGGER IF EXISTS trg_hangars_touch ON hangars;
 CREATE TRIGGER trg_hangars_touch BEFORE UPDATE ON hangars
   FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
