@@ -1333,6 +1333,42 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/driver-scorecard/cohorts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Groups drivers by grade and reports, per grade, the average points each behaviour cost — the answer to \"why are there so many B drivers\". A cohort dragged down mostly by idling reads very differently from one dragged down by speeding, and only this shows which.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "scorecard"
+                ],
+                "summary": "Why each grade cohort landed where it did",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "YYYY-MM",
+                        "name": "period",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/scorecard.Cohort"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/driver-scorecard/config": {
             "get": {
                 "security": [
@@ -7166,6 +7202,40 @@ const docTemplate = `{
                 },
                 "min": {
                     "type": "integer"
+                }
+            }
+        },
+        "scorecard.Cohort": {
+            "type": "object",
+            "properties": {
+                "avg_lost": {
+                    "type": "number"
+                },
+                "drivers": {
+                    "type": "integer"
+                },
+                "factors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/scorecard.CohortFactor"
+                    }
+                },
+                "grade": {
+                    "type": "string"
+                }
+            }
+        },
+        "scorecard.CohortFactor": {
+            "type": "object",
+            "properties": {
+                "avg_lost": {
+                    "type": "number"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },

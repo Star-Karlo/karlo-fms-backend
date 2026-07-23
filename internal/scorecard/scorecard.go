@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -151,10 +152,131 @@ func (h *Handler) WithRecomputer(r Recomputer) *Handler { h.recmp = r; return h 
 // Routes mounts scorecard endpoints.
 func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/driver-scorecard/config", h.cfg)
+	r.Get("/v1/driver-scorecard/cohorts", h.cohorts)
 	r.Get("/v1/driver-scorecard", h.summary)
 	r.Get("/v1/driver-scorecard/{id}", h.detail)
 	r.Post("/v1/driver-scorecard/recalculate", h.recalculate)
 }
+
+// CohortFactor is one behaviour's average drag on one grade cohort.
+type CohortFactor struct {
+	Code    string  `json:"code"`
+	Name    string  `json:"name"`
+	AvgLost float64 `json:"avg_lost"`
+}
+
+// Cohort is one grade band and why its drivers landed there.
+type Cohort struct {
+	Grade   string         `json:"grade"`
+	Drivers int            `json:"drivers"`
+	AvgLost float64        `json:"avg_lost"`
+	Factors []CohortFactor `json:"factors"`
+}
+
+// cohorts godoc
+//
+//	@Summary		Why each grade cohort landed where it did
+//	@Description	Groups drivers by grade and reports, per grade, the average points each behaviour cost — the answer to "why are there so many B drivers". A cohort dragged down mostly by idling reads very differently from one dragged down by speeding, and only this shows which.
+//	@Tags			scorecard
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			period	query	string	false	"YYYY-MM"
+//	@Success		200	{array}	scorecard.Cohort
+//	@Router			/v1/driver-scorecard/cohorts [get]
+func (h *Handler) cohorts(w http.ResponseWriter, r *http.Request) {
+	pd := period(r)
+	tid := auth.TenantID(r.Context())
+	nameByCode := map[string]string{}
+	for _, wt := range config.Weights {
+		nameByCode[wt.Code] = wt.Name
+	}
+
+	// grade -> code -> summed penalty, plus a count of drivers per grade.
+	type acc struct {
+		drivers   int
+		totalLost float64
+		byCode    map[string]float64
+	}
+	cohorts := map[string]*acc{}
+
+	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		// One pass: each driver's penalty per behaviour, and their total (which
+		// fixes their grade). Grading in Go keeps the band thresholds in one
+		// place — config.IndexBands — rather than duplicated in SQL.
+		rows, err := tx.Query(r.Context(), `
+SELECT driver_id, event_type, coalesce(sum(score),0)::float8
+FROM driver_score_events
+WHERE tenant_id = $1 AND period = $2 AND event_type <> 'trip_km'
+GROUP BY driver_id, event_type`, tid, pd.Time)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		perDriver := map[int64]map[string]float64{}
+		for rows.Next() {
+			var did int64
+			var code string
+			var lost float64
+			if err := rows.Scan(&did, &code, &lost); err != nil {
+				return err
+			}
+			if perDriver[did] == nil {
+				perDriver[did] = map[string]float64{}
+			}
+			perDriver[did][code] = lost
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		for _, codes := range perDriver {
+			var total float64
+			for _, v := range codes {
+				total += v
+			}
+			grade := indexFor(clampScore(100 - total))
+			a := cohorts[grade]
+			if a == nil {
+				a = &acc{byCode: map[string]float64{}}
+				cohorts[grade] = a
+			}
+			a.drivers++
+			a.totalLost += total
+			for code, v := range codes {
+				a.byCode[code] += v
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Emit A..E in order, only bands that have drivers, factors biggest-first.
+	out := []Cohort{}
+	for _, band := range config.IndexBands {
+		a := cohorts[band.Index]
+		if a == nil || a.drivers == 0 {
+			continue
+		}
+		c := Cohort{Grade: band.Index, Drivers: a.drivers,
+			AvgLost: round1(a.totalLost / float64(a.drivers))}
+		for code, sum := range a.byCode {
+			avg := sum / float64(a.drivers)
+			if avg < 0.05 {
+				continue
+			}
+			c.Factors = append(c.Factors, CohortFactor{Code: code, Name: nameByCode[code], AvgLost: round1(avg)})
+		}
+		sort.Slice(c.Factors, func(i, j int) bool { return c.Factors[i].AvgLost > c.Factors[j].AvgLost })
+		out = append(out, c)
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+func round1(f float64) float64 { return float64(int(f*10+0.5)) / 10 }
 
 // recalculate godoc
 //

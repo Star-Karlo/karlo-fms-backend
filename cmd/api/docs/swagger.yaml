@@ -1866,6 +1866,28 @@ definitions:
       min:
         type: integer
     type: object
+  scorecard.Cohort:
+    properties:
+      avg_lost:
+        type: number
+      drivers:
+        type: integer
+      factors:
+        items:
+          $ref: '#/definitions/scorecard.CohortFactor'
+        type: array
+      grade:
+        type: string
+    type: object
+  scorecard.CohortFactor:
+    properties:
+      avg_lost:
+        type: number
+      code:
+        type: string
+      name:
+        type: string
+    type: object
   scorecard.Config:
     properties:
       alert_limit_pct:
@@ -3114,6 +3136,31 @@ paths:
       security:
       - BearerAuth: []
       summary: One driver's monthly scorecard breakdown
+      tags:
+      - scorecard
+  /v1/driver-scorecard/cohorts:
+    get:
+      description: Groups drivers by grade and reports, per grade, the average points
+        each behaviour cost — the answer to "why are there so many B drivers". A cohort
+        dragged down mostly by idling reads very differently from one dragged down
+        by speeding, and only this shows which.
+      parameters:
+      - description: YYYY-MM
+        in: query
+        name: period
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/scorecard.Cohort'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Why each grade cohort landed where it did
       tags:
       - scorecard
   /v1/driver-scorecard/config:
