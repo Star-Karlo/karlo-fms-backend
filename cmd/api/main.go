@@ -34,6 +34,7 @@ import (
 	"github.com/karlo/fms-backend/internal/dashboard"
 	"github.com/karlo/fms-backend/internal/document"
 	"github.com/karlo/fms-backend/internal/driver"
+	"github.com/karlo/fms-backend/internal/driverscore"
 	"github.com/karlo/fms-backend/internal/fleetgroup"
 	"github.com/karlo/fms-backend/internal/fuel"
 	"github.com/karlo/fms-backend/internal/geofence"
@@ -159,6 +160,10 @@ func main() {
 	// Background collector: engine hours, odometer sync, battery tamper and
 	// geofence enter/exit transitions from the live feed.
 	go telemetrysync.New(pool, tel, 2*time.Minute).Run(ctx)
+	// Nightly driver safety scoring from the daily rollup — needs the same
+	// fleet-history service the insights use. Recomputes the current month
+	// each run so scores stay current as days complete.
+	go driverscore.New(pool, liveSvc, driverscore.DefaultPolicy).Run(ctx)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, middleware.Recoverer)

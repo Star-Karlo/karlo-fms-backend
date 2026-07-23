@@ -278,6 +278,9 @@ type VehicleDayPoint struct {
 	MovingH    float64 `json:"moving_h"`
 	IdleH      float64 `json:"idle_h"`
 	DistanceKm float64 `json:"distance_km"`
+	// MaxSpeed is the day's peak, carried for driver scoring: a speeding penalty
+	// needs the peak per day, not the window's overall maximum.
+	MaxSpeed float64 `json:"max_speed"`
 }
 
 // VehicleSeries is a vehicle's daily history, oldest first.
@@ -346,11 +349,16 @@ func (s *Service) FleetDailySeries(ctx context.Context, tenantID int64, days int
 			}
 			agg[v.VehicleID] = vs
 		}
+		maxSpeed := 0.0
+		if st.MaxSpeed != nil {
+			maxSpeed = *st.MaxSpeed
+		}
 		vs.Days = append(vs.Days, VehicleDayPoint{
 			Day:        st.Day,
 			MovingH:    float64(st.MovingS) / 3600,
 			IdleH:      float64(st.IdleS) / 3600,
 			DistanceKm: st.DistanceKm,
+			MaxSpeed:   maxSpeed,
 		})
 	}
 
