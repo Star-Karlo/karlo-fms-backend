@@ -163,7 +163,9 @@ func main() {
 	// Nightly driver safety scoring from the daily rollup — needs the same
 	// fleet-history service the insights use. Recomputes the current month
 	// each run so scores stay current as days complete.
-	go driverscore.New(pool, liveSvc, driverscore.DefaultPolicy).Run(ctx)
+	scoreCollector := driverscore.New(pool, liveSvc, driverscore.DefaultPolicy)
+	scorecardH.WithRecomputer(scoreCollector)
+	go scoreCollector.Run(ctx)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, middleware.Recoverer)

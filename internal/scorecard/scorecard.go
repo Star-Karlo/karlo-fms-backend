@@ -2,6 +2,8 @@
 package scorecard
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -111,6 +113,10 @@ type DetailBehavior struct {
 	Name        string  `json:"name"`
 	Occurrences int64   `json:"occurrences"`
 	Score       float64 `json:"score"`
+	// Meta carries the numbers behind the penalty — the specific dates an issue
+	// occurred, the idle percentage — so the detail view can show WHEN and WHY,
+	// not just how many. Shape varies by code; the client reads what it knows.
+	Meta map[string]any `json:"meta,omitempty"`
 }
 
 // Detail is a single driver's monthly scorecard.
@@ -122,17 +128,54 @@ type Detail struct {
 	Behaviors  []DetailBehavior `json:"behaviors"`
 }
 
+// Recomputer recomputes a tenant's current-month scores on demand. The
+// driverscore collector satisfies it; kept as an interface so this package does
+// not import that one (which imports liveview, which would be a heavier graph).
+type Recomputer interface {
+	RunTenantNow(ctx context.Context, tenantID int64) error
+}
+
 // Handler exposes scorecard endpoints.
-type Handler struct{ pool *db.Pool }
+type Handler struct {
+	pool  *db.Pool
+	recmp Recomputer
+}
 
 // NewHandler builds the handler.
 func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
+
+// WithRecomputer wires the "Recalculate scores" button. Optional: without it
+// that endpoint answers 503 and reading scores is unaffected.
+func (h *Handler) WithRecomputer(r Recomputer) *Handler { h.recmp = r; return h }
 
 // Routes mounts scorecard endpoints.
 func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/driver-scorecard/config", h.cfg)
 	r.Get("/v1/driver-scorecard", h.summary)
 	r.Get("/v1/driver-scorecard/{id}", h.detail)
+	r.Post("/v1/driver-scorecard/recalculate", h.recalculate)
+}
+
+// recalculate godoc
+//
+//	@Summary		Recompute this month's scores now
+//	@Description	Runs the scoring collector for the current month immediately instead of waiting for the nightly pass — used after assigning drivers or fixing the registry. Idempotent: it recomputes the whole month, so pressing it twice changes nothing the second time.
+//	@Tags			scorecard
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Success		200	{object}	map[string]string
+//	@Failure		503	{object}	map[string]string
+//	@Router			/v1/driver-scorecard/recalculate [post]
+func (h *Handler) recalculate(w http.ResponseWriter, r *http.Request) {
+	if h.recmp == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "scoring is not configured on this deployment")
+		return
+	}
+	if err := h.recmp.RunTenantNow(r.Context(), auth.TenantID(r.Context())); err != nil {
+		httpx.Error(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"status": "recalculated"})
 }
 
 // period parses ?period=YYYY-MM into the first-of-month date (default: current).
@@ -236,7 +279,19 @@ func (h *Handler) detail(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			penalty += numF(row.Score)
-			byCode[code] = DetailBehavior{Code: code, Name: nameByCode[code], Occurrences: row.Occurrences, Score: numF(row.Score)}
+			// pgx decodes jsonb as []byte here; unmarshal to the map the client
+			// reads. A map value (some drivers) is passed through as-is.
+			var meta map[string]any
+			switch mv := row.Metadata.(type) {
+			case []byte:
+				if len(mv) > 0 {
+					_ = json.Unmarshal(mv, &meta)
+				}
+			case map[string]any:
+				meta = mv
+			}
+			byCode[code] = DetailBehavior{Code: code, Name: nameByCode[code],
+				Occurrences: row.Occurrences, Score: numF(row.Score), Meta: meta}
 		}
 		// Emit all 12 behaviors in canonical order (zero-filled).
 		for _, wt := range config.Weights {

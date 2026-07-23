@@ -120,6 +120,19 @@ func (c *Collector) Run(ctx context.Context) {
 	}
 }
 
+// RunTenantNow recomputes one tenant's current month on demand.
+//
+// Wired to the "Recalculate scores" button. Exists because the nightly cadence
+// is right for a settled month but wrong right after a change — assigning
+// drivers or fixing the registry should show in the scores now, not tomorrow.
+// It is the whole recompute, not a delta, so it is safe to press repeatedly.
+func (c *Collector) RunTenantNow(ctx context.Context, tenantID int64) error {
+	if c.live == nil {
+		return fmt.Errorf("fleet history is unavailable on this deployment")
+	}
+	return c.scoreTenant(ctx, tenantID)
+}
+
 func (c *Collector) runOnce(ctx context.Context) {
 	var tenants []int64
 	if err := db.SystemTx(ctx, c.pool, func(tx pgx.Tx) error {
@@ -155,6 +168,11 @@ type perDriver struct {
 	movingH       float64
 	idleH         float64
 	distanceKm    float64
+	// The specific days each issue occurred, so the detail view can answer
+	// "when" rather than only "how many". Kept small — a month is at most 31
+	// entries — and carried into the event metadata.
+	speedingDates  []string
+	longShiftDates []string
 }
 
 // scoreTenant recomputes the CURRENT month for one tenant.
@@ -222,8 +240,12 @@ func (c *Collector) scoreTenant(ctx context.Context, tenantID int64) error {
 			pd.distanceKm += d.DistanceKm
 			if d.MaxSpeed > c.policy.SpeedLimitKmh {
 				pd.speedingDays++
+				pd.speedingDates = append(pd.speedingDates, d.Day)
 			}
-			pd.longShiftLoad += severity(d.MovingH, c.policy.LongShiftHours, c.policy.LongShiftFullHours)
+			if sev := severity(d.MovingH, c.policy.LongShiftHours, c.policy.LongShiftFullHours); sev > 0 {
+				pd.longShiftLoad += sev
+				pd.longShiftDates = append(pd.longShiftDates, d.Day)
+			}
 		}
 	}
 
@@ -323,7 +345,8 @@ func idlePctOf(pd *perDriver) float64 {
 func metadataFor(code string, pd *perDriver, p Policy) map[string]any {
 	switch code {
 	case "OVERSPEED":
-		return map[string]any{"speeding_days": pd.speedingDays, "days": pd.days, "limit_kmh": p.SpeedLimitKmh}
+		return map[string]any{"speeding_days": pd.speedingDays, "days": pd.days,
+			"limit_kmh": p.SpeedLimitKmh, "dates": pd.speedingDates}
 	case "EXCEEDED_IDLE":
 		return map[string]any{"idle_pct": round1(idlePctOf(pd)), "target_pct": p.IdleTargetPct}
 	case "LONG_SHIFT":
@@ -331,7 +354,8 @@ func metadataFor(code string, pd *perDriver, p Policy) map[string]any {
 		if pd.days > 0 {
 			avg = pd.movingH / float64(pd.days)
 		}
-		return map[string]any{"avg_driving_h": round1(avg), "threshold_h": p.LongShiftHours}
+		return map[string]any{"avg_driving_h": round1(avg), "threshold_h": p.LongShiftHours,
+			"dates": pd.longShiftDates}
 	default:
 		return map[string]any{"distance_km": round1(pd.distanceKm), "days": pd.days}
 	}

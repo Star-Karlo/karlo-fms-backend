@@ -15,7 +15,13 @@ ORDER BY total_score DESC;
 
 -- name: DriverScoreDetail :many
 -- Per-behavior breakdown for one driver in a month.
-SELECT event_type, COALESCE(sum(occurrences),0)::bigint AS occurrences, COALESCE(sum(score),0)::numeric AS score
+-- metadata carries the numbers behind each penalty (idle %, the specific dates
+-- an issue occurred); the newest row's is kept, though the collector writes one
+-- row per behaviour so there is only ever one.
+SELECT event_type,
+       COALESCE(sum(occurrences),0)::bigint AS occurrences,
+       COALESCE(sum(score),0)::numeric AS score,
+       (jsonb_agg(metadata ORDER BY created_at DESC) -> 0) AS metadata
 FROM driver_score_events
 WHERE driver_id = $1 AND period = sqlc.arg('period')
 GROUP BY event_type;

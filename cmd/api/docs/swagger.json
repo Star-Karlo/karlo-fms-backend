@@ -1350,6 +1350,43 @@
                 }
             }
         },
+        "/v1/driver-scorecard/recalculate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Runs the scoring collector for the current month immediately instead of waiting for the nightly pass — used after assigning drivers or fixing the registry. Idempotent: it recomputes the whole month, so pressing it twice changes nothing the second time.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "scorecard"
+                ],
+                "summary": "Recompute this month's scores now",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/driver-scorecard/{id}": {
             "get": {
                 "security": [
@@ -7176,6 +7213,11 @@
             "properties": {
                 "code": {
                     "type": "string"
+                },
+                "meta": {
+                    "description": "Meta carries the numbers behind the penalty — the specific dates an issue\noccurred, the idle percentage — so the detail view can show WHEN and WHY,\nnot just how many. Shape varies by code; the client reads what it knows.",
+                    "type": "object",
+                    "additionalProperties": {}
                 },
                 "name": {
                     "type": "string"

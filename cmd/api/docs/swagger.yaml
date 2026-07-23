@@ -1900,6 +1900,13 @@ definitions:
     properties:
       code:
         type: string
+      meta:
+        additionalProperties: {}
+        description: |-
+          Meta carries the numbers behind the penalty — the specific dates an issue
+          occurred, the idle percentage — so the detail view can show WHEN and WHY,
+          not just how many. Shape varies by code; the client reads what it knows.
+        type: object
       name:
         type: string
       occurrences:
@@ -3121,6 +3128,32 @@ paths:
       security:
       - BearerAuth: []
       summary: Driver-score engine configuration (weights + index bands)
+      tags:
+      - scorecard
+  /v1/driver-scorecard/recalculate:
+    post:
+      description: 'Runs the scoring collector for the current month immediately instead
+        of waiting for the nightly pass — used after assigning drivers or fixing the
+        registry. Idempotent: it recomputes the whole month, so pressing it twice
+        changes nothing the second time.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Recompute this month's scores now
       tags:
       - scorecard
   /v1/drivers:

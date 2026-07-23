@@ -12,7 +12,10 @@ import (
 )
 
 const driverScoreDetail = `-- name: DriverScoreDetail :many
-SELECT event_type, COALESCE(sum(occurrences),0)::bigint AS occurrences, COALESCE(sum(score),0)::numeric AS score
+SELECT event_type,
+       COALESCE(sum(occurrences),0)::bigint AS occurrences,
+       COALESCE(sum(score),0)::numeric AS score,
+       (jsonb_agg(metadata ORDER BY created_at DESC) -> 0) AS metadata
 FROM driver_score_events
 WHERE driver_id = $1 AND period = $2
 GROUP BY event_type
@@ -27,9 +30,13 @@ type DriverScoreDetailRow struct {
 	EventType   *string        `json:"event_type"`
 	Occurrences int64          `json:"occurrences"`
 	Score       pgtype.Numeric `json:"score"`
+	Metadata    interface{}    `json:"metadata"`
 }
 
 // Per-behavior breakdown for one driver in a month.
+// metadata carries the numbers behind each penalty (idle %, the specific dates
+// an issue occurred); the newest row's is kept, though the collector writes one
+// row per behaviour so there is only ever one.
 func (q *Queries) DriverScoreDetail(ctx context.Context, arg DriverScoreDetailParams) ([]DriverScoreDetailRow, error) {
 	rows, err := q.db.Query(ctx, driverScoreDetail, arg.DriverID, arg.Period)
 	if err != nil {
@@ -39,7 +46,12 @@ func (q *Queries) DriverScoreDetail(ctx context.Context, arg DriverScoreDetailPa
 	items := []DriverScoreDetailRow{}
 	for rows.Next() {
 		var i DriverScoreDetailRow
-		if err := rows.Scan(&i.EventType, &i.Occurrences, &i.Score); err != nil {
+		if err := rows.Scan(
+			&i.EventType,
+			&i.Occurrences,
+			&i.Score,
+			&i.Metadata,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
