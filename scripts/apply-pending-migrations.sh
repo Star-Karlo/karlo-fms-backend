@@ -110,15 +110,26 @@ if [ "${1:-}" = "--promote" ]; then
   psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f db/migrations/0027_platform_admin.sql
 
   echo "==> promoting ${EMAIL}"
-  # RETURNING rather than a DO block: psql does not interpolate :'email' inside
-  # a dollar-quoted body, so the plpgsql form would fail to substitute at all.
-  # -v + :'email' also lets psql do the quoting, so an odd address cannot break
-  # the statement. Empty output means no such user — reported rather than
-  # passing silently, which would look identical to success and leave the page
-  # at 403.
-  PROMOTED="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -X -tA -v email="$EMAIL" \
-    -c "UPDATE users SET role = 'platform_admin', updated_at = now()
-        WHERE email = :'email' RETURNING email")"
+  # Two psql traps, both hit while writing this:
+  #
+  #   1. Variables are NOT interpolated inside a dollar-quoted body, so wrapping
+  #      this in DO $$ ... $$ leaves :'email' untouched.
+  #   2. Variables are NOT interpolated in -c either — the string goes to the
+  #      server as written, which is the "syntax error at or near \":\"" this
+  #      produced. Substitution only happens for input read from stdin or -f.
+  #
+  # Hence: plain UPDATE ... RETURNING, fed on stdin. psql does the quoting, so
+  # an odd address cannot break the statement. Empty output means no such user —
+  # reported rather than passing silently, which would look identical to success
+  # and leave the page at 403.
+  # -q matters as much as the heredoc: without it psql writes the command tag
+  # ("UPDATE 0") to stdout, so the empty-result guard below would never fire and
+  # a typo'd address would report success having promoted nobody.
+  PROMOTED="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -X -q -tA -v email="$EMAIL" <<'SQL'
+UPDATE users SET role = 'platform_admin', updated_at = now()
+WHERE email = :'email' RETURNING email;
+SQL
+)"
   if [ -z "$PROMOTED" ]; then
     echo
     echo "  No account with email ${EMAIL}."
