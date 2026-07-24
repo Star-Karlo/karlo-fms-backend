@@ -104,16 +104,10 @@ func (h *Handler) Routes(r chi.Router) {
 //	@Failure		403	{object}	map[string]string
 //	@Router			/v1/tenants [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	// Counts are read here rather than per-tenant so the page is one round trip.
-	// `tenants` has no RLS policy; users/vehicles do, so they are counted with
-	// explicit joins under the platform admin's own scope — which is why this
-	// runs as a plain pool query rather than inside a tenant-scoped Tx.
+	// `tenants` carries no RLS policy, so the list itself reads fine unscoped.
 	rows, err := h.pool.Query(r.Context(), `
-SELECT t.id, t.name, t.slug, to_char(t.created_at, 'YYYY-MM-DD"T"HH24:MI:SSOF:00'),
-       (SELECT count(*) FROM users u WHERE u.tenant_id = t.id),
-       (SELECT count(*) FROM vehicles v WHERE v.tenant_id = t.id)
-FROM tenants t
-ORDER BY t.id`)
+SELECT t.id, t.name, t.slug, to_char(t.created_at, 'YYYY-MM-DD"T"HH24:MI:SSOF:00')
+FROM tenants t ORDER BY t.id`)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "list tenants failed")
 		return
@@ -123,7 +117,7 @@ ORDER BY t.id`)
 	items := []DTO{}
 	for rows.Next() {
 		var d DTO
-		if err := rows.Scan(&d.ID, &d.Name, &d.Slug, &d.CreatedAt, &d.Users, &d.Vehicles); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.Slug, &d.CreatedAt); err != nil {
 			httpx.Error(w, http.StatusInternalServerError, "list tenants failed")
 			return
 		}
@@ -132,6 +126,36 @@ ORDER BY t.id`)
 	if rows.Err() != nil {
 		httpx.Error(w, http.StatusInternalServerError, "list tenants failed")
 		return
+	}
+	rows.Close()
+
+	// COUNTED ONE TENANT AT A TIME, each inside that tenant's own scope.
+	//
+	// The obvious version — a single query with correlated subqueries — silently
+	// returns 0 vehicles for every tenant. `vehicles` has a STRICT RLS policy, so
+	// with no tenant set it matches nothing; `users` has the permissive
+	// login-bootstrap policy, so it counts correctly. The result looks plausible
+	// (real user counts, "no trucks yet" everywhere) which is exactly why it
+	// survived review: a customer whose import had just succeeded still read as
+	// empty.
+	//
+	// db.SystemTx would "fix" it by clearing the scope, and must not be used
+	// here — under an unset tenant those same login-bootstrap policies expose
+	// every tenant's users. N is the number of customers, so N round trips is
+	// cheap and stays honest about isolation.
+	for i := range items {
+		id := items[i].ID
+		if err := db.Tx(r.Context(), h.pool, id, func(tx pgx.Tx) error {
+			return tx.QueryRow(r.Context(), `
+SELECT (SELECT count(*) FROM users    WHERE tenant_id = $1),
+       (SELECT count(*) FROM vehicles WHERE tenant_id = $1)`, id).
+				Scan(&items[i].Users, &items[i].Vehicles)
+		}); err != nil {
+			log.Printf("tenants: counting tenant %d: %v", id, err)
+			// Left at zero rather than failing the page: one unreadable tenant
+			// should not hide the rest of the list.
+			continue
+		}
 	}
 	httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: int64(len(items))})
 }
