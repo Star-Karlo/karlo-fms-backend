@@ -620,6 +620,42 @@ definitions:
           type: integer
         type: array
     type: object
+  dashcam.AttachRequest:
+    properties:
+      vehicle_id:
+        type: integer
+      vss_device_id:
+        type: string
+    type: object
+  dashcam.DTO:
+    properties:
+      access_mode:
+        type: integer
+      channel_names:
+        type: string
+      channels:
+        type: integer
+      device_name:
+        type: string
+      device_type:
+        type: string
+      id:
+        type: integer
+      last_online_at:
+        type: string
+      last_sync_at:
+        type: string
+      license_plate:
+        type: string
+      online:
+        type: boolean
+      status:
+        type: string
+      vehicle_id:
+        type: integer
+      vss_device_id:
+        type: string
+    type: object
   document.CreateRequest:
     properties:
       expiry:
@@ -839,6 +875,15 @@ definitions:
       items:
         items:
           $ref: '#/definitions/apitoken.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-dashcam_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/dashcam.DTO'
         type: array
       total:
         type: integer
@@ -3014,6 +3059,171 @@ paths:
       summary: Save the current user's dashboard layout
       tags:
       - dashboard
+  /v1/dashcams:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-dashcam_DTO'
+      security:
+      - BearerAuth: []
+      summary: List dashcams linked to this tenant's vehicles
+      tags:
+      - dashcams
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: link
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dashcam.AttachRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dashcam.DTO'
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Link a VSS device to a vehicle
+      tags:
+      - dashcams
+  /v1/dashcams/{id}:
+    delete:
+      parameters:
+      - description: dashcam id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Unlink a dashcam
+      tags:
+      - dashcams
+  /v1/dashcams/{id}/live:
+    get:
+      description: Returns a short-lived VSS player URL. The browser loads it in an
+        iframe and streams from VSS directly.
+      parameters:
+      - description: dashcam id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Embeddable live-view URL for a dashcam
+      tags:
+      - dashcams
+  /v1/dashcams/{id}/playback:
+    get:
+      parameters:
+      - description: dashcam id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Embeddable playback URL for a time range
+      tags:
+      - dashcams
+  /v1/dashcams/available:
+    get:
+      description: Live from the camera platform, annotated with whether each device
+        is already linked here. This is what makes installation a pick-list rather
+        than typing device IDs.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Devices known to VSS, for the install flow
+      tags:
+      - dashcams
+  /v1/dashcams/sync:
+    post:
+      description: Pulls current status for every linked device. The background poller
+        does this on a timer; this endpoint is for the install flow, where waiting
+        a minute to see whether the unit came online is the whole question.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: integer
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Refresh cached online state from the camera platform
+      tags:
+      - dashcams
   /v1/documents:
     get:
       parameters:

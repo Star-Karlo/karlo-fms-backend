@@ -32,6 +32,7 @@ import (
 	"github.com/karlo/fms-backend/internal/controltower"
 	"github.com/karlo/fms-backend/internal/customreport"
 	"github.com/karlo/fms-backend/internal/dashboard"
+	"github.com/karlo/fms-backend/internal/dashcam"
 	"github.com/karlo/fms-backend/internal/document"
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/driverscore"
@@ -60,6 +61,7 @@ import (
 	"github.com/karlo/fms-backend/internal/trackinglink"
 	"github.com/karlo/fms-backend/internal/users"
 	"github.com/karlo/fms-backend/internal/vehicle"
+	"github.com/karlo/fms-backend/internal/vss"
 )
 
 func main() {
@@ -115,6 +117,8 @@ func main() {
 	maintenanceH := maintenance.NewHandler(pool)
 	scorecardH := scorecard.NewHandler(pool)
 	trackingH := trackinglink.NewHandler(pool, liveSvc)
+	vssClient := vss.New(vss.Config{BaseURL: cfg.VSSBaseURL, Username: cfg.VSSUsername, Password: cfg.VSSPassword})
+	dashcamH := dashcam.NewHandler(pool, vssClient)
 	usersH := users.NewHandler(pool)
 	tenantH := tenants.NewHandler(pool)
 	apiTokenH := apitoken.NewHandler(pool)
@@ -162,6 +166,9 @@ func main() {
 	// Background collector: engine hours, odometer sync, battery tamper and
 	// geofence enter/exit transitions from the live feed.
 	go telemetrysync.New(pool, tel, 2*time.Minute).Run(ctx)
+	// Keeps dashcam online/offline state fresh, the same shape as telemetry.
+	// A no-op when VSS is not configured.
+	go dashcam.NewPoller(pool, vssClient).Run(ctx)
 	// Nightly driver safety scoring from the daily rollup — needs the same
 	// fleet-history service the insights use. Recomputes the current month
 	// each run so scores stay current as days complete.
@@ -203,6 +210,7 @@ func main() {
 		scorecardH.Routes(pr)
 		trackingH.Routes(pr)
 		usersH.Routes(pr)
+		dashcamH.Routes(pr)
 		tenantH.Routes(pr)
 		apiTokenH.Routes(pr)
 		dashboardH.Routes(pr)
