@@ -2113,6 +2113,15 @@ definitions:
     type: object
   trackinglink.PublicVehicle:
     properties:
+      address:
+        description: |-
+          Address is the reverse-geocoded position, coarsest-last
+          ("Jl. Sudirman, Menteng, Jakarta Pusat, DKI Jakarta"), sent only when the
+          link enables the "location" field. Behind a toggle like every other
+          detail here: the map already shows WHERE a truck is, but a street name
+          spells out the delivery address in a way a pin does not, and a share link
+          is public to anyone holding the URL.
+        type: string
       bearing:
         description: heading for the truck icon
         type: number

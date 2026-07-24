@@ -7670,6 +7670,10 @@ const docTemplate = `{
         "trackinglink.PublicVehicle": {
             "type": "object",
             "properties": {
+                "address": {
+                    "description": "Address is the reverse-geocoded position, coarsest-last\n(\"Jl. Sudirman, Menteng, Jakarta Pusat, DKI Jakarta\"), sent only when the\nlink enables the \"location\" field. Behind a toggle like every other\ndetail here: the map already shows WHERE a truck is, but a street name\nspells out the delivery address in a way a pin does not, and a share link\nis public to anyone holding the URL.",
+                    "type": "string"
+                },
                 "bearing": {
                     "description": "heading for the truck icon",
                     "type": "number"

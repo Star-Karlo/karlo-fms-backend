@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -37,14 +38,14 @@ type DTO struct {
 
 // WriteRequest is the create/update body.
 type WriteRequest struct {
-	Name        string          `json:"name"`
-	Note        *string         `json:"note"`
-	Status      *string         `json:"status"`
-	DurationDays int            `json:"duration_days"`
-	DurationHours int           `json:"duration_hours"` // takes precedence over days when set
-	ExpiresAt   *string         `json:"expires_at"`
-	ShowFields  json.RawMessage `json:"show_fields"`
-	VehicleIDs  []int64         `json:"vehicle_ids"`
+	Name          string          `json:"name"`
+	Note          *string         `json:"note"`
+	Status        *string         `json:"status"`
+	DurationDays  int             `json:"duration_days"`
+	DurationHours int             `json:"duration_hours"` // takes precedence over days when set
+	ExpiresAt     *string         `json:"expires_at"`
+	ShowFields    json.RawMessage `json:"show_fields"`
+	VehicleIDs    []int64         `json:"vehicle_ids"`
 }
 
 func fromRow(l store.TrackingLink) DTO {
@@ -312,6 +313,13 @@ type PublicVehicle struct {
 	LastSeen *string  `json:"last_seen,omitempty"`
 	Machine  *bool    `json:"machine_on,omitempty"`
 	Online   bool     `json:"online"`
+	// Address is the reverse-geocoded position, coarsest-last
+	// ("Jl. Sudirman, Menteng, Jakarta Pusat, DKI Jakarta"), sent only when the
+	// link enables the "location" field. Behind a toggle like every other
+	// detail here: the map already shows WHERE a truck is, but a street name
+	// spells out the delivery address in a way a pin does not, and a share link
+	// is public to anyone holding the URL.
+	Address *string `json:"address,omitempty"`
 }
 
 // PublicResponse is the share-page payload.
@@ -373,6 +381,11 @@ func (h *Handler) public(w http.ResponseWriter, r *http.Request) {
 				t := v.Position.Time.Format(time.RFC3339)
 				pv.LastSeen = &t
 			}
+			if show["location"] {
+				if a := formatAddress(v.Position); a != "" {
+					pv.Address = &a
+				}
+			}
 		}
 		if show["driver"] {
 			pv.Driver = v.Driver.Name
@@ -380,6 +393,31 @@ func (h *Handler) public(w http.ResponseWriter, r *http.Request) {
 		resp.Vehicles = append(resp.Vehicles, pv)
 	}
 	httpx.JSON(w, http.StatusOK, resp)
+}
+
+// formatAddress joins the reverse-geocoded parts finest-first, skipping the
+// ones the geocoder could not resolve.
+//
+// Kabupaten is deliberately omitted when Kota is present: for a city address
+// the two are the same place under different administrative names, and printing
+// both reads as a mistake ("Jakarta Pusat, Jakarta Pusat"). Ordering matches
+// liveview's trip-point address so the share page and the trip history describe
+// a position the same way.
+func formatAddress(p *liveview.Position) string {
+	if p == nil {
+		return ""
+	}
+	area := p.Kota
+	if area == "" {
+		area = p.Kabupaten
+	}
+	parts := make([]string, 0, 4)
+	for _, s := range []string{p.Jalan, p.Kecamatan, area, p.Provinsi} {
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func ifaceStr(s *string) interface{} {
