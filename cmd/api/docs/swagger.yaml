@@ -924,6 +924,15 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-tenants_DTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/tenants.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
   github_com_karlo_fms-backend_internal_platform_httpx.List-tracker_DTO:
     properties:
       items:
@@ -1991,6 +2000,43 @@ definitions:
       odometer_km:
         description: latest telemetry odometer
         type: number
+    type: object
+  tenants.CreateRequest:
+    properties:
+      admin_email:
+        type: string
+      admin_name:
+        type: string
+      admin_password:
+        type: string
+      name:
+        type: string
+      slug:
+        type: string
+    type: object
+  tenants.CreateResponse:
+    properties:
+      admin_email:
+        type: string
+      admin_id:
+        type: integer
+      tenant:
+        $ref: '#/definitions/tenants.DTO'
+    type: object
+  tenants.DTO:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      slug:
+        type: string
+      users:
+        type: integer
+      vehicles:
+        type: integer
     type: object
   tracker.CreateRequest:
     properties:
@@ -4418,6 +4464,70 @@ paths:
       summary: Delete a service schedule
       tags:
       - maintenance
+  /v1/tenants:
+    get:
+      description: Every customer on the platform, with user and vehicle counts.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-tenants_DTO'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List tenants (platform admin)
+      tags:
+      - tenants
+    post:
+      consumes:
+      - application/json
+      description: Creates the customer, its administrator login and a default fleet
+        group in one transaction. Replaces running seed/new-tenant.sql against the
+        database by hand.
+      parameters:
+      - description: Tenant and first administrator
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tenants.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/tenants.CreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Provision a tenant and its first admin (platform admin)
+      tags:
+      - tenants
   /v1/trackers:
     get:
       parameters:

@@ -2,14 +2,27 @@ package auth
 
 import "github.com/golang-jwt/jwt/v5"
 
-// Role hierarchy: admin ⊇ manager ⊇ operator.
+// Role hierarchy: platform_admin ⊇ admin ⊇ manager ⊇ operator.
+//
+// RolePlatformAdmin is the operator of the SERVICE, not of a fleet: it is the
+// only role permitted to create tenants and provision their first login.
+//
+// It has to sit above admin rather than reuse it. Every customer's own
+// administrator holds RoleAdmin — gating tenant creation on that would let one
+// customer provision tenants and users for the whole platform, which is a
+// privilege escalation across the isolation boundary the whole RLS design
+// exists to enforce.
+//
+// The users.role CHECK constraint is widened to allow it (migration 0027);
+// the first platform admin is promoted there too.
 const (
-	RoleOperator = "operator"
-	RoleManager  = "manager"
-	RoleAdmin    = "admin"
+	RoleOperator      = "operator"
+	RoleManager       = "manager"
+	RoleAdmin         = "admin"
+	RolePlatformAdmin = "platform_admin"
 )
 
-var roleRank = map[string]int{RoleOperator: 1, RoleManager: 2, RoleAdmin: 3}
+var roleRank = map[string]int{RoleOperator: 1, RoleManager: 2, RoleAdmin: 3, RolePlatformAdmin: 4}
 
 // AtLeast reports whether have satisfies the want role (by hierarchy).
 func AtLeast(have, want string) bool {

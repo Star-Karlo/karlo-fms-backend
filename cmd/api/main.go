@@ -55,6 +55,7 @@ import (
 	"github.com/karlo/fms-backend/internal/scorecard"
 	"github.com/karlo/fms-backend/internal/telemetry"
 	"github.com/karlo/fms-backend/internal/telemetrysync"
+	"github.com/karlo/fms-backend/internal/tenants"
 	"github.com/karlo/fms-backend/internal/tracker"
 	"github.com/karlo/fms-backend/internal/trackinglink"
 	"github.com/karlo/fms-backend/internal/users"
@@ -115,6 +116,7 @@ func main() {
 	scorecardH := scorecard.NewHandler(pool)
 	trackingH := trackinglink.NewHandler(pool, liveSvc)
 	usersH := users.NewHandler(pool)
+	tenantH := tenants.NewHandler(pool)
 	apiTokenH := apitoken.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)
 	// AI dashboard composition (Amazon Nova Pro on Bedrock). A missing or
@@ -201,6 +203,7 @@ func main() {
 		scorecardH.Routes(pr)
 		trackingH.Routes(pr)
 		usersH.Routes(pr)
+		tenantH.Routes(pr)
 		apiTokenH.Routes(pr)
 		dashboardH.Routes(pr)
 		geofenceH.Routes(pr)
