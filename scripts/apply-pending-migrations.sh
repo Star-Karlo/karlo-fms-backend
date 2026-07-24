@@ -79,14 +79,53 @@ cd "$(dirname "$0")/.."
 # --drivers <csv> runs ONLY the driver import. It reuses this script for the
 # security-group open/revoke and the Secrets Manager lookup, which is the part
 # worth not repeating — the import itself is a separate command.
-if [ "${1:-}" = "--drivers" ]; then
-  CSV="${2:?usage: $0 --drivers <path-to-csv>}"
-  echo "==> importing drivers from ${CSV}"
+# --tenants answers "which id do I import into?" — read-only.
+if [ "${1:-}" = "--tenants" ]; then
+  psql "$DB_URL" -X -c \
+    "SELECT t.id, t.slug, t.name,
+            (SELECT count(*) FROM vehicles v WHERE v.tenant_id=t.id) AS trucks,
+            (SELECT count(*) FROM employees e WHERE e.tenant_id=t.id) AS drivers
+     FROM tenants t ORDER BY t.id;"
+  exit 0
+fi
+
+# --trucks / --drivers <csv> <tenant-id>
+#
+# The tenant is REQUIRED and no longer defaults to 1. It used to, from when
+# Karlo was the only customer — importing BRT's fleet with that default would
+# have silently filed 162 trucks under Karlo, visible to the wrong people and
+# tedious to unpick. Trucks must be imported before drivers: a driver is
+# attached to its vehicle by IMEI, so with no truck yet every row is skipped.
+if [ "${1:-}" = "--trucks" ] || [ "${1:-}" = "--drivers" ]; then
+  WHAT="${1#--}"
+  CSV="${2:?usage: $0 --${WHAT} <path-to-csv> <tenant-id>}"
+  TENANT="${3:?usage: $0 --${WHAT} <path-to-csv> <tenant-id>   (list ids with: $0 --tenants)}"
+  [ -f "$CSV" ] || { echo "no such file: $CSV"; exit 1; }
+  case "$TENANT" in ''|*[!0-9]*) echo "tenant-id must be a number (see: $0 --tenants)"; exit 1;; esac
+
+  TNAME="$(psql "$DB_URL" -X -q -tA -v id="$TENANT" <<'SQL'
+SELECT name FROM tenants WHERE id = :'id'::bigint;
+SQL
+)"
+  [ -n "$TNAME" ] || { echo "no tenant with id ${TENANT} (see: $0 --tenants)"; exit 1; }
+  echo "==> importing ${WHAT} from ${CSV} into tenant ${TENANT} (${TNAME})"
+
+  # KEYWORD DSN, not a URL: RDS passwords contain / + = # which are structural
+  # in a URL's userinfo and make the Go client fail with "invalid userinfo".
+  CMD=import; [ "$WHAT" = "drivers" ] && CMD=import-drivers
   DATABASE_URL="host=${HOST} port=${PORT} user=${USER} password=${PASS} dbname=fms_app sslmode=require" \
-    go run ./cmd/import-drivers -csv "$CSV" -tenant 1
+    go run "./cmd/${CMD}" -csv "$CSV" -tenant "$TENANT"
+
+  echo "==> ${TNAME} now holds:"
+  psql "$DB_URL" -X -v id="$TENANT" <<'SQL'
+SELECT (SELECT count(*) FROM vehicles  WHERE tenant_id = :'id'::bigint) AS trucks,
+       (SELECT count(*) FROM vehicles  WHERE tenant_id = :'id'::bigint AND tracker_id IS NOT NULL) AS with_tracker,
+       (SELECT count(*) FROM vehicles  WHERE tenant_id = :'id'::bigint AND current_driver_id IS NOT NULL) AS with_driver,
+       (SELECT count(*) FROM employees WHERE tenant_id = :'id'::bigint) AS drivers;
+SQL
   echo
   echo "############################################################"
-  echo "#  SUCCESS — drivers imported.                             #"
+  echo "#  SUCCESS — ${WHAT} imported into ${TNAME}."
   echo "############################################################"
   exit 0
 fi
