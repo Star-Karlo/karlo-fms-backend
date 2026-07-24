@@ -91,10 +91,56 @@ if [ "${1:-}" = "--drivers" ]; then
   exit 0
 fi
 
+# --who answers "which account do I sign in with?" without changing anything.
+# Read-only, so it is safe to run first when the answer is not obvious.
+if [ "${1:-}" = "--who" ]; then
+  psql "$DB_URL" -X -c \
+    "SELECT u.email, coalesce(u.full_name,'—') AS name, t.name AS tenant, u.role, u.status
+     FROM users u JOIN tenants t ON t.id = u.tenant_id ORDER BY t.id, u.id;"
+  exit 0
+fi
+
+# --promote <email> is the tenant-provisioning bootstrap: apply 0027 and grant
+# that account platform_admin, which is the one thing that cannot be done from
+# the Customers page itself (nobody can reach it until somebody holds the role).
+# Skips the fuel load entirely — this is a 5-second job, not a data import.
+if [ "${1:-}" = "--promote" ]; then
+  EMAIL="${2:?usage: $0 --promote <email>}"
+  echo "==> applying 0027_platform_admin"
+  psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f db/migrations/0027_platform_admin.sql
+
+  echo "==> promoting ${EMAIL}"
+  # RETURNING rather than a DO block: psql does not interpolate :'email' inside
+  # a dollar-quoted body, so the plpgsql form would fail to substitute at all.
+  # -v + :'email' also lets psql do the quoting, so an odd address cannot break
+  # the statement. Empty output means no such user — reported rather than
+  # passing silently, which would look identical to success and leave the page
+  # at 403.
+  PROMOTED="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -X -tA -v email="$EMAIL" \
+    -c "UPDATE users SET role = 'platform_admin', updated_at = now()
+        WHERE email = :'email' RETURNING email")"
+  if [ -z "$PROMOTED" ]; then
+    echo
+    echo "  No account with email ${EMAIL}."
+    echo "  Run '$0 --who' to list the accounts that exist."
+    exit 1
+  fi
+
+  echo "==> platform administrators now:"
+  psql "$DB_URL" -X -c \
+    "SELECT u.email, t.name AS tenant, u.role FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE u.role='platform_admin';"
+  echo
+  echo "############################################################"
+  echo "#  SUCCESS — sign in as ${EMAIL} and open                  #"
+  echo "#  Configuration -> Customers.                             #"
+  echo "############################################################"
+  exit 0
+fi
+
 if [ "${1:-}" = "--import-only" ]; then
   echo "==> skipping migrations (--import-only)"
 else
-for f in 0024_fuel_stations 0025_company_profile 0026_hangars; do
+for f in 0024_fuel_stations 0025_company_profile 0026_hangars 0027_platform_admin; do
   echo "==> applying ${f}"
   # ON_ERROR_STOP so a failure halts here rather than leaving half a schema.
   # Every one of these migrations is written to be re-runnable.
