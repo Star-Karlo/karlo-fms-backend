@@ -80,11 +80,19 @@ cd "$(dirname "$0")/.."
 # security-group open/revoke and the Secrets Manager lookup, which is the part
 # worth not repeating — the import itself is a separate command.
 # --tenants answers "which id do I import into?" — read-only.
+#
+# Counts the LINKAGE, not just the row totals. An import can create every truck
+# and every driver and still leave them unconnected — if the IMEIs did not match
+# there is no tracker and no driver on the vehicle, and the Drivers tab stays
+# empty while the row counts look perfect.
 if [ "${1:-}" = "--tenants" ]; then
   psql "$DB_URL" -X -c \
     "SELECT t.id, t.slug, t.name,
             (SELECT count(*) FROM vehicles v WHERE v.tenant_id=t.id) AS trucks,
-            (SELECT count(*) FROM employees e WHERE e.tenant_id=t.id) AS drivers
+            (SELECT count(*) FROM vehicles v WHERE v.tenant_id=t.id AND v.tracker_id IS NOT NULL) AS tracked,
+            (SELECT count(*) FROM employees e WHERE e.tenant_id=t.id) AS drivers,
+            (SELECT count(*) FROM vehicles v WHERE v.tenant_id=t.id AND v.current_driver_id IS NOT NULL) AS driven,
+            (SELECT count(*) FROM documents d WHERE d.tenant_id=t.id) AS docs
      FROM tenants t ORDER BY t.id;"
   exit 0
 fi
