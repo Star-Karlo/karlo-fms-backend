@@ -36,10 +36,13 @@ type DTO struct {
 	ID           int64   `json:"id"`
 	VehicleID    *int64  `json:"vehicle_id"`
 	LicensePlate *string `json:"license_plate"`
+	VehicleType  *string `json:"vehicle_type"`
+	DriverName   *string `json:"driver_name"`
 	VSSDeviceID  string  `json:"vss_device_id"`
 	DeviceName   *string `json:"device_name"`
 	Channels     int     `json:"channels"`
 	ChannelNames *string `json:"channel_names"`
+	Online       bool    `json:"online"`
 }
 
 // AttachRequest links a device to a vehicle.
@@ -93,8 +96,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	var items []DTO
 	err := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
 		rows, err := tx.Query(r.Context(), `
-SELECT d.id, d.vehicle_id, v.license_plate, d.vss_device_id, d.device_name, d.channels, d.channel_names
-FROM dashcams d LEFT JOIN vehicles v ON v.id = d.vehicle_id
+SELECT d.id, d.vehicle_id, v.license_plate, v.vehicle_type, e.full_name,
+       d.vss_device_id, d.device_name, d.channels, d.channel_names
+FROM dashcams d
+LEFT JOIN vehicles v  ON v.id = d.vehicle_id
+LEFT JOIN employees e ON e.id = v.current_driver_id
 ORDER BY v.license_plate NULLS LAST, d.vss_device_id`)
 		if err != nil {
 			return err
@@ -103,7 +109,8 @@ ORDER BY v.license_plate NULLS LAST, d.vss_device_id`)
 		items = []DTO{}
 		for rows.Next() {
 			var d DTO
-			if err := rows.Scan(&d.ID, &d.VehicleID, &d.LicensePlate, &d.VSSDeviceID, &d.DeviceName, &d.Channels, &d.ChannelNames); err != nil {
+			if err := rows.Scan(&d.ID, &d.VehicleID, &d.LicensePlate, &d.VehicleType, &d.DriverName,
+				&d.VSSDeviceID, &d.DeviceName, &d.Channels, &d.ChannelNames); err != nil {
 				return err
 			}
 			items = append(items, d)
@@ -113,6 +120,34 @@ ORDER BY v.license_plate NULLS LAST, d.vss_device_id`)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "list dashcams failed")
 		return
+	}
+	// Overlay live device metadata from the telemetry service (best-effort): a
+	// failure leaves the linked snapshot in place and everything "offline"
+	// rather than failing the whole list.
+	//
+	// VSS is the source of truth for channel count and names, so trust its live
+	// values over the snapshot taken at link time — if a device's channel config
+	// changes in VSS, the picker follows without a re-link. Channels VSS reports
+	// but has no camera on simply fail to stream in the grid.
+	if devs, derr := h.tel.Dashcams(r.Context(), ""); derr == nil {
+		byID := make(map[string]telemetry.Dashcam, len(devs))
+		for _, d := range devs {
+			byID[d.DeviceID] = d
+		}
+		for i := range items {
+			d, ok := byID[items[i].VSSDeviceID]
+			if !ok {
+				continue // device not currently visible to VSS — keep the snapshot
+			}
+			items[i].Online = d.Online
+			if d.Channels > 0 {
+				items[i].Channels = d.Channels
+			}
+			if d.ChannelNames != "" {
+				cn := d.ChannelNames
+				items[i].ChannelNames = &cn
+			}
+		}
 	}
 	httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: int64(len(items))})
 }
