@@ -5,6 +5,7 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -180,6 +181,132 @@ func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("telemetry %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return json.NewDecoder(resp.Body).Decode(dst)
+}
+
+// ---- dashcams (fronted by the telemetry service, which talks to VSS) --------
+//
+// FMS never calls VSS. These methods call the telemetry service's /v1/dashcams
+// endpoints; the service holds the VSS credentials and does the video work.
+
+// Dashcam is a device as VSS knows it, relayed by the telemetry service.
+type Dashcam struct {
+	DeviceID     string `json:"device_id"`
+	DeviceName   string `json:"device_name"`
+	DeviceType   string `json:"device_type"`
+	Channels     int    `json:"channels"`
+	ChannelNames string `json:"channel_names"`
+	Online       bool   `json:"online"`
+	AccessMode   int    `json:"access_mode"`
+}
+
+// DashcamClip is one SD-card clip with its derived coordinate.
+type DashcamClip struct {
+	Channel  int      `json:"channel"`
+	Start    string   `json:"start"`
+	Stop     string   `json:"stop"`
+	Duration int      `json:"duration"`
+	Size     int64    `json:"size"`
+	Path     string   `json:"path"`
+	Lat      *float64 `json:"lat"`
+	Lon      *float64 `json:"lon"`
+}
+
+// Dashcams lists devices the camera platform knows about.
+func (c *Client) Dashcams(ctx context.Context, q string) ([]Dashcam, error) {
+	path := "/v1/dashcams"
+	if q != "" {
+		path += "?q=" + url.QueryEscape(q)
+	}
+	var out []Dashcam
+	return out, c.getJSON(ctx, path, &out)
+}
+
+// DashcamVideos lists a device's clips for a date (YYYY-MM-DD).
+func (c *Client) DashcamVideos(ctx context.Context, deviceID, date, channel string) ([]DashcamClip, error) {
+	q := url.Values{}
+	q.Set("date", date)
+	if channel != "" {
+		q.Set("channel", channel)
+	}
+	var out []DashcamClip
+	return out, c.getJSON(ctx, "/v1/dashcams/"+url.PathEscape(deviceID)+"/videos?"+q.Encode(), &out)
+}
+
+// DashcamLiveURL returns the embeddable live-view URL for a device.
+func (c *Client) DashcamLiveURL(ctx context.Context, deviceID, channel, stream string) (string, error) {
+	q := url.Values{}
+	if channel != "" {
+		q.Set("channel", channel)
+	}
+	if stream != "" {
+		q.Set("stream", stream)
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := c.getJSON(ctx, "/v1/dashcams/"+url.PathEscape(deviceID)+"/live?"+q.Encode(), &out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
+// DashcamDownloadReq asks the telemetry service to pull one clip to S3.
+type DashcamDownloadReq struct {
+	Channel int    `json:"channel"`
+	Path    string `json:"path"`
+	Start   string `json:"start"`
+	Stop    string `json:"stop"`
+}
+
+// StartDashcamDownload kicks off an async clip pull; returns the job id.
+func (c *Client) StartDashcamDownload(ctx context.Context, deviceID string, req DashcamDownloadReq) (string, error) {
+	var out struct {
+		JobID string `json:"job_id"`
+	}
+	if err := c.postJSON(ctx, "/v1/dashcams/"+url.PathEscape(deviceID)+"/download", req, &out); err != nil {
+		return "", err
+	}
+	return out.JobID, nil
+}
+
+// DashcamDownloadStatus polls a pull job. When status is "done" the s3_key is set.
+type DashcamDownloadStatus struct {
+	Status string `json:"status"`
+	S3Key  string `json:"s3_key"`
+	Bucket string `json:"bucket"`
+	Error  string `json:"error"`
+}
+
+// DashcamDownloadStatus polls a download job.
+func (c *Client) DashcamDownloadStatus(ctx context.Context, jobID string) (*DashcamDownloadStatus, error) {
+	var out DashcamDownloadStatus
+	return &out, c.getJSON(ctx, "/v1/dashcams/downloads/"+url.PathEscape(jobID), &out)
+}
+
+// postJSON POSTs a JSON body and decodes the JSON response, with the ingest key.
+func (c *Client) postJSON(ctx context.Context, path string, body, dst any) error {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.key != "" {
+		req.Header.Set("X-Ingest-Key", c.key)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("telemetry %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	return json.NewDecoder(resp.Body).Decode(dst)
 }

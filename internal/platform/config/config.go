@@ -51,12 +51,6 @@ type Config struct {
 	// leaves routing disabled and every other endpoint working.
 	RoutingProvider string
 	GeoapifyAPIKey  string
-	// Gtrack VSS dashcam platform. Empty disables the camera endpoints, which
-	// then answer 503 with the variable names rather than dialling an empty host.
-	VSSBaseURL  string
-	VSSUsername string
-	VSSPassword string
-
 	GeoapifyBaseURL string
 	ORSAPIKey       string
 	ORSBaseURL      string
@@ -78,9 +72,6 @@ func Load() Config {
 		DocumentsBucket: Env("DOCUMENTS_BUCKET", ""),
 		RoutingProvider: Env("ROUTING_PROVIDER", "geoapify"),
 		GeoapifyAPIKey:  Env("GEOAPIFY_API_KEY", ""),
-		VSSBaseURL:      Env("VSS_BASE_URL", ""),
-		VSSUsername:     Env("VSS_USERNAME", ""),
-		VSSPassword:     Env("VSS_PASSWORD", ""),
 		GeoapifyBaseURL: Env("GEOAPIFY_BASE_URL", ""),
 		ORSAPIKey:       Env("ORS_API_KEY", ""),
 		ORSBaseURL:      Env("ORS_BASE_URL", ""),

@@ -1098,7 +1098,7 @@
                 "tags": [
                     "dashcams"
                 ],
-                "summary": "List dashcams linked to this tenant's vehicles",
+                "summary": "Dashcams linked to this tenant's vehicles",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1123,7 +1123,7 @@
                 "tags": [
                     "dashcams"
                 ],
-                "summary": "Link a VSS device to a vehicle",
+                "summary": "Link a device to a vehicle",
                 "parameters": [
                     {
                         "description": "link",
@@ -1161,14 +1161,14 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Live from the camera platform, annotated with whether each device is already linked here. This is what makes installation a pick-list rather than typing device IDs.",
+                "description": "Live from the telemetry service, annotated with whether each device is already linked here.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "dashcams"
                 ],
-                "summary": "Devices known to VSS, for the install flow",
+                "summary": "Devices the camera platform sees (install pick-list)",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1180,8 +1180,8 @@
                             }
                         }
                     },
-                    "503": {
-                        "description": "Service Unavailable",
+                    "502": {
+                        "description": "Bad Gateway",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1192,29 +1192,36 @@
                 }
             }
         },
-        "/v1/dashcams/sync": {
-            "post": {
+        "/v1/dashcams/downloads/{jobId}": {
+            "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Pulls current status for every linked device. The background poller does this on a timer; this endpoint is for the install flow, where waiting a minute to see whether the unit came online is the whole question.",
+                "description": "Relays the telemetry job status. On \"done\" the clip is recorded in video_clips and its id is returned.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "dashcams"
                 ],
-                "summary": "Refresh cached online state from the camera platform",
+                "summary": "Poll a save-to-S3 job",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "job id",
+                        "name": "jobId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "integer"
-                            }
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -1247,21 +1254,24 @@
                 }
             }
         },
-        "/v1/dashcams/{id}/live": {
-            "get": {
+        "/v1/dashcams/{id}/download": {
+            "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a short-lived VSS player URL. The browser loads it in an iframe and streams from VSS directly.",
+                "description": "Asks the telemetry service to pull the clip to S3; returns a job id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records the clip in video_clips.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "dashcams"
                 ],
-                "summary": "Embeddable live-view URL for a dashcam",
+                "summary": "Save a clip to S3 (async)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -1269,20 +1279,20 @@
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "clip",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dashcam.DownloadRequest"
+                        }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
+                    "202": {
+                        "description": "Accepted",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1293,7 +1303,7 @@
                 }
             }
         },
-        "/v1/dashcams/{id}/playback": {
+        "/v1/dashcams/{id}/live": {
             "get": {
                 "security": [
                     {
@@ -1306,27 +1316,13 @@
                 "tags": [
                     "dashcams"
                 ],
-                "summary": "Embeddable playback URL for a time range",
+                "summary": "Live-view URL for a dashcam",
                 "parameters": [
                     {
                         "type": "integer",
                         "description": "dashcam id",
                         "name": "id",
                         "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "RFC3339",
-                        "name": "from",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "RFC3339",
-                        "name": "to",
-                        "in": "query",
                         "required": true
                     }
                 ],
@@ -1337,6 +1333,49 @@
                             "type": "object",
                             "additionalProperties": {
                                 "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/dashcams/{id}/videos": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashcams"
+                ],
+                "summary": "A dashcam's clips for a date, with coordinates",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "dashcam id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "YYYY-MM-DD",
+                        "name": "date",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/telemetry.DashcamClip"
                             }
                         }
                     }
@@ -4878,6 +4917,38 @@
                     }
                 }
             }
+        },
+        "/v1/video-clips": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashcams"
+                ],
+                "summary": "Saved clips (accident evidence)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "filter by vehicle",
+                        "name": "vehicle_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-dashcam_ClipDTO"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -5778,12 +5849,56 @@
                 }
             }
         },
+        "dashcam.ClipDTO": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "integer"
+                },
+                "clip_start": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "s3_bucket": {
+                    "type": "string"
+                },
+                "s3_key": {
+                    "type": "string"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                },
+                "vss_device_id": {
+                    "type": "string"
+                }
+            }
+        },
         "dashcam.DTO": {
             "type": "object",
             "properties": {
-                "access_mode": {
-                    "type": "integer"
-                },
                 "channel_names": {
                     "type": "string"
                 },
@@ -5793,31 +5908,42 @@
                 "device_name": {
                     "type": "string"
                 },
-                "device_type": {
-                    "type": "string"
-                },
                 "id": {
                     "type": "integer"
                 },
-                "last_online_at": {
-                    "type": "string"
-                },
-                "last_sync_at": {
-                    "type": "string"
-                },
                 "license_plate": {
-                    "type": "string"
-                },
-                "online": {
-                    "type": "boolean"
-                },
-                "status": {
                     "type": "string"
                 },
                 "vehicle_id": {
                     "type": "integer"
                 },
                 "vss_device_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dashcam.DownloadRequest": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "integer"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "start": {
+                    "type": "string"
+                },
+                "stop": {
                     "type": "string"
                 }
             }
@@ -6152,6 +6278,20 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/apitoken.DTO"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_karlo_fms-backend_internal_platform_httpx.List-dashcam_ClipDTO": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dashcam.ClipDTO"
                     }
                 },
                 "total": {
@@ -7780,6 +7920,35 @@
                 },
                 "weight": {
                     "type": "integer"
+                }
+            }
+        },
+        "telemetry.DashcamClip": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "integer"
+                },
+                "duration": {
+                    "type": "integer"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "start": {
+                    "type": "string"
+                },
+                "stop": {
+                    "type": "string"
                 }
             }
         },

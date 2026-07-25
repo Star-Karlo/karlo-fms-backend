@@ -627,33 +627,69 @@ definitions:
       vss_device_id:
         type: string
     type: object
+  dashcam.ClipDTO:
+    properties:
+      channel:
+        type: integer
+      clip_start:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: integer
+      lat:
+        type: number
+      license_plate:
+        type: string
+      lon:
+        type: number
+      note:
+        type: string
+      reason:
+        type: string
+      s3_bucket:
+        type: string
+      s3_key:
+        type: string
+      size_bytes:
+        type: integer
+      vehicle_id:
+        type: integer
+      vss_device_id:
+        type: string
+    type: object
   dashcam.DTO:
     properties:
-      access_mode:
-        type: integer
       channel_names:
         type: string
       channels:
         type: integer
       device_name:
         type: string
-      device_type:
-        type: string
       id:
         type: integer
-      last_online_at:
-        type: string
-      last_sync_at:
-        type: string
       license_plate:
-        type: string
-      online:
-        type: boolean
-      status:
         type: string
       vehicle_id:
         type: integer
       vss_device_id:
+        type: string
+    type: object
+  dashcam.DownloadRequest:
+    properties:
+      channel:
+        type: integer
+      lat:
+        type: number
+      lon:
+        type: number
+      note:
+        type: string
+      path:
+        type: string
+      start:
+        type: string
+      stop:
         type: string
     type: object
   document.CreateRequest:
@@ -875,6 +911,15 @@ definitions:
       items:
         items:
           $ref: '#/definitions/apitoken.DTO'
+        type: array
+      total:
+        type: integer
+    type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-dashcam_ClipDTO:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/dashcam.ClipDTO'
         type: array
       total:
         type: integer
@@ -2019,6 +2064,25 @@ definitions:
       weight:
         type: integer
     type: object
+  telemetry.DashcamClip:
+    properties:
+      channel:
+        type: integer
+      duration:
+        type: integer
+      lat:
+        type: number
+      lon:
+        type: number
+      path:
+        type: string
+      size:
+        type: integer
+      start:
+        type: string
+      stop:
+        type: string
+    type: object
   telemetrysync.StateResponse:
     properties:
       battery_v:
@@ -3070,7 +3134,7 @@ paths:
             $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-dashcam_DTO'
       security:
       - BearerAuth: []
-      summary: List dashcams linked to this tenant's vehicles
+      summary: Dashcams linked to this tenant's vehicles
       tags:
       - dashcams
     post:
@@ -3098,7 +3162,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Link a VSS device to a vehicle
+      summary: Link a device to a vehicle
       tags:
       - dashcams
   /v1/dashcams/{id}:
@@ -3117,37 +3181,40 @@ paths:
       summary: Unlink a dashcam
       tags:
       - dashcams
-  /v1/dashcams/{id}/live:
-    get:
-      description: Returns a short-lived VSS player URL. The browser loads it in an
-        iframe and streams from VSS directly.
+  /v1/dashcams/{id}/download:
+    post:
+      consumes:
+      - application/json
+      description: Asks the telemetry service to pull the clip to S3; returns a job
+        id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records
+        the clip in video_clips.
       parameters:
       - description: dashcam id
         in: path
         name: id
         required: true
         type: integer
+      - description: clip
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/dashcam.DownloadRequest'
       produces:
       - application/json
       responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "503":
-          description: Service Unavailable
+        "202":
+          description: Accepted
           schema:
             additionalProperties:
               type: string
             type: object
       security:
       - BearerAuth: []
-      summary: Embeddable live-view URL for a dashcam
+      summary: Save a clip to S3 (async)
       tags:
       - dashcams
-  /v1/dashcams/{id}/playback:
+  /v1/dashcams/{id}/live:
     get:
       parameters:
       - description: dashcam id
@@ -3155,16 +3222,6 @@ paths:
         name: id
         required: true
         type: integer
-      - description: RFC3339
-        in: query
-        name: from
-        required: true
-        type: string
-      - description: RFC3339
-        in: query
-        name: to
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -3176,14 +3233,40 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Embeddable playback URL for a time range
+      summary: Live-view URL for a dashcam
+      tags:
+      - dashcams
+  /v1/dashcams/{id}/videos:
+    get:
+      parameters:
+      - description: dashcam id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: YYYY-MM-DD
+        in: query
+        name: date
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/telemetry.DashcamClip'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: A dashcam's clips for a date, with coordinates
       tags:
       - dashcams
   /v1/dashcams/available:
     get:
-      description: Live from the camera platform, annotated with whether each device
-        is already linked here. This is what makes installation a pick-list rather
-        than typing device IDs.
+      description: Live from the telemetry service, annotated with whether each device
+        is already linked here.
       produces:
       - application/json
       responses:
@@ -3194,34 +3277,38 @@ paths:
               additionalProperties: true
               type: object
             type: array
-        "503":
-          description: Service Unavailable
+        "502":
+          description: Bad Gateway
           schema:
             additionalProperties:
               type: string
             type: object
       security:
       - BearerAuth: []
-      summary: Devices known to VSS, for the install flow
+      summary: Devices the camera platform sees (install pick-list)
       tags:
       - dashcams
-  /v1/dashcams/sync:
-    post:
-      description: Pulls current status for every linked device. The background poller
-        does this on a timer; this endpoint is for the install flow, where waiting
-        a minute to see whether the unit came online is the whole question.
+  /v1/dashcams/downloads/{jobId}:
+    get:
+      description: Relays the telemetry job status. On "done" the clip is recorded
+        in video_clips and its id is returned.
+      parameters:
+      - description: job id
+        in: path
+        name: jobId
+        required: true
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              type: integer
+            additionalProperties: true
             type: object
       security:
       - BearerAuth: []
-      summary: Refresh cached online state from the camera platform
+      summary: Poll a save-to-S3 job
       tags:
       - dashcams
   /v1/documents:
@@ -5452,6 +5539,25 @@ paths:
         battery)
       tags:
       - live-view
+  /v1/video-clips:
+    get:
+      parameters:
+      - description: filter by vehicle
+        in: query
+        name: vehicle_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-dashcam_ClipDTO'
+      security:
+      - BearerAuth: []
+      summary: Saved clips (accident evidence)
+      tags:
+      - dashcams
 securityDefinitions:
   BearerAuth:
     description: Type "Bearer" followed by a space and the access token.
