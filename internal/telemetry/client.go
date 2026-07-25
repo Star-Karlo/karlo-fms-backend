@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -309,4 +310,27 @@ func (c *Client) postJSON(ctx context.Context, path string, body, dst any) error
 		return fmt.Errorf("telemetry %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	return json.NewDecoder(resp.Body).Decode(dst)
+}
+
+// DashcamAlarm is one VSS event relayed by the telemetry service.
+type DashcamAlarm struct {
+	ID         int64    `json:"id"`
+	DeviceID   string   `json:"device_id"`
+	AlarmID    string   `json:"alarm_id"`
+	Code       int      `json:"code"`
+	OccurredAt string   `json:"occurred_at"`
+	Lat        *float64 `json:"lat"`
+	Lon        *float64 `json:"lon"`
+	Speed      *float64 `json:"speed"`
+}
+
+// DashcamAlarms returns alarms with id greater than since, id-ascending.
+func (c *Client) DashcamAlarms(ctx context.Context, since int64, limit int) ([]DashcamAlarm, error) {
+	q := url.Values{}
+	q.Set("since", strconv.FormatInt(since, 10))
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	var out []DashcamAlarm
+	return out, c.getJSON(ctx, "/v1/dashcams/alarms?"+q.Encode(), &out)
 }
