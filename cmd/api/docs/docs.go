@@ -5915,14 +5915,23 @@ const docTemplate = `{
                 "device_name": {
                     "type": "string"
                 },
+                "driver_name": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "integer"
                 },
                 "license_plate": {
                     "type": "string"
                 },
+                "online": {
+                    "type": "boolean"
+                },
                 "vehicle_id": {
                     "type": "integer"
+                },
+                "vehicle_type": {
+                    "type": "string"
                 },
                 "vss_device_id": {
                     "type": "string"
@@ -6988,6 +6997,13 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/liveview.BehaviorEvent"
                     }
+                },
+                "fuel_ratio_kmpl": {
+                    "description": "Vehicle fuel config, echoed so the client can turn distance into an\nestimated litres consumed for this trip. Null when the vehicle has no\nfigures set — the estimate is then simply not shown.",
+                    "type": "number"
+                },
+                "fuel_tank_liters": {
+                    "type": "number"
                 },
                 "idle_threshold_min": {
                     "type": "number"
