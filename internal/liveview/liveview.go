@@ -383,6 +383,22 @@ type BehaviorResult struct {
 	Summary        BehaviorSummary `json:"summary"`
 	Events         []BehaviorEvent `json:"events"`
 	Stops          []IdleStop      `json:"stops"`
+	// Vehicle fuel config, echoed so the client can turn distance into an
+	// estimated litres consumed for this trip. Null when the vehicle has no
+	// figures set — the estimate is then simply not shown.
+	FuelRatioKmpl  *float64 `json:"fuel_ratio_kmpl"`
+	FuelTankLiters *float64 `json:"fuel_tank_liters"`
+}
+
+// fuelConfig reads a vehicle's fuel figures, tenant-scoped. Returns nils when
+// the vehicle has none — not an error, just nothing to estimate with.
+func (h *Handler) fuelConfig(ctx context.Context, tenantID, vehicleID int64) (ratio, tank *float64) {
+	_ = db.Tx(ctx, h.svc.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT fuel_ratio_kmpl, fuel_tank_liters FROM vehicles WHERE id = $1`, vehicleID).
+			Scan(&ratio, &tank)
+	})
+	return ratio, tank
 }
 
 // haversine returns the great-circle distance in km between two lat/lon points.
@@ -544,6 +560,7 @@ func (h *Handler) behavior(w http.ResponseWriter, r *http.Request) {
 	}
 	res.Summary.TotalIdleMin = math.Round(res.Summary.TotalIdleMin*10) / 10
 
+	res.FuelRatioKmpl, res.FuelTankLiters = h.fuelConfig(r.Context(), auth.TenantID(r.Context()), id)
 	httpx.JSON(w, http.StatusOK, res)
 }
 
