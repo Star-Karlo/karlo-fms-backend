@@ -86,6 +86,8 @@ CREATE TABLE vehicles (
   garage            text,
   odometer          numeric,
   hourmeter         numeric,
+  fuel_tank_liters  double precision,
+  fuel_ratio_kmpl   double precision,
   tracker_id        bigint REFERENCES trackers(id),
   current_driver_id bigint REFERENCES employees(id),
   notes             text,

@@ -2,6 +2,7 @@ package vehicle
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 
@@ -60,7 +61,24 @@ func (s *Service) Get(ctx context.Context, tenantID, id int64) (*DTO, error) {
 }
 
 // Create inserts a vehicle.
+
+// validFuel rejects non-positive fuel figures with a readable message rather
+// than letting the DB CHECK surface a raw constraint error to the client. A
+// zero ratio is also a divide-by-zero in every downstream estimate.
+func validFuel(tank, ratio *float64) error {
+	if tank != nil && *tank <= 0 {
+		return fmt.Errorf("fuel tank size must be greater than 0")
+	}
+	if ratio != nil && *ratio <= 0 {
+		return fmt.Errorf("fuel ratio (km/L) must be greater than 0")
+	}
+	return nil
+}
+
 func (s *Service) Create(ctx context.Context, tenantID int64, req CreateRequest) (*DTO, error) {
+	if err := validFuel(req.FuelTankLiters, req.FuelRatioKmpl); err != nil {
+		return nil, err
+	}
 	var dto DTO
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		v, err := store.New(tx).CreateVehicle(ctx, store.CreateVehicleParams{
@@ -68,6 +86,7 @@ func (s *Service) Create(ctx context.Context, tenantID int64, req CreateRequest)
 			VehicleType: req.VehicleType, BoxType: req.BoxType, UnitYear: req.UnitYear, HullNo: req.HullNo,
 			FleetGroupID: req.FleetGroupID, Status: derefStatus(req.Status), Garage: req.Garage,
 			Odometer: conv.Num(req.Odometer), Hourmeter: conv.Num(req.Hourmeter),
+			FuelTankLiters: req.FuelTankLiters, FuelRatioKmpl: req.FuelRatioKmpl,
 			TrackerID: req.TrackerID, CurrentDriverID: req.CurrentDriverID, Notes: req.Notes,
 		})
 		if err != nil {
@@ -84,13 +103,17 @@ func (s *Service) Create(ctx context.Context, tenantID int64, req CreateRequest)
 
 // Update patches a vehicle's fields.
 func (s *Service) Update(ctx context.Context, tenantID, id int64, req UpdateRequest) (*DTO, error) {
+	if err := validFuel(req.FuelTankLiters, req.FuelRatioKmpl); err != nil {
+		return nil, err
+	}
 	var dto DTO
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		v, err := store.New(tx).UpdateVehicle(ctx, store.UpdateVehicleParams{
 			ID: id, LicensePlate: req.LicensePlate, Manufacturer: req.Manufacturer,
 			VehicleType: req.VehicleType, BoxType: req.BoxType, UnitYear: req.UnitYear, HullNo: req.HullNo,
 			FleetGroupID: req.FleetGroupID, Status: req.Status, Garage: req.Garage,
-			Odometer: conv.Num(req.Odometer), Hourmeter: conv.Num(req.Hourmeter), Notes: req.Notes,
+			Odometer: conv.Num(req.Odometer), Hourmeter: conv.Num(req.Hourmeter),
+			FuelTankLiters: req.FuelTankLiters, FuelRatioKmpl: req.FuelRatioKmpl, Notes: req.Notes,
 		})
 		if err != nil {
 			return err

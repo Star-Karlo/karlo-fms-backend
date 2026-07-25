@@ -23,6 +23,8 @@ type DTO struct {
 	Garage          *string    `json:"garage"`
 	Odometer        *float64   `json:"odometer"`
 	Hourmeter       *float64   `json:"hourmeter"`
+	FuelTankLiters  *float64   `json:"fuel_tank_liters"`
+	FuelRatioKmpl   *float64   `json:"fuel_ratio_kmpl"`
 	TrackerID       *int64     `json:"tracker_id"`
 	TrackerImei     *string    `json:"tracker_imei"`
 	TrackerPhone    *string    `json:"tracker_phone"`
@@ -47,6 +49,8 @@ type CreateRequest struct {
 	Garage          *string  `json:"garage"`
 	Odometer        *float64 `json:"odometer"`
 	Hourmeter       *float64 `json:"hourmeter"`
+	FuelTankLiters  *float64 `json:"fuel_tank_liters"`
+	FuelRatioKmpl   *float64 `json:"fuel_ratio_kmpl"`
 	TrackerID       *int64   `json:"tracker_id"`
 	CurrentDriverID *int64   `json:"current_driver_id"`
 	Notes           *string  `json:"notes"`
@@ -54,18 +58,20 @@ type CreateRequest struct {
 
 // UpdateRequest is the update-vehicle body (all fields optional/patch-style).
 type UpdateRequest struct {
-	LicensePlate *string  `json:"license_plate"`
-	Manufacturer *string  `json:"manufacturer"`
-	VehicleType  *string  `json:"vehicle_type"`
-	BoxType      *string  `json:"box_type"`
-	UnitYear     *int32   `json:"unit_year"`
-	HullNo       *string  `json:"hull_no"`
-	FleetGroupID *int64   `json:"fleet_group_id"`
-	Status       *string  `json:"status"`
-	Garage       *string  `json:"garage"`
-	Odometer     *float64 `json:"odometer"`
-	Hourmeter    *float64 `json:"hourmeter"`
-	Notes        *string  `json:"notes"`
+	LicensePlate   *string  `json:"license_plate"`
+	Manufacturer   *string  `json:"manufacturer"`
+	VehicleType    *string  `json:"vehicle_type"`
+	BoxType        *string  `json:"box_type"`
+	UnitYear       *int32   `json:"unit_year"`
+	HullNo         *string  `json:"hull_no"`
+	FleetGroupID   *int64   `json:"fleet_group_id"`
+	Status         *string  `json:"status"`
+	Garage         *string  `json:"garage"`
+	Odometer       *float64 `json:"odometer"`
+	Hourmeter      *float64 `json:"hourmeter"`
+	FuelTankLiters *float64 `json:"fuel_tank_liters"`
+	FuelRatioKmpl  *float64 `json:"fuel_ratio_kmpl"`
+	Notes          *string  `json:"notes"`
 }
 
 // AssignTrackerRequest binds a tracker to a vehicle (null unbinds).
@@ -84,6 +90,7 @@ func fromVehicle(v store.Vehicle) DTO {
 		VehicleType: v.VehicleType, BoxType: v.BoxType, UnitYear: v.UnitYear, HullNo: v.HullNo, Color: v.Color,
 		FleetGroupID: v.FleetGroupID, Status: v.Status, Garage: v.Garage,
 		Odometer: conv.NumF(v.Odometer), Hourmeter: conv.NumF(v.Hourmeter),
+		FuelTankLiters: v.FuelTankLiters, FuelRatioKmpl: v.FuelRatioKmpl,
 		TrackerID: v.TrackerID, CurrentDriverID: v.CurrentDriverID, Notes: v.Notes,
 		CreatedAt: conv.Time(v.CreatedAt), UpdatedAt: conv.Time(v.UpdatedAt),
 	}
@@ -95,6 +102,7 @@ func fromGetRow(v store.GetVehicleRow) DTO {
 		VehicleType: v.VehicleType, BoxType: v.BoxType, UnitYear: v.UnitYear, HullNo: v.HullNo, Color: v.Color,
 		FleetGroupID: v.FleetGroupID, FleetGroupName: v.FleetGroupName, Status: v.Status, Garage: v.Garage,
 		Odometer: conv.NumF(v.Odometer), Hourmeter: conv.NumF(v.Hourmeter),
+		FuelTankLiters: v.FuelTankLiters, FuelRatioKmpl: v.FuelRatioKmpl,
 		TrackerID: v.TrackerID, TrackerImei: v.TrackerImei, TrackerPhone: v.TrackerPhone,
 		CurrentDriverID: v.CurrentDriverID, DriverName: v.DriverName, DriverPhone: v.DriverPhone,
 		Notes: v.Notes, CreatedAt: conv.Time(v.CreatedAt), UpdatedAt: conv.Time(v.UpdatedAt),
@@ -107,6 +115,7 @@ func fromListRow(v store.ListVehiclesRow) DTO {
 		VehicleType: v.VehicleType, BoxType: v.BoxType, UnitYear: v.UnitYear, HullNo: v.HullNo, Color: v.Color,
 		FleetGroupID: v.FleetGroupID, FleetGroupName: v.FleetGroupName, Status: v.Status, Garage: v.Garage,
 		Odometer: conv.NumF(v.Odometer), Hourmeter: conv.NumF(v.Hourmeter),
+		FuelTankLiters: v.FuelTankLiters, FuelRatioKmpl: v.FuelRatioKmpl,
 		TrackerID: v.TrackerID, TrackerImei: v.TrackerImei,
 		CurrentDriverID: v.CurrentDriverID, DriverName: v.DriverName, Notes: v.Notes,
 		CreatedAt: conv.Time(v.CreatedAt), UpdatedAt: conv.Time(v.UpdatedAt),

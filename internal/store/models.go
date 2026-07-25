@@ -241,6 +241,8 @@ type Vehicle struct {
 	Garage          *string            `json:"garage"`
 	Odometer        pgtype.Numeric     `json:"odometer"`
 	Hourmeter       pgtype.Numeric     `json:"hourmeter"`
+	FuelTankLiters  *float64           `json:"fuel_tank_liters"`
+	FuelRatioKmpl   *float64           `json:"fuel_ratio_kmpl"`
 	TrackerID       *int64             `json:"tracker_id"`
 	CurrentDriverID *int64             `json:"current_driver_id"`
 	Notes           *string            `json:"notes"`

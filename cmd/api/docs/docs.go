@@ -8325,6 +8325,12 @@ const docTemplate = `{
                 "fleet_group_id": {
                     "type": "integer"
                 },
+                "fuel_ratio_kmpl": {
+                    "type": "number"
+                },
+                "fuel_tank_liters": {
+                    "type": "number"
+                },
                 "garage": {
                     "type": "string"
                 },
@@ -8387,6 +8393,12 @@ const docTemplate = `{
                 "fleet_group_name": {
                     "type": "string"
                 },
+                "fuel_ratio_kmpl": {
+                    "type": "number"
+                },
+                "fuel_tank_liters": {
+                    "type": "number"
+                },
                 "garage": {
                     "type": "string"
                 },
@@ -8442,6 +8454,12 @@ const docTemplate = `{
                 },
                 "fleet_group_id": {
                     "type": "integer"
+                },
+                "fuel_ratio_kmpl": {
+                    "type": "number"
+                },
+                "fuel_tank_liters": {
+                    "type": "number"
                 },
                 "garage": {
                     "type": "string"
