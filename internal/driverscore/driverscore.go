@@ -67,6 +67,10 @@ type Policy struct {
 	LongShiftFullHours float64
 	// MinDistanceKm gates scoring: below this over the month, not enough to judge.
 	MinDistanceKm float64
+	// HarshPer100kmFull is the harsh-event rate — weighted severity points per
+	// 100 km, where yellow=1, red=2, black=4 — at which a harsh pillar's penalty
+	// saturates. A starting value; tune it once real event volume is known.
+	HarshPer100kmFull float64
 }
 
 // DefaultPolicy is a sensible starting point for an Indonesian truck fleet.
@@ -77,6 +81,7 @@ var DefaultPolicy = Policy{
 	LongShiftHours:     10,
 	LongShiftFullHours: 14,
 	MinDistanceKm:      300,
+	HarshPer100kmFull:  8,
 }
 
 // Weights are the penalty each behaviour can subtract at its worst. They mirror
@@ -86,6 +91,14 @@ const (
 	weightOverspeed = 45.0
 	weightIdle      = 30.0
 	weightLongShift = 25.0
+	// Harsh-driving pillars, fed by the MDVR G-sensor (driving_events). These
+	// are the slots this package reserved: braking / acceleration / cornering.
+	// Additive on top of the GPS pillars and the final score floors at 0, so a
+	// clean month (no events) changes nothing. Once real event volume is known,
+	// promote all six weights into Policy and rebalance to a 100-point budget.
+	weightHarshBrake  = 15.0
+	weightHarshAccel  = 12.0
+	weightHarshCorner = 13.0
 )
 
 // Collector recomputes scores on a schedule.
@@ -173,6 +186,35 @@ type perDriver struct {
 	// entries — and carried into the event metadata.
 	speedingDates  []string
 	longShiftDates []string
+	// Harsh G-sensor events this month: kind ("braking"|"acceleration"|
+	// "cornering") -> severity ("yellow"|"red"|"black") -> count.
+	harsh map[string]map[string]int
+}
+
+func newPerDriver() *perDriver {
+	return &perDriver{harsh: map[string]map[string]int{}}
+}
+
+// severityPoints weights a harsh event by how dangerous it was, so one black
+// (>0.8 g) event counts as much as four yellow ones.
+func severityPoints(sev string) float64 {
+	switch sev {
+	case "black":
+		return 4
+	case "red":
+		return 2
+	default:
+		return 1 // yellow, or anything unclassified
+	}
+}
+
+// harshPoints totals a pillar's weighted severity points and raw event count.
+func (pd *perDriver) harshPoints(kind string) (points float64, count int) {
+	for sev, n := range pd.harsh[kind] {
+		points += severityPoints(sev) * float64(n)
+		count += n
+	}
+	return points, count
 }
 
 // scoreTenant recomputes the CURRENT month for one tenant.
@@ -224,7 +266,7 @@ func (c *Collector) scoreTenant(ctx context.Context, tenantID int64) error {
 		}
 		pd := acc[did]
 		if pd == nil {
-			pd = &perDriver{}
+			pd = newPerDriver()
 			acc[did] = pd
 		}
 		for _, d := range v.Days {
@@ -249,6 +291,47 @@ func (c *Collector) scoreTenant(ctx context.Context, tenantID int64) error {
 		}
 	}
 
+	// Fold in harsh G-sensor events for the same month, attributed to the CURRENT
+	// driver of each vehicle — the same forward-only rule the GPS pillars use, so
+	// both pillars land on the same person. A vehicle with events but no moving
+	// days is not in acc and is skipped (that driver is below the distance gate).
+	nextMonth := period.AddDate(0, 1, 0)
+	if err := db.Tx(ctx, c.pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+SELECT vehicle_id, kind, severity, count(*)
+FROM driving_events
+WHERE occurred_at >= $1 AND occurred_at < $2 AND vehicle_id IS NOT NULL
+GROUP BY vehicle_id, kind, severity`, period, nextMonth)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var vid int64
+			var kind, sev string
+			var n int
+			if err := rows.Scan(&vid, &kind, &sev, &n); err != nil {
+				return err
+			}
+			did, ok := driverOf[vid]
+			if !ok {
+				continue
+			}
+			pd := acc[did]
+			if pd == nil {
+				continue
+			}
+			if pd.harsh[kind] == nil {
+				pd.harsh[kind] = map[string]int{}
+			}
+			pd.harsh[kind][sev] += n
+		}
+		return rows.Err()
+	}); err != nil {
+		// Non-fatal: the GPS pillars still score if the events read fails.
+		log.Printf("driverscore: tenant %d harsh events: %v", tenantID, err)
+	}
+
 	// Rewrite the period's events atomically: delete then insert, so a driver
 	// who stopped speeding this month loses the penalty rather than keeping a
 	// stale one, and a re-run is idempotent.
@@ -265,9 +348,13 @@ func (c *Collector) scoreTenant(ctx context.Context, tenantID int64) error {
 			ovs := c.overspeedPenalty(pd)
 			idle := c.idlePenalty(pd)
 			fat := c.longShiftPenalty(pd)
+			_, brakeN := pd.harshPoints("braking")
+			_, accelN := pd.harshPoints("acceleration")
+			_, cornerN := pd.harshPoints("cornering")
 
 			// trip_km carries the exposure the scorecard reads; the rest are
-			// penalties it subtracts from 100.
+			// penalties it subtracts from 100. The three HARSH_* rows are always
+			// written (0 when clean) so the scorecard shows every pillar.
 			rows := []struct {
 				code  string
 				occ   int
@@ -277,6 +364,9 @@ func (c *Collector) scoreTenant(ctx context.Context, tenantID int64) error {
 				{"OVERSPEED", pd.speedingDays, ovs},
 				{"EXCEEDED_IDLE", 0, idle},
 				{"LONG_SHIFT", 0, fat},
+				{"HARSH_BRAKE", brakeN, c.harshPenalty(pd, "braking", weightHarshBrake)},
+				{"HARSH_ACCEL", accelN, c.harshPenalty(pd, "acceleration", weightHarshAccel)},
+				{"HARSH_CORNER", cornerN, c.harshPenalty(pd, "cornering", weightHarshCorner)},
 			}
 			for _, r := range rows {
 				if _, err := tx.Exec(ctx, `
@@ -320,6 +410,19 @@ func (c *Collector) longShiftPenalty(pd *perDriver) float64 {
 	return weightLongShift * pd.longShiftLoad / float64(pd.days)
 }
 
+// harshPenalty scales a harsh pillar with the driver's own exposure: weighted
+// severity points per 100 km, saturating at HarshPer100kmFull. Rate-normalised
+// like every other penalty, so a long-haul driver is not punished for driving
+// more — only for a higher rate of harsh events.
+func (c *Collector) harshPenalty(pd *perDriver, kind string, weight float64) float64 {
+	if pd.distanceKm <= 0 {
+		return 0
+	}
+	points, _ := pd.harshPoints(kind)
+	rate := 100 * points / pd.distanceKm
+	return weight * severity(rate, 0, c.policy.HarshPer100kmFull)
+}
+
 // severity maps a value onto [0,1]: nothing below `start`, full at `full`,
 // linear between. Used for idle share and shift length so both read the same.
 func severity(v, start, full float64) float64 {
@@ -356,8 +459,33 @@ func metadataFor(code string, pd *perDriver, p Policy) map[string]any {
 		}
 		return map[string]any{"avg_driving_h": round1(avg), "threshold_h": p.LongShiftHours,
 			"dates": pd.longShiftDates}
+	case "HARSH_BRAKE":
+		return harshMeta(pd, "braking")
+	case "HARSH_ACCEL":
+		return harshMeta(pd, "acceleration")
+	case "HARSH_CORNER":
+		return harshMeta(pd, "cornering")
 	default:
 		return map[string]any{"distance_km": round1(pd.distanceKm), "days": pd.days}
+	}
+}
+
+// harshMeta records the numbers behind a harsh pillar: the by-severity counts
+// and the exposure-normalised rate, so the scorecard can explain the penalty.
+func harshMeta(pd *perDriver, kind string) map[string]any {
+	m := pd.harsh[kind]
+	points, count := pd.harshPoints(kind)
+	per100 := 0.0
+	if pd.distanceKm > 0 {
+		per100 = round1(100 * points / pd.distanceKm)
+	}
+	return map[string]any{
+		"events":           count,
+		"yellow":           m["yellow"],
+		"red":              m["red"],
+		"black":            m["black"],
+		"points_per_100km": per100,
+		"distance_km":      round1(pd.distanceKm),
 	}
 }
 

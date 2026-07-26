@@ -109,6 +109,15 @@ func (p *AlarmPoller) tick(ctx context.Context) error {
 			continue
 		}
 		_ = occurred // occurred_at is set now() by CreateAlert; kept for future use
+
+		// If it is a driving-behaviour event (harsh brake/accel/turn), also
+		// record it as a driving_event the score collector can read. Best-effort:
+		// a failure here must not stop alerts flowing.
+		if b, ok := isDrivingEvent(a.Code); ok {
+			if err := recordDrivingEvent(ctx, p.pool, link.tenantID, link, a, b); err != nil {
+				log.Printf("dashcam alarm poller: record driving event for %s: %v", a.DeviceID, err)
+			}
+		}
 	}
 	p.cursor = maxID
 	return nil
@@ -117,6 +126,7 @@ func (p *AlarmPoller) tick(ctx context.Context) error {
 type devLink struct {
 	tenantID  int64
 	vehicleID int64
+	driverID  *int64 // current driver on the vehicle at ingest, or nil
 }
 
 // deviceLinks resolves the wanted device ids to their vehicle+tenant. dashcams
@@ -141,7 +151,9 @@ func (p *AlarmPoller) deviceLinks(ctx context.Context, wanted map[string]bool) m
 	for _, tid := range tenantIDs {
 		_ = db.Tx(ctx, p.pool, tid, func(tx pgx.Tx) error {
 			r, err := tx.Query(ctx,
-				`SELECT vss_device_id, vehicle_id FROM dashcams WHERE vehicle_id IS NOT NULL`)
+				`SELECT d.vss_device_id, d.vehicle_id, v.current_driver_id
+				 FROM dashcams d JOIN vehicles v ON v.id = d.vehicle_id
+				 WHERE d.vehicle_id IS NOT NULL`)
 			if err != nil {
 				return err
 			}
@@ -149,11 +161,12 @@ func (p *AlarmPoller) deviceLinks(ctx context.Context, wanted map[string]bool) m
 			for r.Next() {
 				var dev string
 				var veh int64
-				if err := r.Scan(&dev, &veh); err != nil {
+				var drv *int64
+				if err := r.Scan(&dev, &veh, &drv); err != nil {
 					return err
 				}
 				if wanted[dev] {
-					out[dev] = devLink{tenantID: tid, vehicleID: veh}
+					out[dev] = devLink{tenantID: tid, vehicleID: veh, driverID: drv}
 				}
 			}
 			return r.Err()

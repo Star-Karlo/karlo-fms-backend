@@ -322,6 +322,8 @@ type DashcamAlarm struct {
 	Lat        *float64 `json:"lat"`
 	Lon        *float64 `json:"lon"`
 	Speed      *float64 `json:"speed"`
+	// Gforce is the peak acceleration a driving-behaviour event reported, or nil.
+	Gforce *float64 `json:"gforce"`
 }
 
 // DashcamAlarms returns alarms with id greater than since, id-ascending.

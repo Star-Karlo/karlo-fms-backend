@@ -198,7 +198,7 @@ fi
 if [ "${1:-}" = "--import-only" ]; then
   echo "==> skipping migrations (--import-only)"
 else
-for f in 0024_fuel_stations 0025_company_profile 0026_hangars 0027_platform_admin 0028_dashcams 0029_video_clips 0030_vehicle_fuel; do
+for f in 0024_fuel_stations 0025_company_profile 0026_hangars 0027_platform_admin 0028_dashcams 0029_video_clips 0030_vehicle_fuel 0031_driving_events; do
   echo "==> applying ${f}"
   # ON_ERROR_STOP so a failure halts here rather than leaving half a schema.
   # Every one of these migrations is written to be re-runnable.
