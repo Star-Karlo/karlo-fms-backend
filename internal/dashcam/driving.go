@@ -110,13 +110,30 @@ func greenBehaviour(typ int) (behaviour, bool) {
 	return behaviour{}, false
 }
 
+// teltonikaValueToG converts a Teltonika Green Driving Value to g. For the
+// accelerometer scenario the device sends g×100 (e.g. 45 → 0.45 g). A single
+// documented constant so it is trivially recalibrated if a unit is confirmed
+// different. Per-axis X/Y/Z g is the camera's job; this is the single event
+// magnitude the tracker reports.
+const teltonikaValueToG = 0.01
+
+// greenGforce converts a raw Green Driving Value to g, or nil if none.
+func greenGforce(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	g := *value * teltonikaValueToG
+	return &g
+}
+
 // recordGreenEvent writes one driving_events row from a tracker Green Driving
 // event. Idempotent on (tenant, source, green event id); source is 'teltonika'.
 // event_code stores the raw Teltonika type (source-relative, not a VSS code).
 func recordGreenEvent(ctx context.Context, pool *db.Pool, tenantID int64, link devLink, ev telemetry.GreenDrivingEvent, b behaviour) error {
+	g := greenGforce(ev.Value)
 	sev := "yellow"
-	if ev.Gforce != nil {
-		sev = severityFromGforce(*ev.Gforce)
+	if g != nil {
+		sev = severityFromGforce(*g)
 	}
 	occurred := parseTime(ev.OccurredAt)
 	return db.Tx(ctx, pool, tenantID, func(tx pgx.Tx) error {
@@ -127,7 +144,7 @@ INSERT INTO driving_events
 VALUES ($1,'teltonika',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 ON CONFLICT (tenant_id, source, telemetry_alarm_id) DO NOTHING`,
 			tenantID, link.vehicleID, link.driverID, ev.IMEI, ev.ID,
-			ev.EventType, b.kind, b.axis, ev.Gforce, sev, occurred, ev.Lat, ev.Lon, ev.Speed)
+			ev.EventType, b.kind, b.axis, g, sev, occurred, ev.Lat, ev.Lon, ev.Speed)
 		return err
 	})
 }

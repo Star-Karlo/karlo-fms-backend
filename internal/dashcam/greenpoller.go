@@ -111,9 +111,14 @@ func (p *GreenPoller) imeiLinks(ctx context.Context, wanted map[string]bool) map
 
 	for _, tid := range tenantIDs {
 		_ = db.Tx(ctx, p.pool, tid, func(tx pgx.Tx) error {
+			// Camera trucks are excluded: the camera is authoritative for the
+			// per-axis X/Y/Z g of a harsh event, so its events score those trucks
+			// and the tracker's Green Driving would only double-count. Tracker
+			// Green Driving covers the camera-less majority of the fleet.
 			r, err := tx.Query(ctx, `
 SELECT t.imei, v.id, v.current_driver_id
-FROM trackers t JOIN vehicles v ON v.tracker_id = t.id`)
+FROM trackers t JOIN vehicles v ON v.tracker_id = t.id
+WHERE NOT EXISTS (SELECT 1 FROM dashcams d WHERE d.vehicle_id = v.id)`)
 			if err != nil {
 				return err
 			}

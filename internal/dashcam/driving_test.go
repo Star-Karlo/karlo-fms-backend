@@ -74,3 +74,18 @@ func TestSeverityFromGforce(t *testing.T) {
 		}
 	}
 }
+
+func TestGreenGforce(t *testing.T) {
+	// Teltonika value is g×100: 45 -> 0.45 g -> red.
+	v := 45.0
+	g := greenGforce(&v)
+	if g == nil || *g != 0.45 {
+		t.Fatalf("greenGforce(45) = %v, want 0.45", g)
+	}
+	if sev := severityFromGforce(*g); sev != "red" {
+		t.Errorf("severity of 0.45g = %q, want red", sev)
+	}
+	if greenGforce(nil) != nil {
+		t.Error("nil value must yield nil g")
+	}
+}

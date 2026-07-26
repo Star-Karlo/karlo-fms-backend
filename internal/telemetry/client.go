@@ -339,10 +339,12 @@ func (c *Client) DashcamAlarms(ctx context.Context, since int64, limit int) ([]D
 
 // GreenDrivingEvent is one tracker Green Driving event (harsh accel/brake/turn).
 type GreenDrivingEvent struct {
-	ID         int64    `json:"id"`
-	IMEI       string   `json:"imei"`
-	EventType  int      `json:"event_type"` // 1 accel, 2 brake, 3 corner
-	Gforce     *float64 `json:"gforce"`
+	ID        int64  `json:"id"`
+	IMEI      string `json:"imei"`
+	EventType int    `json:"event_type"` // 1 accel, 2 brake, 3 corner
+	// Value is the raw Teltonika Green Driving Value (device units, g×100 for the
+	// accelerometer scenario). Convert to g before classifying severity.
+	Value      *float64 `json:"value"`
 	DurationMs *int     `json:"duration_ms"`
 	OccurredAt string   `json:"occurred_at"`
 	Lat        *float64 `json:"lat"`
