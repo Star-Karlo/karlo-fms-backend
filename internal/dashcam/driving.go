@@ -76,19 +76,60 @@ const (
 // G field is confirmed.
 func classifySeverity(gforce *float64, code int) string {
 	if gforce != nil {
-		switch g := *gforce; {
-		case g >= gBlack:
-			return "black"
-		case g >= gRed:
-			return "red"
-		default:
-			return "yellow"
-		}
+		return severityFromGforce(*gforce)
 	}
 	if _, _, sev := alarmMeta(code); sev == "urgent" {
 		return "red"
 	}
 	return "yellow"
+}
+
+// severityFromGforce ranks a magnitude on the g thresholds.
+func severityFromGforce(g float64) string {
+	switch {
+	case g >= gBlack:
+		return "black"
+	case g >= gRed:
+		return "red"
+	default:
+		return "yellow"
+	}
+}
+
+// greenBehaviour maps a Teltonika Green Driving type (AVL 253) to its kind/axis.
+// 1 harsh acceleration, 2 harsh braking, 3 harsh cornering.
+func greenBehaviour(typ int) (behaviour, bool) {
+	switch typ {
+	case 1:
+		return behaviour{"acceleration", "X"}, true
+	case 2:
+		return behaviour{"braking", "X"}, true
+	case 3:
+		return behaviour{"cornering", "Y"}, true
+	}
+	return behaviour{}, false
+}
+
+// recordGreenEvent writes one driving_events row from a tracker Green Driving
+// event. Idempotent on (tenant, source, green event id); source is 'teltonika'.
+// event_code stores the raw Teltonika type (source-relative, not a VSS code).
+func recordGreenEvent(ctx context.Context, pool *db.Pool, tenantID int64, link devLink, ev telemetry.GreenDrivingEvent, b behaviour) error {
+	sev := "yellow"
+	if ev.Gforce != nil {
+		sev = severityFromGforce(*ev.Gforce)
+	}
+	occurred := parseTime(ev.OccurredAt)
+	return db.Tx(ctx, pool, tenantID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+INSERT INTO driving_events
+  (tenant_id, source, vehicle_id, driver_id, vss_device_id, telemetry_alarm_id,
+   event_code, kind, axis, gforce, severity, occurred_at, lat, lon, speed_kph)
+VALUES ($1,'teltonika',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+ON CONFLICT (tenant_id, source, telemetry_alarm_id) DO NOTHING`,
+			tenantID, link.vehicleID, link.driverID, ev.IMEI, ev.ID,
+			ev.EventType, b.kind, b.axis, ev.Gforce, sev, occurred, ev.Lat, ev.Lon, ev.Speed)
+		return err
+	})
 }
 
 // recordDrivingEvent writes one driving_events row for a behaviour alarm, scoped

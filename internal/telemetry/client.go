@@ -336,3 +336,28 @@ func (c *Client) DashcamAlarms(ctx context.Context, since int64, limit int) ([]D
 	var out []DashcamAlarm
 	return out, c.getJSON(ctx, "/v1/dashcams/alarms?"+q.Encode(), &out)
 }
+
+// GreenDrivingEvent is one tracker Green Driving event (harsh accel/brake/turn).
+type GreenDrivingEvent struct {
+	ID         int64    `json:"id"`
+	IMEI       string   `json:"imei"`
+	EventType  int      `json:"event_type"` // 1 accel, 2 brake, 3 corner
+	Gforce     *float64 `json:"gforce"`
+	DurationMs *int     `json:"duration_ms"`
+	OccurredAt string   `json:"occurred_at"`
+	Lat        *float64 `json:"lat"`
+	Lon        *float64 `json:"lon"`
+	Speed      *float64 `json:"speed"`
+}
+
+// GreenDrivingEvents returns tracker Green Driving events with id greater than
+// since, id-ascending — the tracker-sourced twin of DashcamAlarms.
+func (c *Client) GreenDrivingEvents(ctx context.Context, since int64, limit int) ([]GreenDrivingEvent, error) {
+	q := url.Values{}
+	q.Set("since", strconv.FormatInt(since, 10))
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	var out []GreenDrivingEvent
+	return out, c.getJSON(ctx, "/v1/driving-events?"+q.Encode(), &out)
+}

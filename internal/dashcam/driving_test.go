@@ -48,3 +48,29 @@ func TestClassifySeverity(t *testing.T) {
 		}
 	}
 }
+
+func TestGreenBehaviour(t *testing.T) {
+	cases := map[int]behaviour{
+		1: {"acceleration", "X"},
+		2: {"braking", "X"},
+		3: {"cornering", "Y"},
+	}
+	for typ, want := range cases {
+		if b, ok := greenBehaviour(typ); !ok || b != want {
+			t.Errorf("greenBehaviour(%d) = %+v,%v want %+v", typ, b, ok, want)
+		}
+	}
+	for _, bad := range []int{0, 4, -1, 99} {
+		if _, ok := greenBehaviour(bad); ok {
+			t.Errorf("greenBehaviour(%d) should be false", bad)
+		}
+	}
+}
+
+func TestSeverityFromGforce(t *testing.T) {
+	for g, want := range map[float64]string{0.1: "yellow", 0.3: "yellow", 0.4: "red", 0.79: "red", 0.8: "black", 1.5: "black"} {
+		if got := severityFromGforce(g); got != want {
+			t.Errorf("severityFromGforce(%v) = %q want %q", g, got, want)
+		}
+	}
+}

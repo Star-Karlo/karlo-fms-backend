@@ -167,6 +167,7 @@ func main() {
 	// Dashcam alarms: poll the telemetry service and raise FMS alerts. No-op
 	// effect until cameras report; safe when telemetry has none.
 	go dashcam.NewAlarmPoller(pool, tel).Run(ctx)
+	go dashcam.NewGreenPoller(pool, tel).Run(ctx)
 	// Nightly driver safety scoring from the daily rollup — needs the same
 	// fleet-history service the insights use. Recomputes the current month
 	// each run so scores stay current as days complete.
