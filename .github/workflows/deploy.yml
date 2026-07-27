@@ -61,6 +61,32 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # Apply pending DB migrations BEFORE rolling the service, so new code never
+      # runs against an old schema (the failure mode that bit us before this
+      # existed). Opens the RDS security group to this runner just for the
+      # migration and revokes it on exit; connects as the DB master. Only
+      # migrations not yet in schema_migrations are applied.
+      - name: Apply DB migrations
+        env:
+          REGION: ${{ vars.AWS_REGION }}
+          INSTANCE: karlo-fms-app
+          SG: sg-06d617c320fda9b45
+        run: |
+          command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
+          read -r HOST PORT DBUSER SECRET <<<"$(aws rds describe-db-instances --region "$REGION" \
+            --db-instance-identifier "$INSTANCE" \
+            --query 'DBInstances[0].[Endpoint.Address,Endpoint.Port,MasterUsername,MasterUserSecret.SecretArn]' --output text)"
+          export PGPASSWORD="$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$SECRET" \
+            --query SecretString --output text | python3 -c 'import sys,json;print(json.load(sys.stdin)["password"])')"
+          IP="$(curl -s https://checkip.amazonaws.com | tr -d '\n')"
+          RULE="$(aws ec2 authorize-security-group-ingress --region "$REGION" --group-id "$SG" \
+            --ip-permissions "IpProtocol=tcp,FromPort=5432,ToPort=5432,IpRanges=[{CidrIp=${IP}/32,Description=ci-migrate}]" \
+            --query 'SecurityGroupRules[0].SecurityGroupRuleId' --output text)"
+          trap 'aws ec2 revoke-security-group-ingress --region "$REGION" --group-id "$SG" --security-group-rule-ids "$RULE" >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 24); do pg_isready -h "$HOST" -p "$PORT" -U "$DBUSER" -t 5 >/dev/null 2>&1 && break; sleep 5; done
+          export DB_URL="host=$HOST port=$PORT user=$DBUSER dbname=fms_app sslmode=require"
+          bash scripts/ci-migrate.sh
+
       - name: Login to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
