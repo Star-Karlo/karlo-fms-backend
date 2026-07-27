@@ -1,13 +1,30 @@
-name: deploy-api
-
-# Build the api image, push to ECR, and roll the ECS service on push to main.
-# Repo settings needed (Settings → Secrets and variables → Actions):
-#   Secret: AWS_ROLE_ARN   (terraform output github_deploy_role_arn)
+# Production deploy for the api service — MANUAL ONLY (this is the gate).
+#
+# Pushing to main no longer deploys; it only runs CI (ci.yml). To ship to
+# production: Actions -> "deploy-api" -> "Run workflow", tick the checklist,
+# and type DEPLOY to confirm. That click is the approval.
+#
+# Repo settings (Settings → Secrets and variables → Actions):
+#   Secret: AWS_ROLE_ARN
 #   Vars:   AWS_REGION=ap-southeast-1, ECS_CLUSTER=karlo-fms, ECS_SERVICE=api,
 #           ECR_REPO=karlo-fms/api
+name: deploy-api
+
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DEPLOY (capitals) to confirm a PRODUCTION deploy'
+        required: true
+        default: ''
+      migrations_applied:
+        description: 'DB migrations for this change are applied (or none needed)'
+        type: boolean
+        default: false
+      verified:
+        description: 'Change has been built and verified'
+        type: boolean
+        default: false
 
 permissions:
   id-token: write # for AWS OIDC
@@ -17,6 +34,25 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Confirm + record checklist
+        run: |
+          if [ "${{ inputs.confirm }}" != "DEPLOY" ]; then
+            echo "::error::Type DEPLOY (capitals) in the confirm box to proceed."
+            exit 1
+          fi
+          {
+            echo "## Production deploy — api"
+            echo "| item | value |"
+            echo "|---|---|"
+            echo "| triggered by | ${{ github.actor }} |"
+            echo "| ref / commit | ${{ github.ref_name }} @ ${{ github.sha }} |"
+            echo "| migrations applied | ${{ inputs.migrations_applied }} |"
+            echo "| verified | ${{ inputs.verified }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ inputs.migrations_applied }}" != "true" ] || [ "${{ inputs.verified }}" != "true" ]; then
+            echo "::warning::Proceeding with an unchecked checklist item — make sure that is intentional."
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Configure AWS credentials (OIDC)
