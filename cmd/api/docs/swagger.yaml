@@ -1065,6 +1065,15 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-webhook_Endpoint:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/webhook.Endpoint'
+        type: array
+      total:
+        type: integer
+    type: object
   hangar.Hangar:
     properties:
       active:
@@ -2456,6 +2465,35 @@ definitions:
       unit_year:
         type: integer
       vehicle_type:
+        type: string
+    type: object
+  webhook.Endpoint:
+    properties:
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      event_filter:
+        type: string
+      has_secret:
+        type: boolean
+      id:
+        type: integer
+      updated_at:
+        type: string
+      url:
+        type: string
+    type: object
+  webhook.upsertReq:
+    properties:
+      enabled:
+        type: boolean
+      event_filter:
+        type: string
+      secret:
+        description: nil = leave unchanged on update
+        type: string
+      url:
         type: string
     type: object
 info:
@@ -5584,6 +5622,100 @@ paths:
       summary: Saved clips (accident evidence)
       tags:
       - dashcams
+  /v1/webhooks:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-webhook_Endpoint'
+      security:
+      - BearerAuth: []
+      summary: Configured alarm webhooks
+      tags:
+      - webhooks
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: endpoint
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/webhook.upsertReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/webhook.Endpoint'
+      security:
+      - BearerAuth: []
+      summary: Add an alarm webhook
+      tags:
+      - webhooks
+  /v1/webhooks/{id}:
+    delete:
+      parameters:
+      - description: endpoint id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete an alarm webhook
+      tags:
+      - webhooks
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: endpoint id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: endpoint
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/webhook.upsertReq'
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Update an alarm webhook
+      tags:
+      - webhooks
+  /v1/webhooks/{id}/test:
+    post:
+      parameters:
+      - description: endpoint id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Send a test event to a webhook
+      tags:
+      - webhooks
 securityDefinitions:
   BearerAuth:
     description: Type "Bearer" followed by a space and the access token.

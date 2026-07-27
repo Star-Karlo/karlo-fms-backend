@@ -61,6 +61,7 @@ import (
 	"github.com/karlo/fms-backend/internal/trackinglink"
 	"github.com/karlo/fms-backend/internal/users"
 	"github.com/karlo/fms-backend/internal/vehicle"
+	"github.com/karlo/fms-backend/internal/webhook"
 )
 
 func main() {
@@ -120,6 +121,7 @@ func main() {
 	usersH := users.NewHandler(pool)
 	tenantH := tenants.NewHandler(pool)
 	apiTokenH := apitoken.NewHandler(pool)
+	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)
 	// AI dashboard composition (Amazon Nova Pro on Bedrock). A missing or
 	// unauthorised Bedrock config disables just this endpoint (503) rather
@@ -168,6 +170,7 @@ func main() {
 	// effect until cameras report; safe when telemetry has none.
 	go dashcam.NewAlarmPoller(pool, tel).Run(ctx)
 	go dashcam.NewGreenPoller(pool, tel).Run(ctx)
+	go webhook.NewDispatcher(pool).Run(ctx)
 	// Nightly driver safety scoring from the daily rollup — needs the same
 	// fleet-history service the insights use. Recomputes the current month
 	// each run so scores stay current as days complete.
@@ -212,6 +215,7 @@ func main() {
 		dashcamH.Routes(pr)
 		tenantH.Routes(pr)
 		apiTokenH.Routes(pr)
+		webhookH.Routes(pr)
 		dashboardH.Routes(pr)
 		geofenceH.Routes(pr)
 		fuelH.Routes(pr)

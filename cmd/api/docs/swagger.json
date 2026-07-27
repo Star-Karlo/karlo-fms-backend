@@ -4949,6 +4949,161 @@
                     }
                 }
             }
+        },
+        "/v1/webhooks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Configured alarm webhooks",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-webhook_Endpoint"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Add an alarm webhook",
+                "parameters": [
+                    {
+                        "description": "endpoint",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/webhook.upsertReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/webhook.Endpoint"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/webhooks/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Update an alarm webhook",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "endpoint id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "endpoint",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/webhook.upsertReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Delete an alarm webhook",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "endpoint id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/webhooks/{id}/test": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Send a test event to a webhook",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "endpoint id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -6511,6 +6666,20 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/vehicle.DTO"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_karlo_fms-backend_internal_platform_httpx.List-webhook_Endpoint": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/webhook.Endpoint"
                     }
                 },
                 "total": {
@@ -8498,6 +8667,50 @@
                     "type": "integer"
                 },
                 "vehicle_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "webhook.Endpoint": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "event_filter": {
+                    "type": "string"
+                },
+                "has_secret": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "webhook.upsertReq": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "event_filter": {
+                    "type": "string"
+                },
+                "secret": {
+                    "description": "nil = leave unchanged on update",
+                    "type": "string"
+                },
+                "url": {
                     "type": "string"
                 }
             }
