@@ -193,13 +193,15 @@ func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
 
 // Dashcam is a device as VSS knows it, relayed by the telemetry service.
 type Dashcam struct {
-	DeviceID     string `json:"device_id"`
-	DeviceName   string `json:"device_name"`
-	DeviceType   string `json:"device_type"`
-	Channels     int    `json:"channels"`
-	ChannelNames string `json:"channel_names"`
-	Online       bool   `json:"online"`
-	AccessMode   int    `json:"access_mode"`
+	DeviceID     string   `json:"device_id"`
+	DeviceName   string   `json:"device_name"`
+	DeviceType   string   `json:"device_type"`
+	Channels     int      `json:"channels"`
+	ChannelNames string   `json:"channel_names"`
+	Online       bool     `json:"online"`
+	AccessMode   int      `json:"access_mode"`
+	Lat          *float64 `json:"lat"` // camera's own GPS, last known (nil = no fix)
+	Lon          *float64 `json:"lon"`
 }
 
 // DashcamClip is one SD-card clip with its derived coordinate.

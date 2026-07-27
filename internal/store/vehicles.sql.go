@@ -220,9 +220,13 @@ SELECT
   e.full_name     AS driver_name,
   e.phone         AS driver_phone,
   t.id            AS tracker_id,
-  t.imei          AS tracker_imei
+  t.imei          AS tracker_imei,
+  COALESCE(dc.vss_device_id, '') AS camera_device_id
 FROM vehicles v
-JOIN trackers t           ON t.id = v.tracker_id
+LEFT JOIN trackers t      ON t.id = v.tracker_id
+LEFT JOIN LATERAL (
+  SELECT vss_device_id FROM dashcams d WHERE d.vehicle_id = v.id ORDER BY d.id LIMIT 1
+) dc ON true
 LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 LEFT JOIN employees e     ON e.id = v.current_driver_id
 WHERE v.id = $1
@@ -237,8 +241,9 @@ type GetLiveViewVehicleRow struct {
 	DriverID       *int64  `json:"driver_id"`
 	DriverName     *string `json:"driver_name"`
 	DriverPhone    *string `json:"driver_phone"`
-	TrackerID      int64   `json:"tracker_id"`
-	TrackerImei    string  `json:"tracker_imei"`
+	TrackerID      *int64  `json:"tracker_id"`
+	TrackerImei    *string `json:"tracker_imei"`
+	CameraDeviceID string  `json:"camera_device_id"`
 }
 
 func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveViewVehicleRow, error) {
@@ -255,6 +260,7 @@ func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveView
 		&i.DriverPhone,
 		&i.TrackerID,
 		&i.TrackerImei,
+		&i.CameraDeviceID,
 	)
 	return i, err
 }
@@ -354,13 +360,17 @@ SELECT
   e.full_name     AS driver_name,
   e.phone         AS driver_phone,
   t.id            AS tracker_id,
-  t.imei          AS tracker_imei
+  t.imei          AS tracker_imei,
+  COALESCE(dc.vss_device_id, '') AS camera_device_id
 FROM vehicles v
-JOIN trackers t           ON t.id = v.tracker_id
+LEFT JOIN trackers t      ON t.id = v.tracker_id
+LEFT JOIN LATERAL (
+  SELECT vss_device_id FROM dashcams d WHERE d.vehicle_id = v.id ORDER BY d.id LIMIT 1
+) dc ON true
 LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 LEFT JOIN employees e     ON e.id = v.current_driver_id
 WHERE v.status <> 'archive'
-  AND t.imei IS NOT NULL
+  AND (t.imei IS NOT NULL OR dc.vss_device_id IS NOT NULL)
   AND ($1::bigint IS NULL OR v.fleet_group_id = $1)
 `
 
@@ -373,12 +383,15 @@ type ListLiveViewVehiclesRow struct {
 	DriverID       *int64  `json:"driver_id"`
 	DriverName     *string `json:"driver_name"`
 	DriverPhone    *string `json:"driver_phone"`
-	TrackerID      int64   `json:"tracker_id"`
-	TrackerImei    string  `json:"tracker_imei"`
+	TrackerID      *int64  `json:"tracker_id"`
+	TrackerImei    *string `json:"tracker_imei"`
+	CameraDeviceID string  `json:"camera_device_id"`
 }
 
-// Active vehicles that have a tracker with an IMEI — the set the live-view
-// endpoint enriches with positions from the telemetry service.
+// Active vehicles that can be located: those with a tracker IMEI, OR a linked
+// dashcam whose own GPS stands in when there is no tracker. The live-view
+// endpoint enriches each with a position — the tracker fix, else the camera fix.
+// At most one camera per vehicle stands in for GPS; pick the lowest-id device.
 func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64) ([]ListLiveViewVehiclesRow, error) {
 	rows, err := q.db.Query(ctx, listLiveViewVehicles, fleetGroupID)
 	if err != nil {
@@ -399,6 +412,7 @@ func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64)
 			&i.DriverPhone,
 			&i.TrackerID,
 			&i.TrackerImei,
+			&i.CameraDeviceID,
 		); err != nil {
 			return nil, err
 		}

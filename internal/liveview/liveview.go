@@ -57,14 +57,25 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 	out := make([]VehicleLive, 0, len(rows))
 	imeis := make([]string, 0, len(rows))
 	for _, r := range rows {
+		var tid int64
+		if r.TrackerID != nil {
+			tid = *r.TrackerID
+		}
+		imei := ""
+		if r.TrackerImei != nil {
+			imei = *r.TrackerImei
+		}
 		out = append(out, VehicleLive{
 			VehicleID: r.VehicleID, LicensePlate: r.LicensePlate, VehicleType: r.VehicleType, RegistryStatus: r.Status,
 			FleetGroupName: r.FleetGroupName,
 			Driver:         Driver{ID: r.DriverID, Name: r.DriverName, Phone: r.DriverPhone},
-			Tracker:        Tracker{ID: r.TrackerID, IMEI: r.TrackerImei},
+			Tracker:        Tracker{ID: tid, IMEI: imei},
+			CameraDeviceID: r.CameraDeviceID,
 			DriveState:     StateOffline,
 		})
-		imeis = append(imeis, r.TrackerImei)
+		if imei != "" {
+			imeis = append(imeis, imei)
+		}
 	}
 
 	// Fetch live fixes; on telemetry failure, log and return offline vehicles.
@@ -83,6 +94,36 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 	now := time.Now()
 	for i := range out {
 		enrich(&out[i], byIMEI[out[i].Tracker.IMEI], now)
+	}
+
+	// Camera fallback: for a vehicle with a linked dashcam but no live tracker
+	// fix, stand its position in from the camera's own GPS. One telemetry call,
+	// only when at least one such vehicle exists. The camera is authoritative for
+	// per-axis behaviour elsewhere; here it is simply the location of last resort.
+	needCam := false
+	for i := range out {
+		if out[i].Position == nil && out[i].CameraDeviceID != "" {
+			needCam = true
+			break
+		}
+	}
+	if needCam {
+		if cams, err := s.tel.Dashcams(ctx, ""); err != nil {
+			log.Printf("liveview: camera positions unavailable: %v", err)
+		} else {
+			byDevice := make(map[string]*telemetry.Dashcam, len(cams))
+			for i := range cams {
+				byDevice[cams[i].DeviceID] = &cams[i]
+			}
+			for i := range out {
+				if out[i].Position != nil || out[i].CameraDeviceID == "" {
+					continue
+				}
+				if d := byDevice[out[i].CameraDeviceID]; d != nil {
+					enrichCamera(&out[i], d.Lat, d.Lon, d.Online, now)
+				}
+			}
+		}
 	}
 
 	// Attach collector state (battery / GSM / odometer) plus the latest service
@@ -144,22 +185,44 @@ func (s *Service) One(ctx context.Context, tenantID, vehicleID int64) (*VehicleL
 	if err != nil {
 		return nil, err
 	}
+	var tid int64
+	if row.TrackerID != nil {
+		tid = *row.TrackerID
+	}
+	imei := ""
+	if row.TrackerImei != nil {
+		imei = *row.TrackerImei
+	}
 	v := VehicleLive{
 		VehicleID: row.VehicleID, LicensePlate: row.LicensePlate, VehicleType: row.VehicleType, RegistryStatus: row.Status,
 		FleetGroupName: row.FleetGroupName,
 		Driver:         Driver{ID: row.DriverID, Name: row.DriverName, Phone: row.DriverPhone},
-		Tracker:        Tracker{ID: row.TrackerID, IMEI: row.TrackerImei},
+		Tracker:        Tracker{ID: tid, IMEI: imei},
+		CameraDeviceID: row.CameraDeviceID,
 		DriveState:     StateOffline,
 	}
+	now := time.Now()
 	var pos *telemetry.Position
-	if row.TrackerImei != "" {
-		if p, err := s.tel.LiveOne(ctx, row.TrackerImei); err != nil {
-			log.Printf("liveview: telemetry unavailable for %s: %v", row.TrackerImei, err)
+	if imei != "" {
+		if p, err := s.tel.LiveOne(ctx, imei); err != nil {
+			log.Printf("liveview: telemetry unavailable for %s: %v", imei, err)
 		} else {
 			pos = p
 		}
 	}
-	enrich(&v, pos, time.Now())
+	enrich(&v, pos, now)
+
+	// No tracker fix but a linked camera — stand the position in from its GPS.
+	if v.Position == nil && v.CameraDeviceID != "" {
+		if cams, err := s.tel.Dashcams(ctx, ""); err == nil {
+			for i := range cams {
+				if cams[i].DeviceID == v.CameraDeviceID {
+					enrichCamera(&v, cams[i].Lat, cams[i].Lon, cams[i].Online, now)
+					break
+				}
+			}
+		}
+	}
 	return &v, nil
 }
 
@@ -587,7 +650,9 @@ func (s *Service) History(ctx context.Context, tenantID, vehicleID int64, from, 
 		if err != nil {
 			return err
 		}
-		imei = row.TrackerImei
+		if row.TrackerImei != nil {
+			imei = *row.TrackerImei
+		}
 		return nil
 	})
 	if err != nil {

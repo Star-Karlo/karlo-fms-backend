@@ -36,6 +36,9 @@ type Tracker struct {
 
 // Position is the JSON-friendly live fix.
 type Position struct {
+	// Source is where the fix came from: "tracker" (GPS unit) or "camera" (the
+	// dashcam's own GPS, used for vehicles that have no tracker).
+	Source    string    `json:"source,omitempty"`
 	Lat       *float64  `json:"lat"`
 	Lon       *float64  `json:"lon"`
 	Speed     *float64  `json:"speed"`
@@ -62,9 +65,12 @@ type VehicleLive struct {
 	Driver         Driver    `json:"driver"`
 	Tracker        Tracker   `json:"tracker"`
 	Position       *Position `json:"position"`
-	Online         bool      `json:"online"`
-	DriveState     string    `json:"drive_state"`
-	StaleMinutes   *float64  `json:"stale_minutes"`
+	// CameraDeviceID is the linked dashcam's VSS id, when the vehicle has one.
+	// Present whether or not the camera is the position source.
+	CameraDeviceID string   `json:"camera_device_id,omitempty"`
+	Online         bool     `json:"online"`
+	DriveState     string   `json:"drive_state"`
+	StaleMinutes   *float64 `json:"stale_minutes"`
 	// From the telemetry collector's state table (updated ~2min) — cheap to
 	// join fleet-wide, powers list filters without shipping metadata blobs.
 	BatteryV  *float64 `json:"battery_v"`
@@ -83,7 +89,8 @@ func enrich(v *VehicleLive, p *telemetry.Position, now time.Time) {
 		return
 	}
 	pos := &Position{
-		Lat: p.Lat, Lon: p.Lon, Speed: p.Speed, Bearing: p.Bearing, Ignition: p.Ignition,
+		Source: "tracker",
+		Lat:    p.Lat, Lon: p.Lon, Speed: p.Speed, Bearing: p.Bearing, Ignition: p.Ignition,
 		Time: p.Time, Kecamatan: p.Kecamatan, Kabupaten: p.Kabupaten, Kota: p.Kota,
 		Provinsi: p.Provinsi, Jalan: p.Jalan, Metadata: p.Metadata,
 	}
@@ -103,5 +110,22 @@ func enrich(v *VehicleLive, p *telemetry.Position, now time.Time) {
 		v.DriveState = StateIdle
 	default:
 		v.DriveState = StateParking
+	}
+}
+
+// enrichCamera places a vehicle by its dashcam's own GPS — the fallback for
+// vehicles with no tracker. The camera reports a last-known position, not a live
+// motion stream, so there is no speed/ignition to derive drive state from: an
+// online device with a fix is shown as located (parking), otherwise offline.
+func enrichCamera(v *VehicleLive, lat, lon *float64, online bool, now time.Time) {
+	if lat == nil || lon == nil {
+		return // keep whatever the tracker path left (offline)
+	}
+	v.Position = &Position{Source: "camera", Lat: lat, Lon: lon, Time: now}
+	v.Online = online
+	if online {
+		v.DriveState = StateParking
+	} else {
+		v.DriveState = StateOffline
 	}
 }

@@ -269,3 +269,18 @@ CREATE TABLE hangars (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Dashcams (VSS/MDVR devices) linked to vehicles. Trimmed for sqlc codegen;
+-- the authoritative definition (RLS, indexes) is db/migrations/0028_dashcams.sql.
+CREATE TABLE dashcams (
+  id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id     bigint NOT NULL REFERENCES tenants(id),
+  vehicle_id    bigint REFERENCES vehicles(id) ON DELETE SET NULL,
+  vss_device_id text NOT NULL,
+  device_name   text,
+  device_type   text,
+  channels      int NOT NULL DEFAULT 0,
+  channel_names text,
+  access_mode   int,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);

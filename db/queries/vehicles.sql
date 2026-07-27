@@ -81,8 +81,9 @@ WHERE (sqlc.narg('q')::text IS NULL
   AND (sqlc.narg('fleet_group_id')::bigint IS NULL OR v.fleet_group_id = sqlc.narg('fleet_group_id'));
 
 -- name: ListLiveViewVehicles :many
--- Active vehicles that have a tracker with an IMEI — the set the live-view
--- endpoint enriches with positions from the telemetry service.
+-- Active vehicles that can be located: those with a tracker IMEI, OR a linked
+-- dashcam whose own GPS stands in when there is no tracker. The live-view
+-- endpoint enriches each with a position — the tracker fix, else the camera fix.
 SELECT
   v.id            AS vehicle_id,
   v.license_plate,
@@ -93,13 +94,18 @@ SELECT
   e.full_name     AS driver_name,
   e.phone         AS driver_phone,
   t.id            AS tracker_id,
-  t.imei          AS tracker_imei
+  t.imei          AS tracker_imei,
+  COALESCE(dc.vss_device_id, '') AS camera_device_id
 FROM vehicles v
-JOIN trackers t           ON t.id = v.tracker_id
+LEFT JOIN trackers t      ON t.id = v.tracker_id
+-- At most one camera per vehicle stands in for GPS; pick the lowest-id device.
+LEFT JOIN LATERAL (
+  SELECT vss_device_id FROM dashcams d WHERE d.vehicle_id = v.id ORDER BY d.id LIMIT 1
+) dc ON true
 LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 LEFT JOIN employees e     ON e.id = v.current_driver_id
 WHERE v.status <> 'archive'
-  AND t.imei IS NOT NULL
+  AND (t.imei IS NOT NULL OR dc.vss_device_id IS NOT NULL)
   AND (sqlc.narg('fleet_group_id')::bigint IS NULL OR v.fleet_group_id = sqlc.narg('fleet_group_id'));
 
 -- name: GetLiveViewVehicle :one
@@ -113,9 +119,13 @@ SELECT
   e.full_name     AS driver_name,
   e.phone         AS driver_phone,
   t.id            AS tracker_id,
-  t.imei          AS tracker_imei
+  t.imei          AS tracker_imei,
+  COALESCE(dc.vss_device_id, '') AS camera_device_id
 FROM vehicles v
-JOIN trackers t           ON t.id = v.tracker_id
+LEFT JOIN trackers t      ON t.id = v.tracker_id
+LEFT JOIN LATERAL (
+  SELECT vss_device_id FROM dashcams d WHERE d.vehicle_id = v.id ORDER BY d.id LIMIT 1
+) dc ON true
 LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 LEFT JOIN employees e     ON e.id = v.current_driver_id
 WHERE v.id = $1;
