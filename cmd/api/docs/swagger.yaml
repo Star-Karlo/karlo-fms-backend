@@ -3977,6 +3977,10 @@ paths:
         in: query
         name: idle_lph
         type: number
+      - description: scope to one vehicle (0/omitted = whole fleet)
+        in: query
+        name: vehicle_id
+        type: integer
       produces:
       - application/json
       responses:

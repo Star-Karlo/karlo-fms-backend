@@ -2215,6 +2215,12 @@
                         "description": "idle litres/hour (default 2.5)",
                         "name": "idle_lph",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "scope to one vehicle (0/omitted = whole fleet)",
+                        "name": "vehicle_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {

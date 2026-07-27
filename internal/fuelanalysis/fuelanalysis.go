@@ -97,6 +97,7 @@ type Response struct {
 //	@Param			days	query		int		false	"window in days (default 30, max 35)"
 //	@Param			price	query		number	false	"price per litre (default 6800)"
 //	@Param			idle_lph	query	number	false	"idle litres/hour (default 2.5)"
+//	@Param			vehicle_id	query	int	false	"scope to one vehicle (0/omitted = whole fleet)"
 //	@Success		200	{object}	fuelanalysis.Response
 //	@Router			/v1/fuel/analysis [get]
 func (h *Handler) analysis(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +105,8 @@ func (h *Handler) analysis(w http.ResponseWriter, r *http.Request) {
 	days := clampInt(qInt(r, "days", defaultDays), 1, maxDays)
 	price := qFloat(r, "price", defaultPricePerLitre)
 	idleLph := qFloat(r, "idle_lph", defaultIdleLph)
+	// Optional: scope to one vehicle (the per-vehicle telemetry panel). 0 = fleet.
+	onlyVehicle := int64(qInt(r, "vehicle_id", 0))
 
 	// Telemetry distance + idle per vehicle over the window.
 	series, err := h.live.FleetDailySeries(r.Context(), tenantID, days)
@@ -135,7 +138,8 @@ func (h *Handler) analysis(w http.ResponseWriter, r *http.Request) {
 SELECT v.id, v.license_plate, v.vehicle_type, fg.name, v.fuel_tank_liters, v.fuel_ratio_kmpl
 FROM vehicles v LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 WHERE v.status <> 'archive'
-ORDER BY v.license_plate`)
+  AND ($1::bigint = 0 OR v.id = $1)
+ORDER BY v.license_plate`, onlyVehicle)
 		if err != nil {
 			return err
 		}
