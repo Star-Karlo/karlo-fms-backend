@@ -2189,6 +2189,51 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/fuel/analysis": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Per-vehicle estimated fuel use and cost over the last N days: distance ÷ configured km/L, plus idle burn and full-tank range. Price and idle rate are overridable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "fuel"
+                ],
+                "summary": "Fleet fuel analysis (estimated from telemetry distance)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "window in days (default 30, max 35)",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "price per litre (default 6800)",
+                        "name": "price",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "idle litres/hour (default 2.5)",
+                        "name": "idle_lph",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fuelanalysis.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/geofences": {
             "get": {
                 "security": [
@@ -6377,6 +6422,106 @@ const docTemplate = `{
                 }
             }
         },
+        "fuelanalysis.Response": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer"
+                },
+                "idle_lph": {
+                    "type": "number"
+                },
+                "price_per_litre": {
+                    "type": "number"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fuelanalysis.Row"
+                    }
+                },
+                "totals": {
+                    "$ref": "#/definitions/fuelanalysis.Totals"
+                }
+            }
+        },
+        "fuelanalysis.Row": {
+            "type": "object",
+            "properties": {
+                "cost": {
+                    "description": "estimated fuel cost",
+                    "type": "number"
+                },
+                "distance_km": {
+                    "type": "number"
+                },
+                "fleet_group": {
+                    "type": "string"
+                },
+                "idle_cost": {
+                    "type": "number"
+                },
+                "idle_hours": {
+                    "type": "number"
+                },
+                "idle_litres": {
+                    "description": "estimated fuel burned idling",
+                    "type": "number"
+                },
+                "kmpl": {
+                    "description": "configured efficiency",
+                    "type": "number"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "litres": {
+                    "description": "estimated fuel used (nil = no km/L set)",
+                    "type": "number"
+                },
+                "range_km": {
+                    "description": "full-tank range",
+                    "type": "number"
+                },
+                "refuels": {
+                    "description": "litres / tank size",
+                    "type": "number"
+                },
+                "tank_litres": {
+                    "description": "configured tank size",
+                    "type": "number"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                },
+                "vehicle_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "fuelanalysis.Totals": {
+            "type": "object",
+            "properties": {
+                "cost": {
+                    "type": "number"
+                },
+                "distance_km": {
+                    "type": "number"
+                },
+                "idle_cost": {
+                    "type": "number"
+                },
+                "idle_litres": {
+                    "type": "number"
+                },
+                "litres": {
+                    "type": "number"
+                },
+                "vehicles": {
+                    "type": "integer"
+                }
+            }
+        },
         "geofence.AssignedVehicle": {
             "type": "object",
             "properties": {
@@ -7354,6 +7499,10 @@ const docTemplate = `{
                 "provinsi": {
                     "type": "string"
                 },
+                "source": {
+                    "description": "Source is where the fix came from: \"tracker\" (GPS unit) or \"camera\" (the\ndashcam's own GPS, used for vehicles that have no tracker).",
+                    "type": "string"
+                },
                 "speed": {
                     "type": "number"
                 },
@@ -7448,6 +7597,10 @@ const docTemplate = `{
                 "battery_v": {
                     "description": "From the telemetry collector's state table (updated ~2min) — cheap to\njoin fleet-wide, powers list filters without shipping metadata blobs.",
                     "type": "number"
+                },
+                "camera_device_id": {
+                    "description": "CameraDeviceID is the linked dashcam's VSS id, when the vehicle has one.\nPresent whether or not the camera is the position source.",
+                    "type": "string"
                 },
                 "drive_state": {
                     "type": "string"

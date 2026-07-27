@@ -870,6 +870,74 @@ definitions:
       name:
         type: string
     type: object
+  fuelanalysis.Response:
+    properties:
+      days:
+        type: integer
+      idle_lph:
+        type: number
+      price_per_litre:
+        type: number
+      rows:
+        items:
+          $ref: '#/definitions/fuelanalysis.Row'
+        type: array
+      totals:
+        $ref: '#/definitions/fuelanalysis.Totals'
+    type: object
+  fuelanalysis.Row:
+    properties:
+      cost:
+        description: estimated fuel cost
+        type: number
+      distance_km:
+        type: number
+      fleet_group:
+        type: string
+      idle_cost:
+        type: number
+      idle_hours:
+        type: number
+      idle_litres:
+        description: estimated fuel burned idling
+        type: number
+      kmpl:
+        description: configured efficiency
+        type: number
+      license_plate:
+        type: string
+      litres:
+        description: estimated fuel used (nil = no km/L set)
+        type: number
+      range_km:
+        description: full-tank range
+        type: number
+      refuels:
+        description: litres / tank size
+        type: number
+      tank_litres:
+        description: configured tank size
+        type: number
+      vehicle_id:
+        type: integer
+      vehicle_type:
+        type: string
+    type: object
+  fuelanalysis.Totals:
+    properties:
+      cost:
+        type: number
+      distance_km:
+        type: number
+      idle_cost:
+        type: number
+      idle_litres:
+        type: number
+      litres:
+        type: number
+      vehicles:
+        type: integer
+    type: object
   geofence.AssignedVehicle:
     properties:
       license_plate:
@@ -1557,6 +1625,11 @@ definitions:
         type: array
       provinsi:
         type: string
+      source:
+        description: |-
+          Source is where the fix came from: "tracker" (GPS unit) or "camera" (the
+          dashcam's own GPS, used for vehicles that have no tracker).
+        type: string
       speed:
         type: number
       time:
@@ -1632,6 +1705,11 @@ definitions:
           From the telemetry collector's state table (updated ~2min) — cheap to
           join fleet-wide, powers list filters without shipping metadata blobs.
         type: number
+      camera_device_id:
+        description: |-
+          CameraDeviceID is the linked dashcam's VSS id, when the vehicle has one.
+          Present whether or not the camera is the position source.
+        type: string
       drive_state:
         type: string
       driver:
@@ -3881,6 +3959,36 @@ paths:
       summary: Available fuel-station brands, with counts
       tags:
       - fuel-stations
+  /v1/fuel/analysis:
+    get:
+      description: 'Per-vehicle estimated fuel use and cost over the last N days:
+        distance ÷ configured km/L, plus idle burn and full-tank range. Price and
+        idle rate are overridable.'
+      parameters:
+      - description: window in days (default 30, max 35)
+        in: query
+        name: days
+        type: integer
+      - description: price per litre (default 6800)
+        in: query
+        name: price
+        type: number
+      - description: idle litres/hour (default 2.5)
+        in: query
+        name: idle_lph
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fuelanalysis.Response'
+      security:
+      - BearerAuth: []
+      summary: Fleet fuel analysis (estimated from telemetry distance)
+      tags:
+      - fuel
   /v1/geofences:
     get:
       produces:
