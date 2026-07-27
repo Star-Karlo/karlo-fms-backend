@@ -136,6 +136,7 @@ CREATE TABLE notification_rules (
   applies_to        text NOT NULL DEFAULT 'all',
   target            jsonb NOT NULL DEFAULT '{}',
   threshold         numeric,
+  window_minutes    int,
   sent_to_self      boolean NOT NULL DEFAULT false,
   geofence_scoped   boolean NOT NULL DEFAULT false,
   time_scoped       boolean NOT NULL DEFAULT false,

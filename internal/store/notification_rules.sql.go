@@ -32,16 +32,16 @@ func (q *Queries) CountNotificationRules(ctx context.Context, arg CountNotificat
 const createNotificationRule = `-- name: CreateNotificationRule :one
 INSERT INTO notification_rules (
   tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to,
-  target, threshold, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery
+  target, threshold, window_minutes, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery
 ) VALUES (
   $1, $2, $3, $4, COALESCE($5,'important'),
   COALESCE($6,'active'), COALESCE($7,'all'),
-  COALESCE($8::jsonb, '{}'::jsonb), $9,
-  COALESCE($10, false), COALESCE($11, false),
-  COALESCE($12, false), COALESCE($13, false),
-  COALESCE($14::jsonb, '{}'::jsonb)
+  COALESCE($8::jsonb, '{}'::jsonb), $9, $10,
+  COALESCE($11, false), COALESCE($12, false),
+  COALESCE($13, false), COALESCE($14, false),
+  COALESCE($15::jsonb, '{}'::jsonb)
 )
-RETURNING id, tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to, target, threshold, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery, created_at, updated_at
+RETURNING id, tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to, target, threshold, window_minutes, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery, created_at, updated_at
 `
 
 type CreateNotificationRuleParams struct {
@@ -54,6 +54,7 @@ type CreateNotificationRuleParams struct {
 	AppliesTo        interface{}    `json:"applies_to"`
 	Target           []byte         `json:"target"`
 	Threshold        pgtype.Numeric `json:"threshold"`
+	WindowMinutes    *int32         `json:"window_minutes"`
 	SentToSelf       interface{}    `json:"sent_to_self"`
 	GeofenceScoped   interface{}    `json:"geofence_scoped"`
 	TimeScoped       interface{}    `json:"time_scoped"`
@@ -72,6 +73,7 @@ func (q *Queries) CreateNotificationRule(ctx context.Context, arg CreateNotifica
 		arg.AppliesTo,
 		arg.Target,
 		arg.Threshold,
+		arg.WindowMinutes,
 		arg.SentToSelf,
 		arg.GeofenceScoped,
 		arg.TimeScoped,
@@ -90,6 +92,7 @@ func (q *Queries) CreateNotificationRule(ctx context.Context, arg CreateNotifica
 		&i.AppliesTo,
 		&i.Target,
 		&i.Threshold,
+		&i.WindowMinutes,
 		&i.SentToSelf,
 		&i.GeofenceScoped,
 		&i.TimeScoped,
@@ -111,7 +114,7 @@ func (q *Queries) DeleteNotificationRule(ctx context.Context, id int64) error {
 }
 
 const getNotificationRule = `-- name: GetNotificationRule :one
-SELECT id, tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to, target, threshold, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery, created_at, updated_at FROM notification_rules WHERE id = $1
+SELECT id, tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to, target, threshold, window_minutes, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery, created_at, updated_at FROM notification_rules WHERE id = $1
 `
 
 func (q *Queries) GetNotificationRule(ctx context.Context, id int64) (NotificationRule, error) {
@@ -128,6 +131,7 @@ func (q *Queries) GetNotificationRule(ctx context.Context, id int64) (Notificati
 		&i.AppliesTo,
 		&i.Target,
 		&i.Threshold,
+		&i.WindowMinutes,
 		&i.SentToSelf,
 		&i.GeofenceScoped,
 		&i.TimeScoped,
@@ -140,7 +144,7 @@ func (q *Queries) GetNotificationRule(ctx context.Context, id int64) (Notificati
 }
 
 const listNotificationRules = `-- name: ListNotificationRules :many
-SELECT id, tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to, target, threshold, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery, created_at, updated_at FROM notification_rules
+SELECT id, tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to, target, threshold, window_minutes, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery, created_at, updated_at FROM notification_rules
 WHERE ($1::text IS NULL OR rule_name ILIKE '%' || $1 || '%' OR notification_name ILIKE '%' || $1 || '%')
   AND ($2::text IS NULL OR status = $2)
 ORDER BY created_at DESC
@@ -179,6 +183,7 @@ func (q *Queries) ListNotificationRules(ctx context.Context, arg ListNotificatio
 			&i.AppliesTo,
 			&i.Target,
 			&i.Threshold,
+			&i.WindowMinutes,
 			&i.SentToSelf,
 			&i.GeofenceScoped,
 			&i.TimeScoped,
@@ -206,13 +211,14 @@ SET rule_name         = COALESCE($2, rule_name),
     applies_to        = COALESCE($6, applies_to),
     target            = COALESCE($7, target),
     threshold         = COALESCE($8, threshold),
-    sent_to_self      = COALESCE($9, sent_to_self),
-    geofence_scoped   = COALESCE($10, geofence_scoped),
-    time_scoped       = COALESCE($11, time_scoped),
-    auto_popup        = COALESCE($12, auto_popup),
-    delivery          = COALESCE($13, delivery)
+    window_minutes    = COALESCE($9, window_minutes),
+    sent_to_self      = COALESCE($10, sent_to_self),
+    geofence_scoped   = COALESCE($11, geofence_scoped),
+    time_scoped       = COALESCE($12, time_scoped),
+    auto_popup        = COALESCE($13, auto_popup),
+    delivery          = COALESCE($14, delivery)
 WHERE id = $1
-RETURNING id, tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to, target, threshold, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery, created_at, updated_at
+RETURNING id, tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to, target, threshold, window_minutes, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery, created_at, updated_at
 `
 
 type UpdateNotificationRuleParams struct {
@@ -224,6 +230,7 @@ type UpdateNotificationRuleParams struct {
 	AppliesTo        *string        `json:"applies_to"`
 	Target           []byte         `json:"target"`
 	Threshold        pgtype.Numeric `json:"threshold"`
+	WindowMinutes    *int32         `json:"window_minutes"`
 	SentToSelf       *bool          `json:"sent_to_self"`
 	GeofenceScoped   *bool          `json:"geofence_scoped"`
 	TimeScoped       *bool          `json:"time_scoped"`
@@ -241,6 +248,7 @@ func (q *Queries) UpdateNotificationRule(ctx context.Context, arg UpdateNotifica
 		arg.AppliesTo,
 		arg.Target,
 		arg.Threshold,
+		arg.WindowMinutes,
 		arg.SentToSelf,
 		arg.GeofenceScoped,
 		arg.TimeScoped,
@@ -259,6 +267,7 @@ func (q *Queries) UpdateNotificationRule(ctx context.Context, arg UpdateNotifica
 		&i.AppliesTo,
 		&i.Target,
 		&i.Threshold,
+		&i.WindowMinutes,
 		&i.SentToSelf,
 		&i.GeofenceScoped,
 		&i.TimeScoped,

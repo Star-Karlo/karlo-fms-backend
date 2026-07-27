@@ -24,6 +24,7 @@ import (
 
 	_ "github.com/karlo/fms-backend/cmd/api/docs"
 	"github.com/karlo/fms-backend/internal/aidash"
+	"github.com/karlo/fms-backend/internal/airule"
 	"github.com/karlo/fms-backend/internal/aireport"
 	"github.com/karlo/fms-backend/internal/alert"
 	"github.com/karlo/fms-backend/internal/apitoken"
@@ -128,6 +129,8 @@ func main() {
 	// unauthorised Bedrock config disables just this endpoint (503) rather
 	// than failing startup.
 	aiDashH := aidash.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
+	// AI notification-rule composition (same Bedrock model, same disable-on-503).
+	aiRuleH := airule.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
 	geofenceH := geofence.NewHandler(pool)
 	fuelH := fuel.NewHandler(pool)
 	fuelAnalysisH := fuelanalysis.NewHandler(pool, liveSvc)
@@ -209,6 +212,7 @@ func main() {
 		reportH.Routes(pr)
 		customReportH.Routes(pr)
 		aiReportH.Routes(pr)
+		aiRuleH.Routes(pr)
 		licenseH.Routes(pr)
 		maintenanceH.Routes(pr)
 		scorecardH.Routes(pr)

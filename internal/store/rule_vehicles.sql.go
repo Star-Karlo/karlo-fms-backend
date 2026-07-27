@@ -43,7 +43,7 @@ func (q *Queries) DetachRuleVehicle(ctx context.Context, arg DetachRuleVehiclePa
 }
 
 const listActiveRuleTargets = `-- name: ListActiveRuleTargets :many
-SELECT r.id AS rule_id, r.alert_code, r.threshold, r.urgency, r.rule_name,
+SELECT r.id AS rule_id, r.alert_code, r.threshold, r.window_minutes, r.urgency, r.rule_name,
        r.notification_name, rv.vehicle_id, t.imei
 FROM notification_rules r
 JOIN rule_vehicles rv ON rv.rule_id = r.id
@@ -56,6 +56,7 @@ type ListActiveRuleTargetsRow struct {
 	RuleID           int64          `json:"rule_id"`
 	AlertCode        string         `json:"alert_code"`
 	Threshold        pgtype.Numeric `json:"threshold"`
+	WindowMinutes    *int32         `json:"window_minutes"`
 	Urgency          string         `json:"urgency"`
 	RuleName         string         `json:"rule_name"`
 	NotificationName *string        `json:"notification_name"`
@@ -77,6 +78,7 @@ func (q *Queries) ListActiveRuleTargets(ctx context.Context) ([]ListActiveRuleTa
 			&i.RuleID,
 			&i.AlertCode,
 			&i.Threshold,
+			&i.WindowMinutes,
 			&i.Urgency,
 			&i.RuleName,
 			&i.NotificationName,

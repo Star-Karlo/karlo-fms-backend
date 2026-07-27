@@ -111,6 +111,63 @@
                 }
             }
         },
+        "/v1/ai/notification-rules/compose": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Given a natural-language request, returns a list of proposed\nnotification rules (event + count threshold + time window +\nurgency). The caller reviews and saves them — the model proposes,\nit does not persist.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ai"
+                ],
+                "summary": "Compose notification rules from a description",
+                "parameters": [
+                    {
+                        "description": "prompt",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/airule.composeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/airule.composeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "prompt missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "AI composition not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/ai/report/compose": {
             "post": {
                 "security": [
@@ -5270,6 +5327,48 @@
                 }
             }
         },
+        "airule.composeRequest": {
+            "type": "object",
+            "properties": {
+                "locale": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                }
+            }
+        },
+        "airule.composeResponse": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "usage": {
+                    "$ref": "#/definitions/airule.usage"
+                }
+            }
+        },
+        "airule.usage": {
+            "type": "object",
+            "properties": {
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
         "alert.AlertType": {
             "type": "object",
             "properties": {
@@ -7852,6 +7951,10 @@
                 },
                 "urgency": {
                     "type": "string"
+                },
+                "window_minutes": {
+                    "description": "WindowMinutes, when set, makes this a FREQUENCY rule: fire when \u003e= Threshold\nevents of AlertCode occur for a vehicle within this many minutes (e.g.\n\"smoking \u003e= 10 times in 60 minutes\"). Nil = an instantaneous rule.",
+                    "type": "integer"
                 }
             }
         },
@@ -7928,6 +8031,9 @@
                 },
                 "urgency": {
                     "type": "string"
+                },
+                "window_minutes": {
+                    "type": "integer"
                 }
             }
         },

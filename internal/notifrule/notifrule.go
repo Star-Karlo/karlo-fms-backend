@@ -29,6 +29,10 @@ type DTO struct {
 	AppliesTo        string          `json:"applies_to"`
 	Target           json.RawMessage `json:"target"`
 	Threshold        *float64        `json:"threshold"`
+	// WindowMinutes, when set, makes this a FREQUENCY rule: fire when >= Threshold
+	// events of AlertCode occur for a vehicle within this many minutes (e.g.
+	// "smoking >= 10 times in 60 minutes"). Nil = an instantaneous rule.
+	WindowMinutes    *int            `json:"window_minutes"`
 	SentToSelf       bool            `json:"sent_to_self"`
 	GeofenceScoped   bool            `json:"geofence_scoped"`
 	TimeScoped       bool            `json:"time_scoped"`
@@ -47,6 +51,7 @@ type WriteRequest struct {
 	AppliesTo        *string         `json:"applies_to"`
 	Target           json.RawMessage `json:"target"`
 	Threshold        *float64        `json:"threshold"`
+	WindowMinutes    *int            `json:"window_minutes"`
 	SentToSelf       *bool           `json:"sent_to_self"`
 	GeofenceScoped   *bool           `json:"geofence_scoped"`
 	TimeScoped       *bool           `json:"time_scoped"`
@@ -58,7 +63,8 @@ func fromRow(r store.NotificationRule) DTO {
 	return DTO{
 		ID: r.ID, RuleName: r.RuleName, AlertCode: r.AlertCode, NotificationName: r.NotificationName,
 		Urgency: r.Urgency, Status: r.Status, AppliesTo: r.AppliesTo, Target: json.RawMessage(r.Target),
-		Threshold: conv.NumF(r.Threshold), SentToSelf: r.SentToSelf, GeofenceScoped: r.GeofenceScoped,
+		Threshold: conv.NumF(r.Threshold), WindowMinutes: i32toInt(r.WindowMinutes),
+		SentToSelf: r.SentToSelf, GeofenceScoped: r.GeofenceScoped,
 		TimeScoped: r.TimeScoped, AutoPopup: r.AutoPopup, Delivery: json.RawMessage(r.Delivery),
 		CreatedAt: conv.Time(r.CreatedAt),
 	}
@@ -77,6 +83,24 @@ func iface[T any](p *T) interface{} {
 		return nil
 	}
 	return *p
+}
+
+// i32toInt / intToI32 bridge the store's nullable int32 window column and the
+// DTO's *int.
+func i32toInt(p *int32) *int {
+	if p == nil {
+		return nil
+	}
+	v := int(*p)
+	return &v
+}
+
+func intToI32(p *int) *int32 {
+	if p == nil {
+		return nil
+	}
+	v := int32(*p)
+	return &v
 }
 
 // Handler exposes notification-rule endpoints.
@@ -300,7 +324,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		rr, err := store.New(tx).CreateNotificationRule(r.Context(), store.CreateNotificationRuleParams{
 			TenantID: tid, RuleName: req.RuleName, AlertCode: req.AlertCode, NotificationName: req.NotificationName,
 			Urgency: iface(req.Urgency), Status: iface(req.Status), AppliesTo: iface(req.AppliesTo),
-			Target: jsonBytes(req.Target), Threshold: conv.Num(req.Threshold),
+			Target: jsonBytes(req.Target), Threshold: conv.Num(req.Threshold), WindowMinutes: intToI32(req.WindowMinutes),
 			SentToSelf: iface(req.SentToSelf), GeofenceScoped: iface(req.GeofenceScoped),
 			TimeScoped: iface(req.TimeScoped), AutoPopup: iface(req.AutoPopup), Delivery: jsonBytes(req.Delivery),
 		})
@@ -344,7 +368,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		rr, err := store.New(tx).UpdateNotificationRule(r.Context(), store.UpdateNotificationRuleParams{
 			ID: id, RuleName: conv.StrPtr(req.RuleName), NotificationName: req.NotificationName,
 			Urgency: req.Urgency, Status: req.Status, AppliesTo: req.AppliesTo,
-			Target: jsonBytes(req.Target), Threshold: conv.Num(req.Threshold),
+			Target: jsonBytes(req.Target), Threshold: conv.Num(req.Threshold), WindowMinutes: intToI32(req.WindowMinutes),
 			SentToSelf: req.SentToSelf, GeofenceScoped: req.GeofenceScoped,
 			TimeScoped: req.TimeScoped, AutoPopup: req.AutoPopup, Delivery: jsonBytes(req.Delivery),
 		})

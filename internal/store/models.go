@@ -54,6 +54,19 @@ type DashboardLayout struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Dashcam struct {
+	ID           int64              `json:"id"`
+	TenantID     int64              `json:"tenant_id"`
+	VehicleID    *int64             `json:"vehicle_id"`
+	VssDeviceID  string             `json:"vss_device_id"`
+	DeviceName   *string            `json:"device_name"`
+	DeviceType   *string            `json:"device_type"`
+	Channels     int32              `json:"channels"`
+	ChannelNames *string            `json:"channel_names"`
+	AccessMode   *int32             `json:"access_mode"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type Document struct {
 	ID        int64              `json:"id"`
 	TenantID  int64              `json:"tenant_id"`
@@ -133,6 +146,7 @@ type NotificationRule struct {
 	AppliesTo        string             `json:"applies_to"`
 	Target           []byte             `json:"target"`
 	Threshold        pgtype.Numeric     `json:"threshold"`
+	WindowMinutes    *int32             `json:"window_minutes"`
 	SentToSelf       bool               `json:"sent_to_self"`
 	GeofenceScoped   bool               `json:"geofence_scoped"`
 	TimeScoped       bool               `json:"time_scoped"`

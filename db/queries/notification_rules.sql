@@ -16,11 +16,11 @@ SELECT * FROM notification_rules WHERE id = $1;
 -- name: CreateNotificationRule :one
 INSERT INTO notification_rules (
   tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to,
-  target, threshold, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery
+  target, threshold, window_minutes, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery
 ) VALUES (
   $1, $2, $3, sqlc.narg('notification_name'), COALESCE(sqlc.narg('urgency'),'important'),
   COALESCE(sqlc.narg('status'),'active'), COALESCE(sqlc.narg('applies_to'),'all'),
-  COALESCE(sqlc.narg('target')::jsonb, '{}'::jsonb), sqlc.narg('threshold'),
+  COALESCE(sqlc.narg('target')::jsonb, '{}'::jsonb), sqlc.narg('threshold'), sqlc.narg('window_minutes'),
   COALESCE(sqlc.narg('sent_to_self'), false), COALESCE(sqlc.narg('geofence_scoped'), false),
   COALESCE(sqlc.narg('time_scoped'), false), COALESCE(sqlc.narg('auto_popup'), false),
   COALESCE(sqlc.narg('delivery')::jsonb, '{}'::jsonb)
@@ -36,6 +36,7 @@ SET rule_name         = COALESCE(sqlc.narg('rule_name'), rule_name),
     applies_to        = COALESCE(sqlc.narg('applies_to'), applies_to),
     target            = COALESCE(sqlc.narg('target'), target),
     threshold         = COALESCE(sqlc.narg('threshold'), threshold),
+    window_minutes    = COALESCE(sqlc.narg('window_minutes'), window_minutes),
     sent_to_self      = COALESCE(sqlc.narg('sent_to_self'), sent_to_self),
     geofence_scoped   = COALESCE(sqlc.narg('geofence_scoped'), geofence_scoped),
     time_scoped       = COALESCE(sqlc.narg('time_scoped'), time_scoped),

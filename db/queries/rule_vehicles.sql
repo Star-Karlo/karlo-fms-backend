@@ -20,7 +20,7 @@ SELECT rule_id FROM rule_vehicles WHERE vehicle_id = @vehicle_id;
 
 -- name: ListActiveRuleTargets :many
 -- Every (active rule x attached vehicle) with the tracker IMEI, for the engine.
-SELECT r.id AS rule_id, r.alert_code, r.threshold, r.urgency, r.rule_name,
+SELECT r.id AS rule_id, r.alert_code, r.threshold, r.window_minutes, r.urgency, r.rule_name,
        r.notification_name, rv.vehicle_id, t.imei
 FROM notification_rules r
 JOIN rule_vehicles rv ON rv.rule_id = r.id

@@ -81,6 +81,33 @@ definitions:
       output_tokens:
         type: integer
     type: object
+  airule.composeRequest:
+    properties:
+      locale:
+        type: string
+      prompt:
+        type: string
+    type: object
+  airule.composeResponse:
+    properties:
+      attempts:
+        type: integer
+      notes:
+        type: string
+      rules:
+        items:
+          type: integer
+        type: array
+      usage:
+        $ref: '#/definitions/airule.usage'
+    type: object
+  airule.usage:
+    properties:
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
+    type: object
   alert.AlertType:
     properties:
       code:
@@ -1885,6 +1912,12 @@ definitions:
         type: boolean
       urgency:
         type: string
+      window_minutes:
+        description: |-
+          WindowMinutes, when set, makes this a FREQUENCY rule: fire when >= Threshold
+          events of AlertCode occur for a vehicle within this many minutes (e.g.
+          "smoking >= 10 times in 60 minutes"). Nil = an instantaneous rule.
+        type: integer
     type: object
   notifrule.VehicleRule:
     properties:
@@ -1935,6 +1968,8 @@ definitions:
         type: boolean
       urgency:
         type: string
+      window_minutes:
+        type: integer
     type: object
   report.AlertRow:
     properties:
@@ -2649,6 +2684,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Compose a dashboard from a description
+      tags:
+      - ai
+  /v1/ai/notification-rules/compose:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Given a natural-language request, returns a list of proposed
+        notification rules (event + count threshold + time window +
+        urgency). The caller reviews and saves them — the model proposes,
+        it does not persist.
+      parameters:
+      - description: prompt
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/airule.composeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/airule.composeResponse'
+        "400":
+          description: prompt missing
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: AI composition not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Compose notification rules from a description
       tags:
       - ai
   /v1/ai/report/compose:

@@ -2,6 +2,8 @@
 // Notification module, and the Vehicle Alerts History report.
 package alert
 
+import "strings"
+
 // DeviceSource classifies where an alert originates.
 const (
 	SourceGPS    = "gps"
@@ -26,9 +28,21 @@ type AlertType struct {
 	Scorecard bool `json:"scorecard"`
 }
 
+// freqSuffix marks a frequency (rollup) alert code — a rule that fired because
+// a source event repeated within a window. Its code is the source code plus this
+// suffix, so it groups distinctly and never re-triggers its own rule.
+const freqSuffix = "_FREQ"
+
+// FrequencyCode is the rollup alert code a frequency rule writes for a source
+// event code (DMS_SMOKING -> DMS_SMOKING_FREQ).
+func FrequencyCode(sourceCode string) string { return sourceCode + freqSuffix }
+
 // LabelFor returns the canonical English display name for an alert code
 // (analytics buckets group by code; names carry per-event values).
 func LabelFor(code string) string {
+	if src, ok := strings.CutSuffix(code, freqSuffix); ok {
+		return "Repeated " + LabelFor(src)
+	}
 	for _, t := range Taxonomy {
 		if t.Code == code {
 			return t.NameEN

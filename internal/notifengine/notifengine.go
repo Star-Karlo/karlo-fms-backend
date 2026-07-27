@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/karlo/fms-backend/internal/alert"
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/store"
@@ -109,6 +110,20 @@ func (e *Engine) evalTenant(ctx context.Context, tenantID int64) (int, error) {
 		return 0, nil
 	}
 
+	created := 0
+
+	// Frequency pass — DB-only, no telemetry needed. Camera/behaviour events
+	// already land as one alert each (the dashcam poller); a frequency rule fires
+	// when enough of them pile up in its window for an attached vehicle.
+	for _, t := range targets {
+		n, err := e.evalFrequency(ctx, tenantID, t)
+		if err != nil {
+			log.Printf("notifengine: frequency veh %d code %s: %v", t.VehicleID, t.AlertCode, err)
+			continue
+		}
+		created += n
+	}
+
 	// Collect IMEIs of vehicles that carry an OVERSPEED rule, then fetch live.
 	imeiSet := map[string]struct{}{}
 	for _, t := range targets {
@@ -117,7 +132,7 @@ func (e *Engine) evalTenant(ctx context.Context, tenantID int64) (int, error) {
 		}
 	}
 	if len(imeiSet) == 0 {
-		return 0, nil
+		return created, nil // no OVERSPEED rules; frequency pass already counted
 	}
 	imeis := make([]string, 0, len(imeiSet))
 	for im := range imeiSet {
@@ -125,14 +140,13 @@ func (e *Engine) evalTenant(ctx context.Context, tenantID int64) (int, error) {
 	}
 	positions, err := e.tel.LiveMany(ctx, imeis, []string{"lat", "lon", "speed"})
 	if err != nil {
-		return 0, fmt.Errorf("telemetry: %w", err)
+		return created, fmt.Errorf("telemetry: %w", err)
 	}
 	byIMEI := make(map[string]telemetry.Position, len(positions))
 	for _, p := range positions {
 		byIMEI[p.IMEI] = p
 	}
 
-	created := 0
 	for _, t := range targets {
 		if t.AlertCode != "OVERSPEED" || t.Imei == nil {
 			continue // only OVERSPEED is evaluable today
@@ -158,6 +172,74 @@ func (e *Engine) evalTenant(ctx context.Context, tenantID int64) (int, error) {
 		}
 	}
 	return created, nil
+}
+
+// evalFrequency handles one frequency target: if at least `threshold` events of
+// the source code fired for the vehicle within the window, and no rollup has
+// fired this window already, it writes one escalation alert.
+//
+// The rollup uses a distinct code (source + "_FREQ") so it never counts toward
+// its own rule, and its cooldown is the window itself — one escalation per
+// window, not one per tick.
+func (e *Engine) evalFrequency(ctx context.Context, tenantID int64, t store.ListActiveRuleTargetsRow) (int, error) {
+	if t.WindowMinutes == nil || *t.WindowMinutes <= 0 {
+		return 0, nil // not a frequency rule
+	}
+	window := *t.WindowMinutes
+	thr := conv.NumF(t.Threshold)
+	if thr == nil || *thr < 1 {
+		return 0, nil // a frequency rule needs a count threshold >= 1
+	}
+	minCount := int64(*thr)
+	rollup := alert.FrequencyCode(t.AlertCode)
+	vid := t.VehicleID
+
+	wrote := false
+	err := db.Tx(ctx, e.pool, tenantID, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		// Count source events in the window.
+		n, err := q.CountRecentAlert(ctx, store.CountRecentAlertParams{
+			TenantID: tenantID, VehicleID: &vid, AlertCode: &t.AlertCode, CooldownMin: window,
+		})
+		if err != nil {
+			return err
+		}
+		if n < minCount {
+			return nil
+		}
+		// One escalation per window: skip if a rollup already fired inside it.
+		recent, err := q.CountRecentAlert(ctx, store.CountRecentAlertParams{
+			TenantID: tenantID, VehicleID: &vid, AlertCode: &rollup, CooldownMin: window,
+		})
+		if err != nil {
+			return err
+		}
+		if recent > 0 {
+			return nil
+		}
+
+		name := fmt.Sprintf("%s ×%d in %dm", alert.LabelFor(t.AlertCode), n, window)
+		if t.NotificationName != nil && *t.NotificationName != "" {
+			name = *t.NotificationName
+		}
+		sev := t.Urgency
+		count := float64(n)
+		if _, err := q.CreateAlert(ctx, store.CreateAlertParams{
+			TenantID: tenantID, VehicleID: &vid, AlertCode: &rollup, AlertName: &name, Severity: &sev,
+			ActualValue: conv.Num(&count), LimitValue: conv.Num(thr),
+		}); err != nil {
+			return err
+		}
+		wrote = true
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if wrote {
+		return 1, nil
+	}
+	return 0, nil
 }
 
 // writeAlert persists one overspeed alert unless a recent one already exists.
