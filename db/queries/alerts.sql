@@ -104,11 +104,13 @@ WHERE (sqlc.narg('from')::timestamptz IS NULL OR a.occurred_at >= sqlc.narg('fro
 GROUP BY a.vehicle_id, v.license_plate ORDER BY count DESC LIMIT 10;
 
 -- name: CreateAlert :one
--- Insert a generated alert (from the notification-rule engine).
+-- Insert a generated alert (from the notification-rule engine or the camera
+-- alarm poller). device_source defaults to 'gps'; camera alarms pass 'camera'
+-- so they can be filtered as camera events.
 INSERT INTO alerts (tenant_id, vehicle_id, alert_code, alert_name, severity,
                     device_source, occurred_at, actual_value, limit_value, lat, lon, check_status)
 VALUES (@tenant_id, @vehicle_id, @alert_code, @alert_name, @severity,
-        'gps', now(), @actual_value, @limit_value, @lat, @lon, 'unchecked')
+        COALESCE(sqlc.narg('device_source'), 'gps'), now(), @actual_value, @limit_value, @lat, @lon, 'unchecked')
 RETURNING id;
 
 -- name: CountRecentAlert :one

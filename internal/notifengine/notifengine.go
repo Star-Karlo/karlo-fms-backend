@@ -224,9 +224,15 @@ func (e *Engine) evalFrequency(ctx context.Context, tenantID int64, t store.List
 		}
 		sev := t.Urgency
 		count := float64(n)
+		// Carry the source's device_source so a camera-event frequency rollup is
+		// filterable as a camera event.
+		src := "gps"
+		if at, ok := alert.Lookup(t.AlertCode); ok {
+			src = at.Source
+		}
 		if _, err := q.CreateAlert(ctx, store.CreateAlertParams{
 			TenantID: tenantID, VehicleID: &vid, AlertCode: &rollup, AlertName: &name, Severity: &sev,
-			ActualValue: conv.Num(&count), LimitValue: conv.Num(thr),
+			DeviceSource: &src, ActualValue: conv.Num(&count), LimitValue: conv.Num(thr),
 		}); err != nil {
 			return err
 		}

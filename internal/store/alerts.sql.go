@@ -395,23 +395,26 @@ const createAlert = `-- name: CreateAlert :one
 INSERT INTO alerts (tenant_id, vehicle_id, alert_code, alert_name, severity,
                     device_source, occurred_at, actual_value, limit_value, lat, lon, check_status)
 VALUES ($1, $2, $3, $4, $5,
-        'gps', now(), $6, $7, $8, $9, 'unchecked')
+        COALESCE($6, 'gps'), now(), $7, $8, $9, $10, 'unchecked')
 RETURNING id
 `
 
 type CreateAlertParams struct {
-	TenantID    int64          `json:"tenant_id"`
-	VehicleID   *int64         `json:"vehicle_id"`
-	AlertCode   *string        `json:"alert_code"`
-	AlertName   *string        `json:"alert_name"`
-	Severity    *string        `json:"severity"`
-	ActualValue pgtype.Numeric `json:"actual_value"`
-	LimitValue  pgtype.Numeric `json:"limit_value"`
-	Lat         *float64       `json:"lat"`
-	Lon         *float64       `json:"lon"`
+	TenantID     int64          `json:"tenant_id"`
+	VehicleID    *int64         `json:"vehicle_id"`
+	AlertCode    *string        `json:"alert_code"`
+	AlertName    *string        `json:"alert_name"`
+	Severity     *string        `json:"severity"`
+	DeviceSource interface{}    `json:"device_source"`
+	ActualValue  pgtype.Numeric `json:"actual_value"`
+	LimitValue   pgtype.Numeric `json:"limit_value"`
+	Lat          *float64       `json:"lat"`
+	Lon          *float64       `json:"lon"`
 }
 
-// Insert a generated alert (from the notification-rule engine).
+// Insert a generated alert (from the notification-rule engine or the camera
+// alarm poller). device_source defaults to 'gps'; camera alarms pass 'camera'
+// so they can be filtered as camera events.
 func (q *Queries) CreateAlert(ctx context.Context, arg CreateAlertParams) (int64, error) {
 	row := q.db.QueryRow(ctx, createAlert,
 		arg.TenantID,
@@ -419,6 +422,7 @@ func (q *Queries) CreateAlert(ctx context.Context, arg CreateAlertParams) (int64
 		arg.AlertCode,
 		arg.AlertName,
 		arg.Severity,
+		arg.DeviceSource,
 		arg.ActualValue,
 		arg.LimitValue,
 		arg.Lat,

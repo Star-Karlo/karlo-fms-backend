@@ -93,15 +93,17 @@ func (p *AlarmPoller) tick(ctx context.Context) error {
 		}
 		code, name, severity := alarmMeta(a.Code)
 		occurred := parseTime(a.OccurredAt)
+		camera := "camera"
 		if err := db.Tx(ctx, p.pool, link.tenantID, func(tx pgx.Tx) error {
 			_, e := store.New(tx).CreateAlert(ctx, store.CreateAlertParams{
-				TenantID:  link.tenantID,
-				VehicleID: &link.vehicleID,
-				AlertCode: &code,
-				AlertName: &name,
-				Severity:  &severity,
-				Lat:       a.Lat,
-				Lon:       a.Lon,
+				TenantID:     link.tenantID,
+				VehicleID:    &link.vehicleID,
+				AlertCode:    &code,
+				AlertName:    &name,
+				Severity:     &severity,
+				DeviceSource: &camera,
+				Lat:          a.Lat,
+				Lon:          a.Lon,
 			})
 			return e
 		}); err != nil {
