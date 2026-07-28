@@ -174,6 +174,8 @@ func main() {
 	// Dashcam alarms: poll the telemetry service and raise FMS alerts. No-op
 	// effect until cameras report; safe when telemetry has none.
 	go dashcam.NewAlarmPoller(pool, tel).Run(ctx)
+	// Completes pending clip saves in the background (start Save -> ready/failed).
+	go dashcamH.ReconcileClips(ctx)
 	go dashcam.NewGreenPoller(pool, tel).Run(ctx)
 	go webhook.NewDispatcher(pool).Run(ctx)
 	// Nightly driver safety scoring from the daily rollup — needs the same

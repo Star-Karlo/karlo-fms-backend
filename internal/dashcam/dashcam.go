@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -55,11 +54,6 @@ type AttachRequest struct {
 type Handler struct {
 	pool *db.Pool
 	tel  *telemetry.Client
-
-	// pending clip downloads, keyed by telemetry job id — what each in-flight
-	// save is for, so completion records it against the right truck.
-	pmu     sync.Mutex
-	pending map[string]pendingClip
 }
 
 // NewHandler builds the handler. tel is the telemetry-service client — the only
@@ -372,14 +366,21 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		h.gatewayError(w, err)
 		return
 	}
-	// Remember what this job is for, so when it completes we can record the clip
-	// against the right truck without the client having to send it all back.
-	h.remember(jobID, pendingClip{
+	// Record the clip as PENDING right away, so it appears in Saved Evidence the
+	// instant the operator clicks Save. The reconciler flips it to ready/failed
+	// when the background download finishes — the client need not wait or poll.
+	pc := pendingClip{
 		tenantID: auth.TenantID(r.Context()), dashcamID: dc.id, vehicleID: dc.vehicleID,
 		deviceID: dc.deviceID, channel: req.Channel, start: req.Start, stop: req.Stop,
 		lat: req.Lat, lon: req.Lon, note: req.Note, userID: auth.UserID(r.Context()),
-	})
-	httpx.JSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+	}
+	clipID, err := h.insertPendingClip(r.Context(), pc, jobID)
+	if err != nil {
+		log.Printf("dashcam: insert pending clip for job %s: %v", jobID, err)
+		httpx.Error(w, http.StatusInternalServerError, "could not start the save")
+		return
+	}
+	httpx.JSON(w, http.StatusAccepted, map[string]any{"job_id": jobID, "clip_id": clipID})
 }
 
 // downloadStatus godoc
@@ -399,21 +400,12 @@ func (h *Handler) downloadStatus(w http.ResponseWriter, r *http.Request) {
 		h.gatewayError(w, err)
 		return
 	}
+	// The clip row is recorded and completed server-side (insertPendingClip +
+	// the reconciler), so this just relays the live job status for any caller
+	// that wants immediate feedback.
 	resp := map[string]any{"status": st.Status}
 	if st.Error != "" {
 		resp["error"] = st.Error
-	}
-	// On completion, record the clip once (the pending entry is consumed) so a
-	// repeat poll does not insert twice.
-	if st.Status == "done" && st.S3Key != "" {
-		if pc, ok := h.take(jobID); ok {
-			clipID, cerr := h.recordClip(r.Context(), pc, st.Bucket, st.S3Key)
-			if cerr != nil {
-				log.Printf("dashcam: record clip for job %s: %v", jobID, cerr)
-			} else {
-				resp["clip_id"] = clipID
-			}
-		}
 	}
 	httpx.JSON(w, http.StatusOK, resp)
 }
@@ -439,11 +431,11 @@ func (h *Handler) listClips(w http.ResponseWriter, r *http.Request) {
 		rows, err := tx.Query(r.Context(), `
 SELECT c.id, c.vehicle_id, v.license_plate, c.vss_device_id, c.channel,
        to_char(c.clip_start, 'YYYY-MM-DD"T"HH24:MI:SSOF:00'),
-       c.s3_bucket, c.s3_key, c.size_bytes, c.lat, c.lon, c.reason, c.note,
+       c.status, c.error, c.s3_bucket, c.s3_key, c.size_bytes, c.lat, c.lon, c.reason, c.note,
        to_char(c.created_at, 'YYYY-MM-DD"T"HH24:MI:SSOF:00')
 FROM video_clips c LEFT JOIN vehicles v ON v.id = c.vehicle_id
 WHERE ($1::bigint IS NULL OR c.vehicle_id = $1)
-ORDER BY c.clip_start DESC LIMIT 500`, vehicleFilter)
+ORDER BY c.created_at DESC LIMIT 500`, vehicleFilter)
 		if err != nil {
 			return err
 		}
@@ -452,7 +444,7 @@ ORDER BY c.clip_start DESC LIMIT 500`, vehicleFilter)
 		for rows.Next() {
 			var c ClipDTO
 			if err := rows.Scan(&c.ID, &c.VehicleID, &c.LicensePlate, &c.VSSDeviceID, &c.Channel,
-				&c.ClipStart, &c.S3Bucket, &c.S3Key, &c.SizeBytes, &c.Lat, &c.Lon, &c.Reason, &c.Note, &c.CreatedAt); err != nil {
+				&c.ClipStart, &c.Status, &c.Error, &c.S3Bucket, &c.S3Key, &c.SizeBytes, &c.Lat, &c.Lon, &c.Reason, &c.Note, &c.CreatedAt); err != nil {
 				return err
 			}
 			items = append(items, c)
@@ -474,14 +466,17 @@ type ClipDTO struct {
 	VSSDeviceID  string   `json:"vss_device_id"`
 	Channel      int      `json:"channel"`
 	ClipStart    string   `json:"clip_start"`
-	S3Bucket     string   `json:"s3_bucket"`
-	S3Key        string   `json:"s3_key"`
-	SizeBytes    *int64   `json:"size_bytes"`
-	Lat          *float64 `json:"lat"`
-	Lon          *float64 `json:"lon"`
-	Reason       string   `json:"reason"`
-	Note         *string  `json:"note"`
-	CreatedAt    string   `json:"created_at"`
+	// pending | ready | failed. s3_key/bucket are null until ready.
+	Status    string   `json:"status"`
+	Error     *string  `json:"error"`
+	S3Bucket  *string  `json:"s3_bucket"`
+	S3Key     *string  `json:"s3_key"`
+	SizeBytes *int64   `json:"size_bytes"`
+	Lat       *float64 `json:"lat"`
+	Lon       *float64 `json:"lon"`
+	Reason    string   `json:"reason"`
+	Note      *string  `json:"note"`
+	CreatedAt string   `json:"created_at"`
 }
 
 // resolved is the tenant-scoped device behind a dashcam id.

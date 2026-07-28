@@ -2,6 +2,7 @@ package dashcam
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -9,10 +10,9 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/db"
 )
 
-// pendingClip is what a download job is for. Held server-side between the
-// "start download" call and the poll that sees it finish, so the client does
-// not have to send the truck/time/coordinate back to be recorded — and cannot
-// forge them onto someone else's footage.
+// pendingClip is what a download job is for — the truck/time/coordinate a clip
+// is recorded against. Carried from the "start download" call into the pending
+// video_clips row, so the client cannot forge them onto someone else's footage.
 type pendingClip struct {
 	tenantID  int64
 	dashcamID int64
@@ -24,43 +24,11 @@ type pendingClip struct {
 	lat, lon  *float64
 	note      string
 	userID    int64
-	created   time.Time
 }
 
-// remember stores the intent for a job id.
-func (h *Handler) remember(jobID string, pc pendingClip) {
-	pc.created = time.Now()
-	h.pmu.Lock()
-	if h.pending == nil {
-		h.pending = map[string]pendingClip{}
-	}
-	// Cheap opportunistic sweep: drop anything older than an hour so a job that
-	// is never polled to completion cannot leak.
-	cutoff := time.Now().Add(-time.Hour)
-	for id, p := range h.pending {
-		if p.created.Before(cutoff) {
-			delete(h.pending, id)
-		}
-	}
-	h.pending[jobID] = pc
-	h.pmu.Unlock()
-}
-
-// take removes and returns the intent for a job id, so a repeated poll after
-// completion records the clip only once.
-func (h *Handler) take(jobID string) (pendingClip, bool) {
-	h.pmu.Lock()
-	defer h.pmu.Unlock()
-	pc, ok := h.pending[jobID]
-	if ok {
-		delete(h.pending, jobID)
-	}
-	return pc, ok
-}
-
-// recordClip writes the saved clip to video_clips, tenant-scoped. Idempotent on
-// the S3 key so a race between two polls cannot double-insert.
-func (h *Handler) recordClip(ctx context.Context, pc pendingClip, bucket, key string) (int64, error) {
+// insertPendingClip records a clip as 'pending' the moment Save is clicked, so
+// it shows in Saved Evidence immediately. The reconciler finishes it.
+func (h *Handler) insertPendingClip(ctx context.Context, pc pendingClip, jobID string) (int64, error) {
 	const layout = "2006-01-02 15:04:05"
 	start, _ := time.Parse(layout, pc.start)
 	var stop *time.Time
@@ -71,12 +39,11 @@ func (h *Handler) recordClip(ctx context.Context, pc pendingClip, bucket, key st
 	err := db.Tx(ctx, h.pool, pc.tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 INSERT INTO video_clips (tenant_id, vehicle_id, vss_device_id, channel, clip_start, clip_stop,
-                         s3_bucket, s3_key, lat, lon, reason, note, created_by)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'manual',NULLIF($11,''),$12)
-ON CONFLICT (tenant_id, s3_key) DO UPDATE SET note = EXCLUDED.note
+                         status, job_id, lat, lon, reason, note, created_by)
+VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,'manual',NULLIF($10,''),$11)
 RETURNING id`,
 			pc.tenantID, pc.vehicleID, pc.deviceID, pc.channel, start, stop,
-			bucket, key, pc.lat, pc.lon, pc.note, nullableUser(pc.userID)).Scan(&id)
+			jobID, pc.lat, pc.lon, pc.note, nullableUser(pc.userID)).Scan(&id)
 	})
 	return id, err
 }
@@ -88,4 +55,120 @@ func nullableUser(id int64) *int64 {
 		return nil
 	}
 	return &id
+}
+
+// ReconcileClips finishes pending clip downloads server-side: it polls each
+// in-flight job and flips its row to 'ready' (with the S3 key) or 'failed', so a
+// save completes even after the operator has navigated away.
+func (h *Handler) ReconcileClips(ctx context.Context) {
+	t := time.NewTicker(8 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			h.reconcileOnce(ctx)
+		}
+	}
+}
+
+type pendingRow struct {
+	id      int64
+	jobID   string
+	created time.Time
+}
+
+func (h *Handler) reconcileOnce(ctx context.Context) {
+	// tenants carries no RLS policy, so it is read directly.
+	var tenantIDs []int64
+	rows, err := h.pool.Query(ctx, `SELECT id FROM tenants`)
+	if err != nil {
+		return
+	}
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			tenantIDs = append(tenantIDs, id)
+		}
+	}
+	rows.Close()
+
+	for _, tid := range tenantIDs {
+		var pend []pendingRow
+		_ = db.Tx(ctx, h.pool, tid, func(tx pgx.Tx) error {
+			r, err := tx.Query(ctx, `SELECT id, job_id, created_at FROM video_clips
+				WHERE status = 'pending' AND job_id IS NOT NULL LIMIT 200`)
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+			for r.Next() {
+				var pr pendingRow
+				if err := r.Scan(&pr.id, &pr.jobID, &pr.created); err == nil {
+					pend = append(pend, pr)
+				}
+			}
+			return r.Err()
+		})
+		for _, pr := range pend {
+			h.reconcileClip(ctx, tid, pr)
+		}
+	}
+}
+
+// clipDeadline is how long a pending clip may run before it is given up on — a
+// little past the telemetry service's own (20-minute) download deadline, so the
+// reconciler never fails a job that is still legitimately in flight.
+const clipDeadline = 23 * time.Minute
+
+func (h *Handler) reconcileClip(ctx context.Context, tid int64, pr pendingRow) {
+	st, err := h.tel.DashcamDownloadStatus(ctx, pr.jobID)
+	if err != nil {
+		// Job unknown — the telemetry service restarted or swept it. Give up only
+		// once it's clearly not coming back.
+		if time.Since(pr.created) > clipDeadline {
+			h.failClip(ctx, tid, pr.id, "the download did not complete — please try again")
+		}
+		return
+	}
+	switch st.Status {
+	case "done":
+		if st.S3Key != "" {
+			h.readyClip(ctx, tid, pr.id, st.Bucket, st.S3Key)
+		}
+	case "failed":
+		msg := st.Error
+		if msg == "" {
+			msg = "the download failed"
+		}
+		h.failClip(ctx, tid, pr.id, msg)
+	default: // downloading / uploading — still in flight
+		if time.Since(pr.created) > clipDeadline {
+			h.failClip(ctx, tid, pr.id, "the download timed out")
+		}
+	}
+}
+
+func (h *Handler) readyClip(ctx context.Context, tid, id int64, bucket, key string) {
+	err := db.Tx(ctx, h.pool, tid, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `UPDATE video_clips
+			SET status='ready', s3_bucket=$2, s3_key=$3, error=NULL
+			WHERE id=$1 AND status='pending'`, id, bucket, key)
+		return e
+	})
+	if err != nil {
+		log.Printf("dashcam: mark clip %d ready: %v", id, err)
+	}
+}
+
+func (h *Handler) failClip(ctx context.Context, tid, id int64, msg string) {
+	err := db.Tx(ctx, h.pool, tid, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `UPDATE video_clips SET status='failed', error=$2
+			WHERE id=$1 AND status='pending'`, id, msg)
+		return e
+	})
+	if err != nil {
+		log.Printf("dashcam: mark clip %d failed: %v", id, err)
+	}
 }
