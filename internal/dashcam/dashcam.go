@@ -16,12 +16,15 @@
 package dashcam
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
@@ -53,14 +56,19 @@ type AttachRequest struct {
 
 // Handler serves the FMS dashcam endpoints.
 type Handler struct {
-	pool *db.Pool
-	tel  *telemetry.Client
+	pool    *db.Pool
+	tel     *telemetry.Client
+	presign *s3.PresignClient // signs GET URLs for saved clips (nil = disabled)
 }
 
 // NewHandler builds the handler. tel is the telemetry-service client — the only
-// path to VSS.
-func NewHandler(pool *db.Pool, tel *telemetry.Client) *Handler {
-	return &Handler{pool: pool, tel: tel}
+// path to VSS. region enables presigned view/download URLs for saved clips.
+func NewHandler(ctx context.Context, pool *db.Pool, tel *telemetry.Client, region string) *Handler {
+	h := &Handler{pool: pool, tel: tel}
+	if cfg, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region)); err == nil {
+		h.presign = s3.NewPresignClient(s3.NewFromConfig(cfg))
+	}
+	return h
 }
 
 // Routes mounts the endpoints.
@@ -73,6 +81,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post("/v1/dashcams/{id}/download", h.download)
 	r.Get("/v1/dashcams/downloads/{jobId}", h.downloadStatus)
 	r.Get("/v1/video-clips", h.listClips)
+	r.Get("/v1/video-clips/{id}/url", h.clipURL)
 	r.Group(func(ar chi.Router) {
 		ar.Use(auth.RequireRole(auth.RoleManager))
 		ar.Post("/v1/dashcams", h.attach)
@@ -303,6 +312,52 @@ func (h *Handler) videos(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, clips)
 }
+
+// clipURL godoc
+//
+//	@Summary		A short-lived URL to view or download a saved clip
+//	@Description	Presigned S3 GET URL. ?download=1 forces a file download; else it
+//	@Description	plays inline in the browser.
+//	@Tags			dashcams
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			id			path	int		true	"clip id"
+//	@Param			download	query	bool	false	"force download"
+//	@Success		200	{object}	map[string]string
+//	@Router			/v1/video-clips/{id}/url [get]
+func (h *Handler) clipURL(w http.ResponseWriter, r *http.Request) {
+	if h.presign == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "clip storage is not configured")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var bucket, key *string
+	err = db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+		// RLS scopes this: another tenant's id returns no rows -> 404.
+		return tx.QueryRow(r.Context(),
+			`SELECT s3_bucket, s3_key FROM video_clips WHERE id=$1 AND status='ready'`, id).Scan(&bucket, &key)
+	})
+	if err != nil || key == nil || *key == "" {
+		httpx.Error(w, http.StatusNotFound, "clip not found or not ready")
+		return
+	}
+	in := &s3.GetObjectInput{Bucket: bucket, Key: key, ResponseContentType: awsString("video/mp4")}
+	if r.URL.Query().Get("download") != "" {
+		in.ResponseContentDisposition = awsString(`attachment; filename="clip.mp4"`)
+	}
+	signed, err := h.presign.PresignGetObject(r.Context(), in, s3.WithPresignExpires(10*time.Minute))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "could not create URL")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"url": signed.URL, "expires_in_seconds": 600})
+}
+
+func awsString(s string) *string { return &s }
 
 // EvidenceDTO is one alarm-evidence clip, named for the UI.
 type EvidenceDTO struct {

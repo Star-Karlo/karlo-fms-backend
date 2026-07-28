@@ -119,7 +119,7 @@ func main() {
 	maintenanceH := maintenance.NewHandler(pool)
 	scorecardH := scorecard.NewHandler(pool)
 	trackingH := trackinglink.NewHandler(pool, liveSvc)
-	dashcamH := dashcam.NewHandler(pool, tel)
+	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion)
 	usersH := users.NewHandler(pool)
 	tenantH := tenants.NewHandler(pool)
 	apiTokenH := apitoken.NewHandler(pool)
