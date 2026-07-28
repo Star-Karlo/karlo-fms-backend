@@ -359,8 +359,10 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req DownloadRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil || req.Path == "" {
-		httpx.Error(w, http.StatusBadRequest, "channel and clip path are required")
+	if err := httpx.DecodeJSON(r, &req); err != nil || req.Start == "" || req.Stop == "" {
+		// Downloads are by time range now (path unused), so the window is what's
+		// required — works for SD-card clips and alarm-derived clips alike.
+		httpx.Error(w, http.StatusBadRequest, "start and stop are required")
 		return
 	}
 	jobID, err := h.tel.StartDashcamDownload(r.Context(), dc.deviceID, telemetry.DashcamDownloadReq{
