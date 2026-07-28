@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -67,6 +68,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/dashcams", h.list)
 	r.Get("/v1/dashcams/available", h.available)
 	r.Get("/v1/dashcams/{id}/videos", h.videos)
+	r.Get("/v1/dashcams/{id}/evidence", h.evidence)
 	r.Get("/v1/dashcams/{id}/live", h.live)
 	r.Post("/v1/dashcams/{id}/download", h.download)
 	r.Get("/v1/dashcams/downloads/{jobId}", h.downloadStatus)
@@ -300,6 +302,39 @@ func (h *Handler) videos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, clips)
+}
+
+// EvidenceDTO is one alarm-evidence clip, named for the UI.
+type EvidenceDTO struct {
+	Code     int       `json:"code"`
+	Name     string    `json:"name"`
+	Severity string    `json:"severity"`
+	Time     time.Time `json:"time"`
+	Lat      *float64  `json:"lat"`
+	Lon      *float64  `json:"lon"`
+	Channel  int       `json:"channel"`
+}
+
+// evidence lists a camera's alarm-evidence clips for a date — the Recordings
+// source, with the REAL alarm time and a name, so every row saves fast from the
+// pre-uploaded clip.
+func (h *Handler) evidence(w http.ResponseWriter, r *http.Request) {
+	dc, ok := h.resolve(w, r)
+	if !ok {
+		return
+	}
+	evs, err := h.tel.DashcamEvidence(r.Context(), dc.deviceID, r.URL.Query().Get("date"))
+	if err != nil {
+		h.gatewayError(w, err)
+		return
+	}
+	out := make([]EvidenceDTO, 0, len(evs))
+	for _, e := range evs {
+		code, name, sev := alarmMeta(e.Code)
+		_ = code
+		out = append(out, EvidenceDTO{Code: e.Code, Name: name, Severity: sev, Time: e.Time, Lat: e.Lat, Lon: e.Lon, Channel: e.Channel})
+	}
+	httpx.JSON(w, http.StatusOK, httpx.List[EvidenceDTO]{Items: out, Total: int64(len(out))})
 }
 
 // live godoc

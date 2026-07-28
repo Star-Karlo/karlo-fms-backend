@@ -125,6 +125,26 @@ type DashcamTrackPoint struct {
 	Time time.Time `json:"time"`
 }
 
+// DashcamEvidenceClip is one alarm with a ready evidence clip.
+type DashcamEvidenceClip struct {
+	Code    int       `json:"code"`
+	Time    time.Time `json:"time"`
+	Lat     *float64  `json:"lat"`
+	Lon     *float64  `json:"lon"`
+	Channel int       `json:"channel"`
+}
+
+// DashcamEvidence lists a device's evidence-backed alarms for a date (real time).
+func (c *Client) DashcamEvidence(ctx context.Context, deviceID, date string) ([]DashcamEvidenceClip, error) {
+	q := url.Values{}
+	q.Set("date", date)
+	var out []DashcamEvidenceClip
+	if err := c.getJSON(ctx, "/v1/dashcams/"+url.PathEscape(deviceID)+"/evidence?"+q.Encode(), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DashcamTrack fetches a dashcam device's GPS track over a range.
 func (c *Client) DashcamTrack(ctx context.Context, deviceID string, from, to time.Time) ([]DashcamTrackPoint, error) {
 	q := url.Values{}
