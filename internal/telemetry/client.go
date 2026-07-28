@@ -117,6 +117,26 @@ func (c *Client) History(ctx context.Context, imei string, from, to time.Time, f
 	return page.Points, nil
 }
 
+// DashcamTrackPoint is one GPS fix from a dashcam's own GPS — the history
+// source for a vehicle that has a camera but no tracker.
+type DashcamTrackPoint struct {
+	Lat  float64   `json:"lat"`
+	Lon  float64   `json:"lon"`
+	Time time.Time `json:"time"`
+}
+
+// DashcamTrack fetches a dashcam device's GPS track over a range.
+func (c *Client) DashcamTrack(ctx context.Context, deviceID string, from, to time.Time) ([]DashcamTrackPoint, error) {
+	q := url.Values{}
+	q.Set("from", from.UTC().Format(time.RFC3339))
+	q.Set("to", to.UTC().Format(time.RFC3339))
+	var out []DashcamTrackPoint
+	if err := c.getJSON(ctx, "/v1/dashcams/"+url.PathEscape(deviceID)+"/track?"+q.Encode(), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VehicleDay is one device's rolled-up day from the tracking service.
 type VehicleDay struct {
 	IMEI       string   `json:"imei"`

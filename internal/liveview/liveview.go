@@ -644,7 +644,7 @@ type TripPoint struct {
 
 // History returns a vehicle's track over a time range (proxied from telemetry).
 func (s *Service) History(ctx context.Context, tenantID, vehicleID int64, from, to time.Time, maxPoints int) ([]TripPoint, error) {
-	var imei string
+	var imei, camera string
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row, err := store.New(tx).GetLiveViewVehicle(ctx, vehicleID)
 		if err != nil {
@@ -653,10 +653,20 @@ func (s *Service) History(ctx context.Context, tenantID, vehicleID int64, from, 
 		if row.TrackerImei != nil {
 			imei = *row.TrackerImei
 		}
+		camera = row.CameraDeviceID
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Source rule: a tracker's GPS wins; a vehicle with only a camera falls back
+	// to the dashcam's own GPS; a vehicle with neither has no track (empty, not a
+	// 404 from an empty-IMEI proxy call).
+	if imei == "" {
+		if camera == "" {
+			return []TripPoint{}, nil
+		}
+		return s.cameraHistory(ctx, camera, from, to, maxPoints)
 	}
 	ps, err := s.tel.History(ctx, imei, from, to, historyFields, maxPoints)
 	if err != nil {
@@ -676,6 +686,28 @@ func (s *Service) History(ctx context.Context, tenantID, vehicleID int64, from, 
 			}
 		}
 		out = append(out, TripPoint{Lat: p.Lat, Lon: p.Lon, Speed: p.Speed, Bearing: p.Bearing, Ignition: p.Ignition, Time: p.Time, Address: addr})
+	}
+	return out, nil
+}
+
+// cameraHistory builds a trip track from a dashcam's own GPS, for a vehicle with
+// no tracker. It is thinner than a tracker's: lat/lon/time only — no speed,
+// bearing, ignition or reverse-geocoded address — so the speed/idle overlays
+// simply have nothing to colour. Downsampled to maxPoints the same way the GPS
+// history endpoint caps its output.
+func (s *Service) cameraHistory(ctx context.Context, deviceID string, from, to time.Time, maxPoints int) ([]TripPoint, error) {
+	pts, err := s.tel.DashcamTrack(ctx, deviceID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	stride := 1
+	if maxPoints > 0 && len(pts) > maxPoints {
+		stride = (len(pts) + maxPoints - 1) / maxPoints
+	}
+	out := make([]TripPoint, 0, len(pts)/stride+1)
+	for i := 0; i < len(pts); i += stride {
+		lat, lon := pts[i].Lat, pts[i].Lon
+		out = append(out, TripPoint{Lat: &lat, Lon: &lon, Time: pts[i].Time})
 	}
 	return out, nil
 }
