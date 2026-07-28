@@ -110,7 +110,9 @@ GROUP BY a.vehicle_id, v.license_plate ORDER BY count DESC LIMIT 10;
 INSERT INTO alerts (tenant_id, vehicle_id, alert_code, alert_name, severity,
                     device_source, occurred_at, actual_value, limit_value, lat, lon, check_status)
 VALUES (@tenant_id, @vehicle_id, @alert_code, @alert_name, @severity,
-        COALESCE(sqlc.narg('device_source'), 'gps'), now(), @actual_value, @limit_value, @lat, @lon, 'unchecked')
+        COALESCE(sqlc.narg('device_source'), 'gps'),
+        COALESCE(sqlc.narg('occurred_at')::timestamptz, now()),
+        @actual_value, @limit_value, @lat, @lon, 'unchecked')
 RETURNING id;
 
 -- name: CountRecentAlert :one

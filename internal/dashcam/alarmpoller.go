@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/store"
@@ -92,6 +93,10 @@ func (p *AlarmPoller) tick(ctx context.Context) error {
 			continue // device not linked to any vehicle — nothing to attribute
 		}
 		code, name, severity := alarmMeta(a.Code)
+		// The REAL alarm time — not now(). The evidence clip (and any SD footage)
+		// lives at this instant, so a save's clip window must be built from it;
+		// using the poll time (which can lag minutes behind a late-uploaded
+		// alarm) pointed the window at a moment with no footage.
 		occurred := parseTime(a.OccurredAt)
 		camera := "camera"
 		if err := db.Tx(ctx, p.pool, link.tenantID, func(tx pgx.Tx) error {
@@ -102,6 +107,7 @@ func (p *AlarmPoller) tick(ctx context.Context) error {
 				AlertName:    &name,
 				Severity:     &severity,
 				DeviceSource: &camera,
+				OccurredAt:   pgtype.Timestamptz{Time: occurred, Valid: true},
 				Lat:          a.Lat,
 				Lon:          a.Lon,
 			})
@@ -110,7 +116,6 @@ func (p *AlarmPoller) tick(ctx context.Context) error {
 			log.Printf("dashcam alarm poller: create alert for %s: %v", a.DeviceID, err)
 			continue
 		}
-		_ = occurred // occurred_at is set now() by CreateAlert; kept for future use
 
 		// If it is a driving-behaviour event (harsh brake/accel/turn), also
 		// record it as a driving_event the score collector can read. Best-effort:

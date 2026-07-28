@@ -395,21 +395,24 @@ const createAlert = `-- name: CreateAlert :one
 INSERT INTO alerts (tenant_id, vehicle_id, alert_code, alert_name, severity,
                     device_source, occurred_at, actual_value, limit_value, lat, lon, check_status)
 VALUES ($1, $2, $3, $4, $5,
-        COALESCE($6, 'gps'), now(), $7, $8, $9, $10, 'unchecked')
+        COALESCE($6, 'gps'),
+        COALESCE($7::timestamptz, now()),
+        $8, $9, $10, $11, 'unchecked')
 RETURNING id
 `
 
 type CreateAlertParams struct {
-	TenantID     int64          `json:"tenant_id"`
-	VehicleID    *int64         `json:"vehicle_id"`
-	AlertCode    *string        `json:"alert_code"`
-	AlertName    *string        `json:"alert_name"`
-	Severity     *string        `json:"severity"`
-	DeviceSource interface{}    `json:"device_source"`
-	ActualValue  pgtype.Numeric `json:"actual_value"`
-	LimitValue   pgtype.Numeric `json:"limit_value"`
-	Lat          *float64       `json:"lat"`
-	Lon          *float64       `json:"lon"`
+	TenantID     int64              `json:"tenant_id"`
+	VehicleID    *int64             `json:"vehicle_id"`
+	AlertCode    *string            `json:"alert_code"`
+	AlertName    *string            `json:"alert_name"`
+	Severity     *string            `json:"severity"`
+	DeviceSource interface{}        `json:"device_source"`
+	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
+	ActualValue  pgtype.Numeric     `json:"actual_value"`
+	LimitValue   pgtype.Numeric     `json:"limit_value"`
+	Lat          *float64           `json:"lat"`
+	Lon          *float64           `json:"lon"`
 }
 
 // Insert a generated alert (from the notification-rule engine or the camera
@@ -423,6 +426,7 @@ func (q *Queries) CreateAlert(ctx context.Context, arg CreateAlertParams) (int64
 		arg.AlertName,
 		arg.Severity,
 		arg.DeviceSource,
+		arg.OccurredAt,
 		arg.ActualValue,
 		arg.LimitValue,
 		arg.Lat,
