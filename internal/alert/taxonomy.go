@@ -72,9 +72,15 @@ var Taxonomy = []AlertType{
 	{"DMS_EYE_CLOSED", "DMS - Mata Tertutup", "Eye Closed", SourceCamera, SevUrgent, true},
 	{"DMS_PHONE", "DMS - Menelepon", "Phone Calling", SourceCamera, SevUrgent, true},
 	{"DMS_SMOKING", "DMS - Merokok", "Smoking", SourceCamera, SevImportant, true},
+	{"DMS_FATIGUE", "DMS - Kelelahan", "Driver Fatigue / Drowsiness", SourceCamera, SevUrgent, true},
+	{"DMS_NO_DRIVER", "DMS - Sopir Tidak Ada", "Driver Absent", SourceCamera, SevUrgent, false},
 	{"ADAS_LDW", "ADAS - LDW", "Lane Departure Warning", SourceCamera, SevImportant, false},
 	{"ADAS_HMW", "ADAS - HMW", "Headway Monitoring Warning", SourceCamera, SevUrgent, false},
 	{"ADAS_FCW", "ADAS - FCW", "Forward Collision Warning", SourceCamera, SevUrgent, false},
+	{"ADAS_PCW", "ADAS - PCW", "Pedestrian Collision Warning", SourceCamera, SevUrgent, false},
+	{"ADAS_LANE_CHANGE", "ADAS - Pindah Lajur", "Frequent Lane Change", SourceCamera, SevImportant, false},
+	{"ADAS_ROAD_SIGN", "ADAS - Rambu", "Road-Sign / Speed-Sign Alert", SourceCamera, SevImportant, false},
+	{"ADAS_OBSTACLE", "ADAS - Halangan", "Obstacle / Blind Spot", SourceCamera, SevImportant, false},
 }
 
 // byCode indexes the taxonomy for quick lookup.
