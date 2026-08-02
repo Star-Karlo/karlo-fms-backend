@@ -179,8 +179,11 @@ func main() {
 	go dashcamH.ReconcileClips(ctx)
 	// Retention sweeper: the app DB has no cold tier of its own, so this bounds
 	// the append-only tables — pruning zero-value logs and archiving aged
-	// alerts/driving_events to the cold bucket before deleting them.
-	go retention.New(ctx, pool, cfg.AWSRegion, cfg.ColdBucket, cfg.Retention).Run(ctx)
+	// alerts/driving_events to the cold bucket before deleting them. The same
+	// sweeper backs the admin restore endpoint (retentionH).
+	retentionSweeper := retention.New(ctx, pool, cfg.AWSRegion, cfg.ColdBucket, cfg.Retention)
+	go retentionSweeper.Run(ctx)
+	retentionH := retention.NewHandler(retentionSweeper)
 	go dashcam.NewGreenPoller(pool, tel).Run(ctx)
 	go webhook.NewDispatcher(pool).Run(ctx)
 	// Nightly driver safety scoring from the daily rollup — needs the same
@@ -240,6 +243,7 @@ func main() {
 		aiDashH.Routes(pr)
 		companyH.Routes(pr)
 		prefsH.Routes(pr)
+		retentionH.Routes(pr)
 	})
 
 	log.Printf("fms-backend api on %s  (swagger: http://localhost%s/swagger/index.html)", cfg.Addr, cfg.Addr)

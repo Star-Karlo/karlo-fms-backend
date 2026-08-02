@@ -662,6 +662,8 @@ definitions:
         type: string
       created_at:
         type: string
+      error:
+        type: string
       id:
         type: integer
       lat:
@@ -680,6 +682,9 @@ definitions:
         type: string
       size_bytes:
         type: integer
+      status:
+        description: pending | ready | failed. s3_key/bucket are null until ready.
+        type: string
       vehicle_id:
         type: integer
       vss_device_id:
@@ -2092,6 +2097,18 @@ definitions:
       vehicle_type:
         type: string
     type: object
+  retention.RestoreRequest:
+    properties:
+      from:
+        description: YYYY-MM-DD (inclusive, by archive partition date)
+        type: string
+      table:
+        description: '"alerts" | "driving_events"'
+        type: string
+      to:
+        description: YYYY-MM-DD (inclusive)
+        type: string
+    type: object
   scorecard.Band:
     properties:
       index:
@@ -2646,6 +2663,40 @@ paths:
       summary: Public live view for a shared tracking link (no auth)
       tags:
       - tracking-links
+  /v1/admin/restore:
+    post:
+      consumes:
+      - application/json
+      description: Pulls archived alerts/driving_events for a date range back into
+        the database for the caller's tenant. Idempotent (already-present rows are
+        skipped). Runs in the background; watch the service logs for the final counts.
+      parameters:
+      - description: Table and inclusive date range
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/retention.RestoreRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Restore archived rows from cold storage (admin)
+      tags:
+      - admin
   /v1/ai/dashboard/compose:
     post:
       consumes:
@@ -5807,6 +5858,35 @@ paths:
       security:
       - BearerAuth: []
       summary: Saved clips (accident evidence)
+      tags:
+      - dashcams
+  /v1/video-clips/{id}/url:
+    get:
+      description: |-
+        Presigned S3 GET URL. ?download=1 forces a file download; else it
+        plays inline in the browser.
+      parameters:
+      - description: clip id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: force download
+        in: query
+        name: download
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: A short-lived URL to view or download a saved clip
       tags:
       - dashcams
   /v1/webhooks:

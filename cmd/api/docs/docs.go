@@ -61,6 +61,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/admin/restore": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Pulls archived alerts/driving_events for a date range back into the database for the caller's tenant. Idempotent (already-present rows are skipped). Runs in the background; watch the service logs for the final counts.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Restore archived rows from cold storage (admin)",
+                "parameters": [
+                    {
+                        "description": "Table and inclusive date range",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/retention.RestoreRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/ai/dashboard/compose": {
             "post": {
                 "security": [
@@ -5065,6 +5116,49 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/video-clips/{id}/url": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Presigned S3 GET URL. ?download=1 forces a file download; else it\nplays inline in the browser.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashcams"
+                ],
+                "summary": "A short-lived URL to view or download a saved clip",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "clip id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "force download",
+                        "name": "download",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/webhooks": {
             "get": {
                 "security": [
@@ -6173,6 +6267,9 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "error": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "integer"
                 },
@@ -6199,6 +6296,10 @@ const docTemplate = `{
                 },
                 "size_bytes": {
                     "type": "integer"
+                },
+                "status": {
+                    "description": "pending | ready | failed. s3_key/bucket are null until ready.",
+                    "type": "string"
                 },
                 "vehicle_id": {
                     "type": "integer"
@@ -8216,6 +8317,23 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "vehicle_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "retention.RestoreRequest": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "description": "YYYY-MM-DD (inclusive, by archive partition date)",
+                    "type": "string"
+                },
+                "table": {
+                    "description": "\"alerts\" | \"driving_events\"",
+                    "type": "string"
+                },
+                "to": {
+                    "description": "YYYY-MM-DD (inclusive)",
                     "type": "string"
                 }
             }

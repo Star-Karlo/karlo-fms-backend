@@ -24,7 +24,9 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -288,6 +290,171 @@ func (s *Sweeper) archiveAndPrune(ctx context.Context, tid int64, table, timeCol
 // daysAgo is the cutoff instant n days before now.
 func daysAgo(n int) time.Time {
 	return time.Now().Add(-time.Duration(n) * 24 * time.Hour)
+}
+
+// --- Restore ---------------------------------------------------------------
+
+// RestoreResult summarizes a restore run.
+type RestoreResult struct {
+	Table    string `json:"table"`
+	Objects  int    `json:"objects"`  // archive files read
+	Inserted int64  `json:"inserted"` // rows brought back
+	Skipped  int64  `json:"skipped"`  // rows already present or unrestorable (FK)
+}
+
+// restorable maps the archive-then-delete tables to their conflict key. Only
+// these are archived, so only these can be restored.
+var restorable = map[string]bool{"alerts": true, "driving_events": true}
+
+// Restore pulls archived rows for `table` whose date-partition falls within
+// [from,to] back into the DB for tenantID. It is idempotent: rows whose id
+// already exists are skipped (ON CONFLICT DO NOTHING), so re-running is safe and
+// a row that was never deleted is simply left as-is. Requires a cold bucket.
+func (s *Sweeper) Restore(ctx context.Context, tenantID int64, table string, from, to time.Time) (RestoreResult, error) {
+	res := RestoreResult{Table: table}
+	if s.s3 == nil {
+		return res, fmt.Errorf("cold bucket not configured")
+	}
+	if !restorable[table] {
+		return res, fmt.Errorf("table %q is not archived", table)
+	}
+	fromD, toD := dateOnly(from), dateOnly(to)
+
+	prefix := fmt.Sprintf("archive/%s/tenant=%d/", table, tenantID)
+	var keys []string
+	var token *string
+	for {
+		out, err := s.s3.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), ContinuationToken: token,
+		})
+		if err != nil {
+			return res, fmt.Errorf("list archive: %w", err)
+		}
+		for _, o := range out.Contents {
+			k := aws.ToString(o.Key)
+			if d, ok := partitionDate(k); ok && !d.Before(fromD) && !d.After(toD) {
+				keys = append(keys, k)
+			}
+		}
+		if out.IsTruncated != nil && *out.IsTruncated {
+			token = out.NextContinuationToken
+			continue
+		}
+		break
+	}
+	res.Objects = len(keys)
+
+	// Set-based insert per object; fall back to row-by-row only if a batch fails
+	// (e.g. an alert whose vehicle was later hard-deleted), so one bad row never
+	// blocks the rest.
+	insBatch := fmt.Sprintf(
+		"INSERT INTO %s OVERRIDING SYSTEM VALUE "+
+			"SELECT (jsonb_populate_record(NULL::%s, elem)).* "+
+			"FROM jsonb_array_elements($1::jsonb) AS elem ON CONFLICT (id) DO NOTHING", table, table)
+	insOne := fmt.Sprintf(
+		"INSERT INTO %s OVERRIDING SYSTEM VALUE "+
+			"SELECT (jsonb_populate_record(NULL::%s, $1::jsonb)).* ON CONFLICT (id) DO NOTHING", table, table)
+
+	for _, k := range keys {
+		if ctx.Err() != nil {
+			return res, ctx.Err()
+		}
+		lines, err := s.fetchLines(ctx, k)
+		if err != nil {
+			return res, fmt.Errorf("fetch %s: %w", k, err)
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		var ins int64
+		err = db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+			ct, err := tx.Exec(ctx, insBatch, "["+strings.Join(lines, ",")+"]")
+			if err != nil {
+				return err
+			}
+			ins = ct.RowsAffected()
+			return nil
+		})
+		if err != nil {
+			log.Printf("retention: restore %s: batch failed (%v); retrying row-by-row", k, err)
+			ri, rs := s.restoreRows(ctx, tenantID, insOne, lines)
+			res.Inserted += ri
+			res.Skipped += rs
+			continue
+		}
+		res.Inserted += ins
+		res.Skipped += int64(len(lines)) - ins
+	}
+	log.Printf("retention: restore tenant %d %s [%s..%s]: %d objects, %d inserted, %d skipped",
+		tenantID, table, fromD.Format("2006-01-02"), toD.Format("2006-01-02"), res.Objects, res.Inserted, res.Skipped)
+	return res, nil
+}
+
+// restoreRows inserts lines one at a time (the batch fallback). A row that fails
+// (a broken FK, malformed JSON) is counted as skipped rather than aborting the
+// run.
+func (s *Sweeper) restoreRows(ctx context.Context, tenantID int64, insOne string, lines []string) (inserted, skipped int64) {
+	for _, ln := range lines {
+		var n int64
+		err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+			ct, err := tx.Exec(ctx, insOne, ln)
+			if err != nil {
+				return err
+			}
+			n = ct.RowsAffected()
+			return nil
+		})
+		if err != nil {
+			skipped++
+			continue
+		}
+		inserted += n
+		skipped += 1 - n // a no-op insert (conflict) counts as skipped
+	}
+	return inserted, skipped
+}
+
+// fetchLines downloads a gzipped-NDJSON archive object and returns its non-empty
+// lines (each a complete JSON row).
+func (s *Sweeper) fetchLines(ctx context.Context, key string) ([]string, error) {
+	out, err := s.s3.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+	gz, err := gzip.NewReader(out.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	raw, err := io.ReadAll(gz)
+	if err != nil {
+		return nil, err
+	}
+	var lines []string
+	for _, ln := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(ln) != "" {
+			lines = append(lines, ln)
+		}
+	}
+	return lines, nil
+}
+
+// partitionDate pulls the YYYY-MM-DD partition out of an archive key of the form
+// archive/<table>/tenant=<id>/<date>/part-<n>.ndjson.gz.
+func partitionDate(key string) (time.Time, bool) {
+	for _, seg := range strings.Split(key, "/") {
+		if d, err := time.Parse("2006-01-02", seg); err == nil {
+			return d, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// dateOnly truncates t to midnight UTC so range comparisons are day-aligned.
+func dateOnly(t time.Time) time.Time {
+	y, m, d := t.UTC().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 // Self-limiting DELETEs. batchSize is a compile-time constant; $1 is the cutoff.
