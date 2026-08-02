@@ -2908,6 +2908,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: RFC3339 hint — enables cold-storage lookup for an archived alert
+        in: query
+        name: occurred_at
+        type: string
       produces:
       - application/json
       responses:

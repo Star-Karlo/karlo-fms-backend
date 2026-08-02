@@ -70,7 +70,7 @@ func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "to must not be before from")
 		return
 	}
-	if h.s.s3 == nil {
+	if h.s.cold == nil {
 		httpx.Error(w, http.StatusBadRequest, "cold storage is not configured (COLD_BUCKET unset)")
 		return
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/karlo/fms-backend/internal/alert"
 	"github.com/karlo/fms-backend/internal/apitoken"
 	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/coldstore"
 	"github.com/karlo/fms-backend/internal/company"
 	"github.com/karlo/fms-backend/internal/controltower"
 	"github.com/karlo/fms-backend/internal/customreport"
@@ -87,7 +88,10 @@ func main() {
 	tel := telemetry.NewClient(cfg.TelemetryBaseURL, cfg.TelemetryAPIKey, cfg.TelemetryTimeout)
 	liveSvc := liveview.NewService(pool, tel)
 	liveH := liveview.NewHandler(liveSvc)
-	alertH := alert.NewHandler(pool)
+	// Cold storage reader/writer, shared by the alert hot+cold merge and the
+	// retention sweeper. Nil when COLD_BUCKET is unset (alerts stay hot-only).
+	cold := coldstore.New(ctx, cfg.AWSRegion, cfg.ColdBucket)
+	alertH := alert.NewHandler(pool, cold, cfg.Retention.AlertDays)
 	controlH := controltower.NewHandler(controltower.NewService(pool, liveSvc))
 	notifRuleH := notifrule.NewHandler(pool)
 	// The report service borrows liveview for the daily rollup join, so the
@@ -181,7 +185,7 @@ func main() {
 	// the append-only tables — pruning zero-value logs and archiving aged
 	// alerts/driving_events to the cold bucket before deleting them. The same
 	// sweeper backs the admin restore endpoint (retentionH).
-	retentionSweeper := retention.New(ctx, pool, cfg.AWSRegion, cfg.ColdBucket, cfg.Retention)
+	retentionSweeper := retention.New(pool, cold, cfg.Retention)
 	go retentionSweeper.Run(ctx)
 	retentionH := retention.NewHandler(retentionSweeper)
 	go dashcam.NewGreenPoller(pool, tel).Run(ctx)

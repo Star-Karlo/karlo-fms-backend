@@ -23,18 +23,18 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/karlo/fms-backend/internal/coldstore"
 	"github.com/karlo/fms-backend/internal/platform/config"
 	"github.com/karlo/fms-backend/internal/platform/db"
 )
@@ -51,25 +51,16 @@ const startupDelay = 5 * time.Minute
 // Sweeper deletes aged rows on a schedule. Construct with New and run Run in a
 // goroutine for the life of the process.
 type Sweeper struct {
-	pool   *db.Pool
-	cfg    config.RetentionConfig
-	bucket string     // cold-storage bucket; "" disables archive-then-delete tables
-	s3     *s3.Client // nil when bucket is "" or AWS config fails to load
+	pool *db.Pool
+	cfg  config.RetentionConfig
+	cold *coldstore.Store // nil when cold storage is unconfigured
 }
 
-// New builds a Sweeper. When coldBucket is set it also constructs an S3 client;
-// if that fails the sweeper still runs, but the archive-then-delete tables are
-// skipped so nothing is deleted without first being archived.
-func New(ctx context.Context, pool *db.Pool, region, coldBucket string, cfg config.RetentionConfig) *Sweeper {
-	s := &Sweeper{pool: pool, cfg: cfg, bucket: coldBucket}
-	if coldBucket != "" {
-		if awsCfg, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region)); err == nil {
-			s.s3 = s3.NewFromConfig(awsCfg)
-		} else {
-			log.Printf("retention: S3 unavailable (%v); alerts/driving_events will NOT be pruned", err)
-		}
-	}
-	return s
+// New builds a Sweeper. A nil cold store (COLD_BUCKET unset) still runs the
+// zero-value prunes, but skips the archive-then-delete tables so nothing is
+// deleted without first being archived.
+func New(pool *db.Pool, cold *coldstore.Store, cfg config.RetentionConfig) *Sweeper {
+	return &Sweeper{pool: pool, cfg: cfg, cold: cold}
 }
 
 // Run sweeps once shortly after startup, then every cfg.Interval, until ctx is
@@ -79,7 +70,7 @@ func (s *Sweeper) Run(ctx context.Context) {
 		log.Printf("retention: disabled (RETENTION_ENABLED=false)")
 		return
 	}
-	if s.bucket == "" {
+	if s.cold == nil {
 		log.Printf("retention: COLD_BUCKET unset — pruning zero-value tables only; alerts/driving_events kept")
 	}
 	timer := time.NewTimer(startupDelay)
@@ -193,7 +184,7 @@ func (s *Sweeper) pruneBatched(ctx context.Context, tid int64, label, deleteSQL 
 // rows are retried on the next sweep (a re-run only creates a duplicate,
 // harmless archive object). Skipped entirely when no S3 client is configured.
 func (s *Sweeper) archiveAndPrune(ctx context.Context, tid int64, table, timeCol string, cutoff time.Time) {
-	if s.s3 == nil {
+	if s.cold == nil {
 		return
 	}
 	// table/timeCol are package-internal literals (see sweepTenant), never
@@ -251,10 +242,9 @@ func (s *Sweeper) archiveAndPrune(ctx context.Context, tid int64, table, timeCol
 			return
 		}
 
-		key := fmt.Sprintf("archive/%s/tenant=%d/%s/part-%d.ndjson.gz",
-			table, tid, oldest.UTC().Format("2006-01-02"), time.Now().UnixNano())
-		if _, err := s.s3.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:       aws.String(s.bucket),
+		key := coldstore.Key(table, tid, oldest, time.Now().UnixNano())
+		if err := s.cold.Put(ctx, &s3.PutObjectInput{
+			Bucket:       aws.String(s.cold.Bucket()),
 			Key:          aws.String(key),
 			Body:         bytes.NewReader(buf.Bytes()),
 			ContentType:  aws.String("application/gzip"),
@@ -297,7 +287,7 @@ func daysAgo(n int) time.Time {
 // RestoreResult summarizes a restore run.
 type RestoreResult struct {
 	Table    string `json:"table"`
-	Objects  int    `json:"objects"`  // archive files read
+	Found    int    `json:"found"`    // rows read from the archive
 	Inserted int64  `json:"inserted"` // rows brought back
 	Skipped  int64  `json:"skipped"`  // rows already present or unrestorable (FK)
 }
@@ -312,39 +302,20 @@ var restorable = map[string]bool{"alerts": true, "driving_events": true}
 // a row that was never deleted is simply left as-is. Requires a cold bucket.
 func (s *Sweeper) Restore(ctx context.Context, tenantID int64, table string, from, to time.Time) (RestoreResult, error) {
 	res := RestoreResult{Table: table}
-	if s.s3 == nil {
+	if s.cold == nil {
 		return res, fmt.Errorf("cold bucket not configured")
 	}
 	if !restorable[table] {
 		return res, fmt.Errorf("table %q is not archived", table)
 	}
-	fromD, toD := dateOnly(from), dateOnly(to)
 
-	prefix := fmt.Sprintf("archive/%s/tenant=%d/", table, tenantID)
-	var keys []string
-	var token *string
-	for {
-		out, err := s.s3.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), ContinuationToken: token,
-		})
-		if err != nil {
-			return res, fmt.Errorf("list archive: %w", err)
-		}
-		for _, o := range out.Contents {
-			k := aws.ToString(o.Key)
-			if d, ok := partitionDate(k); ok && !d.Before(fromD) && !d.After(toD) {
-				keys = append(keys, k)
-			}
-		}
-		if out.IsTruncated != nil && *out.IsTruncated {
-			token = out.NextContinuationToken
-			continue
-		}
-		break
+	lines, err := s.cold.Lines(ctx, table, tenantID, from, to)
+	if err != nil {
+		return res, err
 	}
-	res.Objects = len(keys)
+	res.Found = len(lines)
 
-	// Set-based insert per object; fall back to row-by-row only if a batch fails
+	// Set-based insert per chunk; fall back to row-by-row only if a chunk fails
 	// (e.g. an alert whose vehicle was later hard-deleted), so one bad row never
 	// blocks the rest.
 	insBatch := fmt.Sprintf(
@@ -355,20 +326,19 @@ func (s *Sweeper) Restore(ctx context.Context, tenantID int64, table string, fro
 		"INSERT INTO %s OVERRIDING SYSTEM VALUE "+
 			"SELECT (jsonb_populate_record(NULL::%s, $1::jsonb)).* ON CONFLICT (id) DO NOTHING", table, table)
 
-	for _, k := range keys {
+	for start := 0; start < len(lines); start += batchSize {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
-		lines, err := s.fetchLines(ctx, k)
-		if err != nil {
-			return res, fmt.Errorf("fetch %s: %w", k, err)
+		end := start + batchSize
+		if end > len(lines) {
+			end = len(lines)
 		}
-		if len(lines) == 0 {
-			continue
-		}
+		chunk := lines[start:end]
+
 		var ins int64
-		err = db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-			ct, err := tx.Exec(ctx, insBatch, "["+strings.Join(lines, ",")+"]")
+		err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+			ct, err := tx.Exec(ctx, insBatch, jsonArray(chunk))
 			if err != nil {
 				return err
 			}
@@ -376,28 +346,28 @@ func (s *Sweeper) Restore(ctx context.Context, tenantID int64, table string, fro
 			return nil
 		})
 		if err != nil {
-			log.Printf("retention: restore %s: batch failed (%v); retrying row-by-row", k, err)
-			ri, rs := s.restoreRows(ctx, tenantID, insOne, lines)
+			log.Printf("retention: restore %s: chunk failed (%v); retrying row-by-row", table, err)
+			ri, rs := s.restoreRows(ctx, tenantID, insOne, chunk)
 			res.Inserted += ri
 			res.Skipped += rs
 			continue
 		}
 		res.Inserted += ins
-		res.Skipped += int64(len(lines)) - ins
+		res.Skipped += int64(len(chunk)) - ins
 	}
-	log.Printf("retention: restore tenant %d %s [%s..%s]: %d objects, %d inserted, %d skipped",
-		tenantID, table, fromD.Format("2006-01-02"), toD.Format("2006-01-02"), res.Objects, res.Inserted, res.Skipped)
+	log.Printf("retention: restore tenant %d %s [%s..%s]: %d rows read, %d inserted, %d skipped",
+		tenantID, table, coldstore.DayOf(from).Format("2006-01-02"), coldstore.DayOf(to).Format("2006-01-02"),
+		res.Found, res.Inserted, res.Skipped)
 	return res, nil
 }
 
-// restoreRows inserts lines one at a time (the batch fallback). A row that fails
-// (a broken FK, malformed JSON) is counted as skipped rather than aborting the
-// run.
-func (s *Sweeper) restoreRows(ctx context.Context, tenantID int64, insOne string, lines []string) (inserted, skipped int64) {
-	for _, ln := range lines {
+// restoreRows inserts rows one at a time (the chunk fallback). A row that fails
+// (a broken FK, malformed JSON) is counted as skipped rather than aborting.
+func (s *Sweeper) restoreRows(ctx context.Context, tenantID int64, insOne string, rows []json.RawMessage) (inserted, skipped int64) {
+	for _, ln := range rows {
 		var n int64
 		err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-			ct, err := tx.Exec(ctx, insOne, ln)
+			ct, err := tx.Exec(ctx, insOne, string(ln))
 			if err != nil {
 				return err
 			}
@@ -414,47 +384,19 @@ func (s *Sweeper) restoreRows(ctx context.Context, tenantID int64, insOne string
 	return inserted, skipped
 }
 
-// fetchLines downloads a gzipped-NDJSON archive object and returns its non-empty
-// lines (each a complete JSON row).
-func (s *Sweeper) fetchLines(ctx context.Context, key string) ([]string, error) {
-	out, err := s.s3.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
-	if err != nil {
-		return nil, err
-	}
-	defer out.Body.Close()
-	gz, err := gzip.NewReader(out.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer gz.Close()
-	raw, err := io.ReadAll(gz)
-	if err != nil {
-		return nil, err
-	}
-	var lines []string
-	for _, ln := range strings.Split(string(raw), "\n") {
-		if strings.TrimSpace(ln) != "" {
-			lines = append(lines, ln)
+// jsonArray wraps NDJSON rows into a single JSON array string for a set-based
+// insert. Each element is already valid JSON, so joining with commas is safe.
+func jsonArray(rows []json.RawMessage) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, r := range rows {
+		if i > 0 {
+			b.WriteByte(',')
 		}
+		b.Write(r)
 	}
-	return lines, nil
-}
-
-// partitionDate pulls the YYYY-MM-DD partition out of an archive key of the form
-// archive/<table>/tenant=<id>/<date>/part-<n>.ndjson.gz.
-func partitionDate(key string) (time.Time, bool) {
-	for _, seg := range strings.Split(key, "/") {
-		if d, err := time.Parse("2006-01-02", seg); err == nil {
-			return d, true
-		}
-	}
-	return time.Time{}, false
-}
-
-// dateOnly truncates t to midnight UTC so range comparisons are day-aligned.
-func dateOnly(t time.Time) time.Time {
-	y, m, d := t.UTC().Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	b.WriteByte(']')
+	return b.String()
 }
 
 // Self-limiting DELETEs. batchSize is a compile-time constant; $1 is the cutoff.

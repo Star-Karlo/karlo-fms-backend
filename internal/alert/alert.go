@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/coldstore"
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
@@ -97,11 +98,20 @@ func fromGet(a store.GetAlertRow) DTO {
 	}
 }
 
-// Handler exposes alert + taxonomy endpoints.
-type Handler struct{ pool *db.Pool }
+// Handler exposes alert + taxonomy endpoints. When cold is set (and alertDays
+// > 0), list and get transparently merge archived alerts from cold storage for
+// queries that reach older than the boundary (now − alertDays).
+type Handler struct {
+	pool      *db.Pool
+	cold      *coldstore.Store
+	alertDays int
+}
 
-// NewHandler builds the alert handler.
-func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
+// NewHandler builds the alert handler. Pass a nil cold store to disable the
+// hot+cold merge (alerts then behave hot-only, as before).
+func NewHandler(pool *db.Pool, cold *coldstore.Store, alertDays int) *Handler {
+	return &Handler{pool: pool, cold: cold, alertDays: alertDays}
+}
 
 // Routes mounts alert endpoints.
 func (h *Handler) Routes(r chi.Router) {
@@ -295,33 +305,111 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := tsFromQuery(r, "from"), tsFromQuery(r, "to")
 	tid := auth.TenantID(r.Context())
-	var items []DTO
-	var total int64
-	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
-		st := store.New(tx)
-		rows, err := st.ListAlerts(r.Context(), store.ListAlertsParams{
-			Q: conv.StrPtr(p.Q), CheckStatus: conv.StrPtr(q.Get("check_status")),
-			DeviceSource: conv.StrPtr(q.Get("device_source")), Severity: conv.StrPtr(q.Get("severity")),
-			AlertCode: conv.StrPtr(q.Get("alert_code")), VehicleID: vehicleID,
-			From: from, To: to, Lim: int32(p.Limit), Off: int32(p.Offset),
+
+	// Hot query bounds. When the range reaches into cold storage, the hot side is
+	// clamped to the boundary so hot ([boundary,to]) and cold ([from,boundary))
+	// are disjoint — no dedup needed, and pagination is a simple concatenation
+	// (hot rows are strictly newer than cold rows).
+	useCold := h.coldEnabled(from)
+	hotFrom := from
+	if useCold {
+		hotFrom = pgtype.Timestamptz{Time: h.boundary(), Valid: true}
+	}
+
+	listParams := store.ListAlertsParams{
+		Q: conv.StrPtr(p.Q), CheckStatus: conv.StrPtr(q.Get("check_status")),
+		DeviceSource: conv.StrPtr(q.Get("device_source")), Severity: conv.StrPtr(q.Get("severity")),
+		AlertCode: conv.StrPtr(q.Get("alert_code")), VehicleID: vehicleID,
+		From: hotFrom, To: to, Lim: int32(p.Limit), Off: int32(p.Offset),
+	}
+	countParams := store.CountAlertsParams{
+		Q: conv.StrPtr(p.Q), CheckStatus: conv.StrPtr(q.Get("check_status")),
+		DeviceSource: conv.StrPtr(q.Get("device_source")), Severity: conv.StrPtr(q.Get("severity")),
+		AlertCode: conv.StrPtr(q.Get("alert_code")), VehicleID: vehicleID, From: hotFrom, To: to,
+	}
+
+	if !useCold {
+		var items []DTO
+		var total int64
+		err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+			st := store.New(tx)
+			rows, err := st.ListAlerts(r.Context(), listParams)
+			if err != nil {
+				return err
+			}
+			items = make([]DTO, 0, len(rows))
+			for _, a := range rows {
+				items = append(items, fromList(a))
+			}
+			total, err = st.CountAlerts(r.Context(), countParams)
+			return err
 		})
 		if err != nil {
-			return err
+			httpx.Error(w, http.StatusInternalServerError, err.Error())
+			return
 		}
-		items = make([]DTO, 0, len(rows))
-		for _, a := range rows {
-			items = append(items, fromList(a))
-		}
-		total, err = st.CountAlerts(r.Context(), store.CountAlertsParams{
-			Q: conv.StrPtr(p.Q), CheckStatus: conv.StrPtr(q.Get("check_status")),
-			DeviceSource: conv.StrPtr(q.Get("device_source")), Severity: conv.StrPtr(q.Get("severity")),
-			AlertCode: conv.StrPtr(q.Get("alert_code")), VehicleID: vehicleID, From: from, To: to,
-		})
-		return err
-	})
+		httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: total})
+		return
+	}
+
+	// Merged hot + cold. Cold rows are fetched, filtered and sorted once; the
+	// page is then sliced across the two tiers.
+	filter := alertFilter{
+		q: p.Q, checkStatus: q.Get("check_status"), deviceSource: q.Get("device_source"),
+		severity: q.Get("severity"), alertCode: q.Get("alert_code"), vehicleID: vehicleID,
+	}
+	coldRows, err := h.coldAlerts(r.Context(), tid, from.Time, to, filter)
 	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "cold read: "+err.Error())
+		return
+	}
+	var hotTotal int64
+	if err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		var e error
+		hotTotal, e = store.New(tx).CountAlerts(r.Context(), countParams)
+		return e
+	}); err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	total := hotTotal + int64(len(coldRows))
+
+	items := make([]DTO, 0, p.Limit)
+	// Hot slice: [offset, offset+limit) intersected with [0, hotTotal).
+	if int64(p.Offset) < hotTotal {
+		hotLim := p.Limit
+		if rem := hotTotal - int64(p.Offset); rem < int64(hotLim) {
+			hotLim = int(rem)
+		}
+		hp := listParams
+		hp.Off, hp.Lim = int32(p.Offset), int32(hotLim)
+		if err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+			rows, e := store.New(tx).ListAlerts(r.Context(), hp)
+			if e != nil {
+				return e
+			}
+			for _, a := range rows {
+				items = append(items, fromList(a))
+			}
+			return nil
+		}); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	// Cold slice fills the remainder of the page.
+	if remaining := p.Limit - len(items); remaining > 0 {
+		coldStart := int64(p.Offset) - hotTotal
+		if coldStart < 0 {
+			coldStart = 0
+		}
+		if coldStart < int64(len(coldRows)) {
+			end := coldStart + int64(remaining)
+			if end > int64(len(coldRows)) {
+				end = int64(len(coldRows))
+			}
+			items = append(items, coldRows[coldStart:end]...)
+		}
 	}
 	httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: total})
 }
@@ -332,7 +420,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 //	@Tags		alerts
 //	@Security	BearerAuth
 //	@Produce	json
-//	@Param		id	path		int	true	"alert id"
+//	@Param		id			path		int		true	"alert id"
+//	@Param		occurred_at	query		string	false	"RFC3339 hint — enables cold-storage lookup for an archived alert"
 //	@Success	200	{object}	alert.Detail
 //	@Failure	404	{object}	map[string]string
 //	@Router		/v1/alerts/{id} [get]
@@ -344,12 +433,17 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	}
 	tid := auth.TenantID(r.Context())
 	var detail Detail
+	found := false
 	err = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
 		st := store.New(tx)
 		a, err := st.GetAlert(r.Context(), id)
 		if err != nil {
+			if err == pgx.ErrNoRows {
+				return nil // fall through to the cold lookup
+			}
 			return err
 		}
+		found = true
 		detail.Alert = fromGet(a)
 		if a.VehicleID != nil && a.OccurredAt.Valid {
 			center := a.OccurredAt.Time
@@ -371,6 +465,26 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Cold fallback: an archived alert is gone from the hot table. With an
+	// occurred_at hint we can read just that day's partition (surrounding history
+	// isn't reconstructed for archived alerts — the row itself is what matters).
+	if !found && h.cold != nil {
+		if hint := tsFromQuery(r, "occurred_at"); hint.Valid {
+			dto, ok, cerr := h.coldAlertByID(r.Context(), tid, id, hint.Time)
+			if cerr != nil {
+				httpx.Error(w, http.StatusInternalServerError, "cold read: "+cerr.Error())
+				return
+			}
+			if ok {
+				detail.Alert = dto
+				found = true
+			}
+		}
+	}
+	if !found {
 		httpx.Error(w, http.StatusNotFound, "alert not found")
 		return
 	}

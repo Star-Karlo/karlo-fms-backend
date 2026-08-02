@@ -478,6 +478,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339 hint — enables cold-storage lookup for an archived alert",
+                        "name": "occurred_at",
+                        "in": "query"
                     }
                 ],
                 "responses": {
