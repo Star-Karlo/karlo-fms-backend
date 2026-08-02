@@ -54,6 +54,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 	"github.com/karlo/fms-backend/internal/prefs"
 	"github.com/karlo/fms-backend/internal/report"
+	"github.com/karlo/fms-backend/internal/retention"
 	"github.com/karlo/fms-backend/internal/routing"
 	"github.com/karlo/fms-backend/internal/scorecard"
 	"github.com/karlo/fms-backend/internal/telemetry"
@@ -176,6 +177,10 @@ func main() {
 	go dashcam.NewAlarmPoller(pool, tel).Run(ctx)
 	// Completes pending clip saves in the background (start Save -> ready/failed).
 	go dashcamH.ReconcileClips(ctx)
+	// Retention sweeper: the app DB has no cold tier of its own, so this bounds
+	// the append-only tables — pruning zero-value logs and archiving aged
+	// alerts/driving_events to the cold bucket before deleting them.
+	go retention.New(ctx, pool, cfg.AWSRegion, cfg.ColdBucket, cfg.Retention).Run(ctx)
 	go dashcam.NewGreenPoller(pool, tel).Run(ctx)
 	go webhook.NewDispatcher(pool).Run(ctx)
 	// Nightly driver safety scoring from the daily rollup — needs the same

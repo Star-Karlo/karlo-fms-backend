@@ -41,6 +41,16 @@ type Config struct {
 	// list keeps working for rows imported from the legacy export.
 	DocumentsBucket string
 
+	// ColdBucket is the S3 bucket the retention sweeper archives to before it
+	// deletes aged rows from the hot DB (shared with telemetry cold storage).
+	// Empty leaves the archive-then-delete tables (alerts, driving_events)
+	// untouched — the zero-value prunes (webhook logs, expired tokens/links,
+	// dead clip rows) still run, since they need no archive.
+	ColdBucket string
+	// Retention holds the sweeper's schedule and per-table windows. Zero for a
+	// window disables that table's prune. See defaults in Load.
+	Retention RetentionConfig
+
 	// Routing provider for vehicle-to-hangar directions.
 	//
 	// "geoapify" (default) is the hosted option whose free tier permits
@@ -61,6 +71,27 @@ type Config struct {
 	CORSOrigins []string
 }
 
+// RetentionConfig bounds how long append-only rows live in the hot DB. The app
+// database has no archival of its own (unlike telemetry's Parquet tier), so
+// without this every alert, event and delivery log grows forever. Each *Days
+// value is a hard cutoff measured from the row's timestamp; 0 disables that
+// table's prune entirely (a safety hatch, not a default).
+type RetentionConfig struct {
+	Enabled  bool
+	Interval time.Duration // how often the sweep runs
+
+	// Zero-value tables — pruned outright (no archive; nothing of long-term use).
+	WebhookDays      int // webhook_deliveries, by created_at
+	RefreshTokenDays int // refresh_tokens past expiry OR revoked, by expires_at
+	TrackingLinkDays int // tracking_links past expiry, by expires_at
+	DeadClipDays     int // video_clips still pending/failed, by created_at
+
+	// Medium-value tables — archived to ColdBucket as gzipped NDJSON, then
+	// deleted. Skipped when ColdBucket is empty so nothing is lost.
+	AlertDays        int // alerts, by occurred_at
+	DrivingEventDays int // driving_events, by occurred_at
+}
+
 // Load reads configuration from the environment, applying sane local-dev
 // defaults so `go run ./cmd/api` works against the compose stack out of the box.
 func Load() Config {
@@ -70,6 +101,17 @@ func Load() Config {
 		BedrockModelID:  Env("BEDROCK_MODEL_ID", "apac.amazon.nova-pro-v1:0"),
 		MailFrom:        Env("MAIL_FROM", ""),
 		DocumentsBucket: Env("DOCUMENTS_BUCKET", ""),
+		ColdBucket:      Env("COLD_BUCKET", ""),
+		Retention: RetentionConfig{
+			Enabled:          EnvBool("RETENTION_ENABLED", true),
+			Interval:         time.Duration(EnvInt("RETENTION_INTERVAL_HOURS", 24)) * time.Hour,
+			WebhookDays:      EnvInt("RETENTION_WEBHOOK_DAYS", 30),
+			RefreshTokenDays: EnvInt("RETENTION_REFRESH_TOKEN_DAYS", 30),
+			TrackingLinkDays: EnvInt("RETENTION_TRACKING_LINK_DAYS", 7),
+			DeadClipDays:     EnvInt("RETENTION_DEAD_CLIP_DAYS", 7),
+			AlertDays:        EnvInt("RETENTION_ALERT_DAYS", 548),        // ~18 months
+			DrivingEventDays: EnvInt("RETENTION_DRIVING_EVENT_DAYS", 365), // 12 months
+		},
 		RoutingProvider: Env("ROUTING_PROVIDER", "geoapify"),
 		GeoapifyAPIKey:  Env("GEOAPIFY_API_KEY", ""),
 		GeoapifyBaseURL: Env("GEOAPIFY_BASE_URL", ""),
@@ -119,6 +161,17 @@ func EnvInt(k string, def int) int {
 	if v := os.Getenv(k); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+// EnvBool returns the boolean value of environment variable k, or def. Accepts
+// the usual strconv truthy/falsey spellings (1/0, true/false, t/f).
+func EnvBool(k string, def bool) bool {
+	if v := os.Getenv(k); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return def
