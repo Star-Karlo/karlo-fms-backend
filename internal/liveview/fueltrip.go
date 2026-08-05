@@ -28,12 +28,40 @@ import (
 // fuelTripFields asks the telemetry API for the fuel-carrying metadata blob in
 // addition to position — heavier than the trip-history projection, but a fuel
 // trip is requested on demand, not on every history load.
-var fuelTripFields = []string{"lat", "lon", "speed", "time", "ignition", "metadata"}
+var fuelTripFields = []string{"lat", "lon", "speed", "time", "ignition", "jalan", "kota", "provinsi", "metadata"}
 
 const (
-	fuelPricePerLitre = 6800.0 // Rp/L, subsidised Solar (matches fuelanalysis)
+	fuelPricePerLitre = 6800.0 // Rp/L, subsidised Solar (national default)
 	refuelMinPct      = 3.0     // a level rise this large counts as a refuel, not noise
 )
+
+// fuelPriceByProvince overrides the national Solar/Biosolar price (Rp/L) where a
+// region differs — subsidised Biosolar is broadly flat nationally, but non-
+// subsidised diesel (Dexlite/Pertamina Dex) is higher and varies. Left mostly
+// empty on purpose: fill from a verified source (there is no reliable official
+// price API) rather than shipping guessed numbers. Missing province -> default.
+var fuelPriceByProvince = map[string]float64{}
+
+// fuelPrice returns the Rp/L for a province, or the national default.
+func fuelPrice(province string) float64 {
+	if p, ok := fuelPriceByProvince[province]; ok && p > 0 {
+		return p
+	}
+	return fuelPricePerLitre
+}
+
+// RefuelEvent is one detected refuel (a fuel-level rise) with where + how much.
+type RefuelEvent struct {
+	Time     time.Time `json:"time"`
+	Lat      *float64  `json:"lat"`
+	Lon      *float64  `json:"lon"`
+	Address  string    `json:"address"`
+	Province string    `json:"province"`
+	Pct      float64   `json:"pct"`      // level rise
+	Liters   float64   `json:"liters"`   // tank × pct
+	PriceRp  float64   `json:"price_rp"` // Rp/L applied (regional)
+	CostRp   float64   `json:"cost_rp"`  // liters × price
+}
 
 // FuelTrip is the actual-fuel picture for one vehicle over a time range.
 type FuelTrip struct {
@@ -51,9 +79,10 @@ type FuelTrip struct {
 	UsedLiters *float64 `json:"used_liters"` // tank × used_pct (nil = no tank set)
 	CostRp     *float64 `json:"cost_rp"`     // used_liters × price
 
-	RefuelPct    *float64 `json:"refuel_pct"`
-	RefuelLiters *float64 `json:"refuel_liters"`
-	RefuelEvents int      `json:"refuel_events"`
+	RefuelPct    *float64      `json:"refuel_pct"`
+	RefuelLiters *float64      `json:"refuel_liters"`
+	RefuelEvents int           `json:"refuel_events"`
+	Refuels      []RefuelEvent `json:"refuels"` // where + how much + cost, per refuel
 
 	KmplActual     *float64 `json:"kmpl_actual"`     // distance ÷ used_liters (sensor-measured)
 	KmplConfigured *float64 `json:"kmpl_configured"` // = fuel_ratio_kmpl (echo)
@@ -113,7 +142,7 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	}
 	ps = telemetry.FilterTeleports(ps)
 
-	out := &FuelTrip{Points: len(ps), TankLiters: tank, FuelRatioKmpl: ratio, KmplConfigured: ratio}
+	out := &FuelTrip{Points: len(ps), TankLiters: tank, FuelRatioKmpl: ratio, KmplConfigured: ratio, Refuels: []RefuelEvent{}}
 
 	// Distance from the GPS track.
 	var lastLat, lastLon *float64
@@ -127,32 +156,50 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	}
 	out.DistanceKm = round1(out.DistanceKm)
 
-	// Fuel level (%) per point, in time order (history is ascending).
-	var levels []float64
+	// Fuel level (%) per point, keeping the point so a refuel keeps its location.
+	type fuelPt struct {
+		lvl float64
+		p   telemetry.Position
+	}
+	var fps []fuelPt
 	for _, p := range ps {
 		if lvl, ok := fuelLevelPct(p.Metadata); ok {
-			levels = append(levels, lvl)
+			fps = append(fps, fuelPt{lvl, p})
 		}
 	}
-	out.FuelReadings = len(levels)
-	if len(levels) < 2 {
+	out.FuelReadings = len(fps)
+	if len(fps) < 2 {
 		out.Note = "No fuel-sensor readings in this window — showing distance only."
 		return out, nil
 	}
 
-	start, end := levels[0], levels[len(levels)-1]
+	start, end := fps[0].lvl, fps[len(fps)-1].lvl
 	out.FuelStartPct, out.FuelEndPct = &start, &end
 
 	// Walk the level series: sum drops as consumption, large rises as refuels.
 	var consumedPct, refuelPct float64
-	prev := levels[0]
-	for _, cur := range levels[1:] {
+	prev := fps[0].lvl
+	for _, fp := range fps[1:] {
+		cur := fp.lvl
 		switch d := prev - cur; {
 		case d > 0:
 			consumedPct += d
 		case -d >= refuelMinPct:
-			refuelPct += -d
+			risePct := -d
+			refuelPct += risePct
 			out.RefuelEvents++
+			// Record where + how much (litres/cost need a tank size).
+			re := RefuelEvent{
+				Time: fp.p.Time, Lat: fp.p.Lat, Lon: fp.p.Lon,
+				Address: joinAddr(fp.p.Jalan, fp.p.Kota, fp.p.Provinsi),
+				Province: fp.p.Provinsi, Pct: round1(risePct),
+			}
+			if tank != nil && *tank > 0 {
+				liters := *tank * risePct / 100
+				price := fuelPrice(fp.p.Provinsi)
+				re.Liters, re.PriceRp, re.CostRp = round1(liters), price, round0(liters*price)
+			}
+			out.Refuels = append(out.Refuels, re)
 			// (small rises are sensor noise — ignored, neither consumed nor refuel)
 		}
 		prev = cur
@@ -221,3 +268,18 @@ func ioNum(v any) (float64, bool) {
 
 func ptrF(f float64) *float64  { return &f }
 func round0(f float64) float64 { return float64(int64(f + 0.5)) }
+
+// joinAddr builds a compact address from the geocoded parts, skipping blanks.
+func joinAddr(parts ...string) string {
+	out := ""
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		if out != "" {
+			out += ", "
+		}
+		out += p
+	}
+	return out
+}
