@@ -32,8 +32,11 @@ var fuelTripFields = []string{"lat", "lon", "speed", "time", "ignition", "jalan"
 
 const (
 	fuelPricePerLitre = 6800.0 // Rp/L, subsidised Solar (national default)
-	refuelMinPct      = 3.0     // a level rise this large counts as a refuel, not noise
-	maxTripGapSec     = 600.0   // gap between fixes over this = offline, not engine-on time
+	// A level rise this large counts as a refuel. Set well above sensor noise:
+	// on bumpy roads the fuel sloshes and the sender momentarily reads high, so a
+	// small blip is NOT a refuel — only a sustained double-digit jump is.
+	refuelMinPct  = 12.0
+	maxTripGapSec = 600.0 // gap between fixes over this = offline, not engine-on time
 )
 
 // fuelPriceByProvince overrides the national Solar/Biosolar price (Rp/L) where a
