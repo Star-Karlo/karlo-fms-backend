@@ -101,6 +101,34 @@ const (
 	weightHarshCorner = 13.0
 )
 
+// 5-pillar driving-behaviour score (replaces the blended model). Each pillar is
+// worth pillarBudget points; the penalty is the driver's exposure-normalised
+// weighted-event rate (severity points per 100 km, yellow=1/red=2/black=4)
+// saturating at these full-scale rates. Starting values — tune once real event
+// volume is known. Stopping/Turning/Steering are rarer, so they saturate lower.
+const (
+	pillarBudget   = 20.0
+	fullBraking    = 8.0
+	fullStopping   = 4.0
+	fullTurning    = 6.0
+	fullSteering   = 6.0
+	fullSmoothness = 12.0
+)
+
+// pillarPenalty scales a pillar (0..pillarBudget) by the driver's own exposure:
+// weighted severity points per 100 km, saturating at full.
+func (c *Collector) pillarPenalty(pd *perDriver, code string, full float64) float64 {
+	if pd.distanceKm <= 0 || full <= 0 {
+		return 0
+	}
+	rate := pd.pillar[code] / (pd.distanceKm / 100.0)
+	p := pillarBudget * rate / full
+	if p > pillarBudget {
+		p = pillarBudget
+	}
+	return p
+}
+
 // Collector recomputes scores on a schedule.
 type Collector struct {
 	pool   *db.Pool
@@ -189,10 +217,13 @@ type perDriver struct {
 	// Harsh G-sensor events this month: kind ("braking"|"acceleration"|
 	// "cornering") -> severity ("yellow"|"red"|"black") -> count.
 	harsh map[string]map[string]int
+	// 5-pillar accumulators: pillar code -> weighted severity points / raw count.
+	pillar  map[string]float64
+	pillarN map[string]int
 }
 
 func newPerDriver() *perDriver {
-	return &perDriver{harsh: map[string]map[string]int{}}
+	return &perDriver{harsh: map[string]map[string]int{}, pillar: map[string]float64{}, pillarN: map[string]int{}}
 }
 
 // severityPoints weights a harsh event by how dangerous it was, so one black
@@ -297,8 +328,14 @@ func (c *Collector) scoreTenant(ctx context.Context, tenantID int64) error {
 	// days is not in acc and is skipped (that driver is below the distance gate).
 	nextMonth := period.AddDate(0, 1, 0)
 	if err := db.Tx(ctx, c.pool, tenantID, func(tx pgx.Tx) error {
+		// Bucket each harsh kind by speed so the 5 pillars can be separated:
+		// Stopping = braking at ~0 km/h (abrupt stop), Turning = cornering at
+		// speed (rollover risk), Steering = cornering at low speed (swerve).
 		rows, err := tx.Query(ctx, `
-SELECT vehicle_id, kind, severity, count(*)
+SELECT vehicle_id, kind, severity,
+       count(*)                                             AS n_all,
+       count(*) FILTER (WHERE coalesce(speed_kph,0) < 5)    AS n_slow,
+       count(*) FILTER (WHERE coalesce(speed_kph,0) >= 30)  AS n_fast
 FROM driving_events
 WHERE occurred_at >= $1 AND occurred_at < $2 AND vehicle_id IS NOT NULL
 GROUP BY vehicle_id, kind, severity`, period, nextMonth)
@@ -309,8 +346,8 @@ GROUP BY vehicle_id, kind, severity`, period, nextMonth)
 		for rows.Next() {
 			var vid int64
 			var kind, sev string
-			var n int
-			if err := rows.Scan(&vid, &kind, &sev, &n); err != nil {
+			var nAll, nSlow, nFast int
+			if err := rows.Scan(&vid, &kind, &sev, &nAll, &nSlow, &nFast); err != nil {
 				return err
 			}
 			did, ok := driverOf[vid]
@@ -321,14 +358,29 @@ GROUP BY vehicle_id, kind, severity`, period, nextMonth)
 			if pd == nil {
 				continue
 			}
-			if pd.harsh[kind] == nil {
-				pd.harsh[kind] = map[string]int{}
+			pts := severityPoints(sev)
+			add := func(code string, n int) {
+				pd.pillar[code] += pts * float64(n)
+				pd.pillarN[code] += n
 			}
-			pd.harsh[kind][sev] += n
+			switch kind {
+			case "braking":
+				add("BRAKING", nAll)   // all harsh braking
+				add("STOPPING", nSlow) // braking at ~0 km/h = abrupt stop
+				add("SMOOTHNESS", nAll)
+			case "acceleration":
+				add("SMOOTHNESS", nAll) // jerky pedal use
+			case "cornering":
+				add("TURNING", nFast)          // high-speed corner (rollover risk)
+				add("STEERING", nAll-nFast)    // low-speed corner / swerve (approx)
+			case "road_shock":
+				// vertical shock (Z) is not one of the 5 pillars; it is shown in
+				// the harsh-driving history, not scored here.
+			}
 		}
 		return rows.Err()
 	}); err != nil {
-		// Non-fatal: the GPS pillars still score if the events read fails.
+		// Non-fatal: a driver with no readable events simply scores clean.
 		log.Printf("driverscore: tenant %d harsh events: %v", tenantID, err)
 	}
 
@@ -345,28 +397,20 @@ GROUP BY vehicle_id, kind, severity`, period, nextMonth)
 			if pd.distanceKm < c.policy.MinDistanceKm {
 				continue // too little driving to judge fairly
 			}
-			ovs := c.overspeedPenalty(pd)
-			idle := c.idlePenalty(pd)
-			fat := c.longShiftPenalty(pd)
-			_, brakeN := pd.harshPoints("braking")
-			_, accelN := pd.harshPoints("acceleration")
-			_, cornerN := pd.harshPoints("cornering")
-
-			// trip_km carries the exposure the scorecard reads; the rest are
-			// penalties it subtracts from 100. The three HARSH_* rows are always
-			// written (0 when clean) so the scorecard shows every pillar.
+			// 5-pillar driving-behaviour score (each pillar worth 20). trip_km
+			// carries the exposure the scorecard reads; the five pillar rows are
+			// always written (0 when clean) so the scorecard shows every pillar.
 			rows := []struct {
 				code  string
 				occ   int
 				score float64
 			}{
 				{"trip_km", 0, pd.distanceKm},
-				{"OVERSPEED", pd.speedingDays, ovs},
-				{"EXCEEDED_IDLE", 0, idle},
-				{"LONG_SHIFT", 0, fat},
-				{"HARSH_BRAKE", brakeN, c.harshPenalty(pd, "braking", weightHarshBrake)},
-				{"HARSH_ACCEL", accelN, c.harshPenalty(pd, "acceleration", weightHarshAccel)},
-				{"HARSH_CORNER", cornerN, c.harshPenalty(pd, "cornering", weightHarshCorner)},
+				{"BRAKING", pd.pillarN["BRAKING"], c.pillarPenalty(pd, "BRAKING", fullBraking)},
+				{"STOPPING", pd.pillarN["STOPPING"], c.pillarPenalty(pd, "STOPPING", fullStopping)},
+				{"TURNING", pd.pillarN["TURNING"], c.pillarPenalty(pd, "TURNING", fullTurning)},
+				{"STEERING", pd.pillarN["STEERING"], c.pillarPenalty(pd, "STEERING", fullSteering)},
+				{"SMOOTHNESS", pd.pillarN["SMOOTHNESS"], c.pillarPenalty(pd, "SMOOTHNESS", fullSmoothness)},
 			}
 			for _, r := range rows {
 				if _, err := tx.Exec(ctx, `

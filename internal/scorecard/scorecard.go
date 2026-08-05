@@ -46,32 +46,17 @@ type Band struct {
 var config = Config{
 	MinDistanceKm: 300,
 	AlertLimitPct: 5,
-	// Weights sum to 100 across the THREE behaviours the 90-second GPS feed can
-	// actually measure. The original set spread 100 points across harsh events
-	// and dashcam signals — 75 of the 100 — none of which the devices report
-	// today. With those unmeasured every driver scored 75-100 and the board
-	// could not tell anyone apart, which is a scorecard that grades nothing.
-	//
-	// The unmeasured codes are kept at weight 0 rather than deleted: they are
-	// what a full score WOULD include once the trackers are configured to emit
-	// harsh-event and DMS data, and re-enabling them is then a weight change
-	// rather than a rebuild. See internal/driverscore for how the three live
-	// ones are derived, and the package doc there for why the rest cannot be.
+	// Five accelerometer pillars, 20 points each (sum 100). The score is now a
+	// driving-behaviour model derived from the tracker/camera G-sensor events
+	// (internal/driverscore): X = Braking/Stopping, Y = Turning/Steering, plus a
+	// Smoothness index. Steering is approximate in v1 (a low-speed cornering
+	// proxy) until road/bearing context separates it from Turning cleanly.
 	Weights: []Weight{
-		{"OVERSPEED", "Speeding", "gps", 45},
-		{"EXCEEDED_IDLE", "Excessive Idling", "gps", 30},
-		{"LONG_SHIFT", "Long Shifts (fatigue)", "gps", 25},
-
-		// Unmeasured at 90s sampling / without DMS. Present so the UI shows what
-		// is not yet covered, and so enabling device reporting is a weight edit.
-		{"HARSH_ACCEL", "Sudden Acceleration", "gps", 0},
-		{"HARSH_BRAKING", "Sudden Deceleration", "gps", 0},
-		{"SHARP_TURN", "Sharp Turns", "gps", 0},
-		{"DMS_YAWN", "Yawning", "dashcam", 0},
-		{"DMS_EYE_CLOSED", "Eye Closed", "dashcam", 0},
-		{"DMS_PHONE", "Calling", "dashcam", 0},
-		{"DMS_DISTRACTION", "Distraction", "dashcam", 0},
-		{"DMS_OUT_OF_FRAME", "Out Of Frame", "dashcam", 0},
+		{"BRAKING", "Braking", "accel", 20},
+		{"STOPPING", "Stopping", "accel", 20},
+		{"TURNING", "Turning", "accel", 20},
+		{"STEERING", "Steering (approx.)", "accel", 20},
+		{"SMOOTHNESS", "Smoothness", "accel", 20},
 	},
 	IndexBands: []Band{
 		{"A", 91, 100}, {"B", 71, 90}, {"C", 51, 70}, {"D", 31, 50}, {"E", 0, 30},
