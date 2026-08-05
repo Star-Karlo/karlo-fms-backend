@@ -33,6 +33,7 @@ var fuelTripFields = []string{"lat", "lon", "speed", "time", "ignition", "jalan"
 const (
 	fuelPricePerLitre = 6800.0 // Rp/L, subsidised Solar (national default)
 	refuelMinPct      = 3.0     // a level rise this large counts as a refuel, not noise
+	maxTripGapSec     = 600.0   // gap between fixes over this = offline, not engine-on time
 )
 
 // fuelPriceByProvince overrides the national Solar/Biosolar price (Rp/L) where a
@@ -86,6 +87,18 @@ type FuelTrip struct {
 
 	KmplActual     *float64 `json:"kmpl_actual"`     // distance ÷ used_liters (sensor-measured)
 	KmplConfigured *float64 `json:"kmpl_configured"` // = fuel_ratio_kmpl (echo)
+
+	// Operating time over the window, from ignition + speed per fix.
+	EngineHours *float64 `json:"engine_hours"` // ignition-on time
+	IdleHours   *float64 `json:"idle_hours"`   // engine-on but speed ≈ 0
+	MovingHours *float64 `json:"moving_hours"` // engine-on and moving
+
+	// Cost efficiency. Fuel cost basis is sensor-measured when a fuel sensor +
+	// tank are set (captures idle burn); otherwise the configured km/L rate
+	// (which does NOT see idle, so it under-counts on idle-heavy trips).
+	CostBasis   string   `json:"cost_basis,omitempty"` // "sensor" | "rate" | ""
+	CostPerKm   *float64 `json:"cost_per_km"`          // fuel cost ÷ distance
+	CostPerHour *float64 `json:"cost_per_hour"`        // fuel cost ÷ engine-on hours
 
 	Note string `json:"note,omitempty"`
 }
@@ -144,17 +157,58 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 
 	out := &FuelTrip{Points: len(ps), TankLiters: tank, FuelRatioKmpl: ratio, KmplConfigured: ratio, Refuels: []RefuelEvent{}}
 
-	// Distance from the GPS track.
+	// Distance from the GPS track, and operating time from ignition + speed.
+	// Time is summed over the gaps BETWEEN consecutive fixes; a gap longer than
+	// maxTripGapSec is treated as offline (parked, not reporting) and skipped so
+	// an overnight stop doesn't inflate engine hours.
 	var lastLat, lastLon *float64
-	for _, p := range ps {
+	var engineSec, idleSec, movingSec float64
+	for i := range ps {
+		p := ps[i]
 		if p.Lat != nil && p.Lon != nil {
 			if lastLat != nil {
 				out.DistanceKm += haversine(*lastLat, *lastLon, *p.Lat, *p.Lon)
 			}
 			lastLat, lastLon = p.Lat, p.Lon
 		}
+		if i > 0 && p.Ignition != nil && *p.Ignition {
+			dt := p.Time.Sub(ps[i-1].Time).Seconds()
+			if dt > 0 && dt <= maxTripGapSec {
+				engineSec += dt
+				if p.Speed != nil && *p.Speed > movingSpeed {
+					movingSec += dt
+				} else {
+					idleSec += dt
+				}
+			}
+		}
 	}
 	out.DistanceKm = round1(out.DistanceKm)
+	if engineSec > 0 {
+		out.EngineHours = ptrF(round1(engineSec / 3600))
+		out.IdleHours = ptrF(round1(idleSec / 3600))
+		out.MovingHours = ptrF(round1(movingSec / 3600))
+	}
+
+	// Rp/km and Rp/hour, from the best fuel-cost basis available. Runs on both
+	// exit paths (with or without a usable fuel sensor), so it's a closure.
+	finish := func() {
+		var costRp float64
+		switch {
+		case out.CostRp != nil && *out.CostRp > 0:
+			costRp, out.CostBasis = *out.CostRp, "sensor"
+		case ratio != nil && *ratio > 0 && out.DistanceKm > 0:
+			costRp, out.CostBasis = out.DistanceKm / *ratio * fuelPricePerLitre, "rate"
+		default:
+			return
+		}
+		if out.DistanceKm > 0 {
+			out.CostPerKm = ptrF(round0(costRp / out.DistanceKm))
+		}
+		if engineSec > 0 {
+			out.CostPerHour = ptrF(round0(costRp / (engineSec / 3600)))
+		}
+	}
 
 	// Fuel level (%) per point, keeping the point so a refuel keeps its location.
 	type fuelPt struct {
@@ -170,6 +224,7 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	out.FuelReadings = len(fps)
 	if len(fps) < 2 {
 		out.Note = "No fuel-sensor readings in this window — showing distance only."
+		finish() // still yields Rp/km + Rp/hour from the configured km/L rate
 		return out, nil
 	}
 
@@ -227,6 +282,7 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	case consumedPct == 0:
 		out.Note = "Fuel level did not change measurably this trip (coarse 1% sensor) — km/L needs a longer trip."
 	}
+	finish()
 	return out, nil
 }
 

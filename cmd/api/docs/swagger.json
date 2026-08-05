@@ -4826,6 +4826,102 @@
                 }
             }
         },
+        "/v1/vehicles/{vehicle_id}/driving-events": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Axis X/Y/Z harsh events (accel/brake, cornering, vertical shock) over the window, each with a peak g and risk band, plus a per-axis summary.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Harsh-driving events for a trip (accelerometer)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.DrivingHistory"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/vehicles/{vehicle_id}/fuel-trip": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Distance travelled (GPS) + fuel-level sensor drops → litres used, refuels, and REAL km/L for the window. Falls back to a note when the vehicle has no fuel sensor or the level did not move.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Actual fuel used over a trip (from the fuel-level sensor)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.FuelTrip"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/vehicles/{vehicle_id}/history": {
             "get": {
                 "security": [
@@ -7480,6 +7576,32 @@
                 }
             }
         },
+        "liveview.AxisSummary": {
+            "type": "object",
+            "properties": {
+                "axis": {
+                    "type": "string"
+                },
+                "caution": {
+                    "type": "integer"
+                },
+                "critical": {
+                    "type": "integer"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "max_g": {
+                    "type": "number"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "warning": {
+                    "type": "integer"
+                }
+            }
+        },
         "liveview.BehaviorEvent": {
             "type": "object",
             "properties": {
@@ -7624,6 +7746,63 @@
                 }
             }
         },
+        "liveview.DrivingEvent": {
+            "type": "object",
+            "properties": {
+                "axis": {
+                    "description": "X | Y | Z",
+                    "type": "string"
+                },
+                "band": {
+                    "description": "safe | warning | caution | critical",
+                    "type": "string"
+                },
+                "gforce": {
+                    "type": "number"
+                },
+                "kind": {
+                    "description": "braking | acceleration | cornering | road_shock",
+                    "type": "string"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "severity": {
+                    "description": "yellow | red | black (stored)",
+                    "type": "string"
+                },
+                "speed": {
+                    "type": "number"
+                }
+            }
+        },
+        "liveview.DrivingHistory": {
+            "type": "object",
+            "properties": {
+                "by_axis": {
+                    "description": "always X, Y, Z (zeroed if none)",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.AxisSummary"
+                    }
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.DrivingEvent"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "liveview.FleetHistory": {
             "type": "object",
             "properties": {
@@ -7644,6 +7823,98 @@
                     "items": {
                         "$ref": "#/definitions/liveview.VehicleTotals"
                     }
+                }
+            }
+        },
+        "liveview.FuelTrip": {
+            "type": "object",
+            "properties": {
+                "cost_basis": {
+                    "description": "Cost efficiency. Fuel cost basis is sensor-measured when a fuel sensor +\ntank are set (captures idle burn); otherwise the configured km/L rate\n(which does NOT see idle, so it under-counts on idle-heavy trips).",
+                    "type": "string"
+                },
+                "cost_per_hour": {
+                    "description": "fuel cost ÷ engine-on hours",
+                    "type": "number"
+                },
+                "cost_per_km": {
+                    "description": "fuel cost ÷ distance",
+                    "type": "number"
+                },
+                "cost_rp": {
+                    "description": "used_liters × price",
+                    "type": "number"
+                },
+                "distance_km": {
+                    "type": "number"
+                },
+                "engine_hours": {
+                    "description": "Operating time over the window, from ignition + speed per fix.",
+                    "type": "number"
+                },
+                "fuel_end_pct": {
+                    "type": "number"
+                },
+                "fuel_ratio_kmpl": {
+                    "description": "configured, for comparison",
+                    "type": "number"
+                },
+                "fuel_readings": {
+                    "description": "points that carried a fuel level",
+                    "type": "integer"
+                },
+                "fuel_start_pct": {
+                    "type": "number"
+                },
+                "idle_hours": {
+                    "description": "engine-on but speed ≈ 0",
+                    "type": "number"
+                },
+                "kmpl_actual": {
+                    "description": "distance ÷ used_liters (sensor-measured)",
+                    "type": "number"
+                },
+                "kmpl_configured": {
+                    "description": "= fuel_ratio_kmpl (echo)",
+                    "type": "number"
+                },
+                "moving_hours": {
+                    "description": "engine-on and moving",
+                    "type": "number"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "points": {
+                    "type": "integer"
+                },
+                "refuel_events": {
+                    "type": "integer"
+                },
+                "refuel_liters": {
+                    "type": "number"
+                },
+                "refuel_pct": {
+                    "type": "number"
+                },
+                "refuels": {
+                    "description": "where + how much + cost, per refuel",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.RefuelEvent"
+                    }
+                },
+                "tank_liters": {
+                    "description": "from the vehicle record",
+                    "type": "number"
+                },
+                "used_liters": {
+                    "description": "tank × used_pct (nil = no tank set)",
+                    "type": "number"
+                },
+                "used_pct": {
+                    "description": "total drop (consumption), refuel-adjusted",
+                    "type": "number"
                 }
             }
         },
@@ -7710,6 +7981,42 @@
                 },
                 "speed": {
                     "type": "number"
+                },
+                "time": {
+                    "type": "string"
+                }
+            }
+        },
+        "liveview.RefuelEvent": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "cost_rp": {
+                    "description": "liters × price",
+                    "type": "number"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "liters": {
+                    "description": "tank × pct",
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "pct": {
+                    "description": "level rise",
+                    "type": "number"
+                },
+                "price_rp": {
+                    "description": "Rp/L applied (regional)",
+                    "type": "number"
+                },
+                "province": {
+                    "type": "string"
                 },
                 "time": {
                     "type": "string"

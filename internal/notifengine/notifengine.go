@@ -1,17 +1,23 @@
 // Package notifengine evaluates active notification rules against live telemetry
 // for the vehicles each rule is attached to, and persists alerts (notifications).
 //
-// It runs as a background ticker inside the API process. Only rule types that can
-// be derived from the ~60s live feed are evaluated today; OVERSPEED is the first.
-// Other alert codes can be attached but stay dormant until an evaluator + data
-// source exist (idle/parking need dwell tracking; camera/geofence/fuel need data
-// we don't yet ingest).
+// It runs as a background ticker inside the API process. Instantaneous threshold
+// rules that can be read from the ~60s live feed are driven by the `liveMetrics`
+// table: OVERSPEED (speed), ENGINE_OVERREV (RPM) and LOW_OIL_PRESSURE (both from
+// the engine CAN metadata). Adding a code there + a taxonomy entry is all it
+// takes to make a new "over/under X" rule fire. Other alert codes can be attached
+// but stay dormant until an evaluator + data source exist (idle/parking need
+// dwell tracking; camera/geofence come from other producers).
 package notifengine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,6 +35,62 @@ const cooldownMin = 30
 
 // defaultOverspeed is used when an OVERSPEED rule has no explicit threshold.
 const defaultOverspeed = 60.0
+
+// liveMetric describes a rule whose condition is a single live-telemetry value
+// compared to the rule's threshold each tick. metaKeys empty => use the
+// top-level Speed; otherwise the first present metadata key wins (engine CAN
+// keys vary by adapter). below flips the comparison to "fire when under".
+type liveMetric struct {
+	metaKeys []string
+	below    bool
+	def      float64 // threshold when the rule leaves it blank/0
+	unit     string
+	label    string
+}
+
+// liveMetrics is the set of alert codes evaluable against the ~60s live feed.
+// Adding a code here (plus a taxonomy entry) is all it takes to make an
+// instantaneous threshold rule actually fire. Engine keys are read from the CAN
+// metadata blob, so only trucks with a CAN adapter trip them.
+var liveMetrics = map[string]liveMetric{
+	"OVERSPEED":        {nil, false, defaultOverspeed, "km/h", "Speed"},
+	"ENGINE_OVERREV":   {[]string{"Engine Speed (CAN)", "Engine Speed"}, false, 2500, "rpm", "Engine RPM"},
+	"LOW_OIL_PRESSURE": {[]string{"Engine Oil Pressure (CAN)", "Engine Oil Pressure"}, true, 100, "kPa", "Oil pressure"},
+}
+
+// liveValue extracts the metric's current value from a live fix.
+func liveValue(pos telemetry.Position, spec liveMetric) (float64, bool) {
+	if spec.metaKeys == nil {
+		if pos.Speed == nil {
+			return 0, false
+		}
+		return *pos.Speed, true
+	}
+	return metaNum(pos.Metadata, spec.metaKeys...)
+}
+
+// metaNum pulls the first present key from a metadata blob as a float (values
+// arrive as either JSON numbers or numeric strings, depending on the device).
+func metaNum(md json.RawMessage, keys ...string) (float64, bool) {
+	if len(md) == 0 {
+		return 0, false
+	}
+	var m map[string]any
+	if err := json.Unmarshal(md, &m); err != nil {
+		return 0, false
+	}
+	for _, k := range keys {
+		switch n := m[k].(type) {
+		case float64:
+			return n, true
+		case string:
+			if f, err := strconv.ParseFloat(strings.TrimSpace(n), 64); err == nil {
+				return f, true
+			}
+		}
+	}
+	return 0, false
+}
 
 // Engine periodically evaluates rules and writes alerts.
 type Engine struct {
@@ -124,21 +186,23 @@ func (e *Engine) evalTenant(ctx context.Context, tenantID int64) (int, error) {
 		created += n
 	}
 
-	// Collect IMEIs of vehicles that carry an OVERSPEED rule, then fetch live.
+	// Collect IMEIs of vehicles carrying any live-evaluable rule, then fetch live.
 	imeiSet := map[string]struct{}{}
 	for _, t := range targets {
-		if t.AlertCode == "OVERSPEED" && t.Imei != nil && *t.Imei != "" {
+		if _, ok := liveMetrics[t.AlertCode]; ok && t.Imei != nil && *t.Imei != "" {
 			imeiSet[*t.Imei] = struct{}{}
 		}
 	}
 	if len(imeiSet) == 0 {
-		return created, nil // no OVERSPEED rules; frequency pass already counted
+		return created, nil // no live-threshold rules; frequency pass already counted
 	}
 	imeis := make([]string, 0, len(imeiSet))
 	for im := range imeiSet {
 		imeis = append(imeis, im)
 	}
-	positions, err := e.tel.LiveMany(ctx, imeis, []string{"lat", "lon", "speed"})
+	// "metadata" carries the engine CAN keys (RPM, oil pressure); speed stays
+	// top-level. Trucks without a CAN adapter simply have no metadata to read.
+	positions, err := e.tel.LiveMany(ctx, imeis, []string{"lat", "lon", "speed", "metadata"})
 	if err != nil {
 		return created, fmt.Errorf("telemetry: %w", err)
 	}
@@ -148,21 +212,30 @@ func (e *Engine) evalTenant(ctx context.Context, tenantID int64) (int, error) {
 	}
 
 	for _, t := range targets {
-		if t.AlertCode != "OVERSPEED" || t.Imei == nil {
-			continue // only OVERSPEED is evaluable today
-		}
-		pos, ok := byIMEI[*t.Imei]
-		if !ok || pos.Speed == nil {
+		spec, ok := liveMetrics[t.AlertCode]
+		if !ok || t.Imei == nil {
 			continue
 		}
-		limit := defaultOverspeed
+		pos, ok := byIMEI[*t.Imei]
+		if !ok {
+			continue
+		}
+		val, ok := liveValue(pos, spec)
+		if !ok {
+			continue // this vehicle doesn't report the metric (no CAN, etc.)
+		}
+		limit := spec.def
 		if f := conv.NumF(t.Threshold); f != nil && *f > 0 {
 			limit = *f
 		}
-		if *pos.Speed <= limit {
+		breached := val > limit
+		if spec.below {
+			breached = val < limit
+		}
+		if !breached {
 			continue
 		}
-		ok, err := e.writeAlert(ctx, tenantID, t, *pos.Speed, limit, pos.Lat, pos.Lon)
+		ok, err := e.writeAlert(ctx, tenantID, t, spec, val, limit, pos.Lat, pos.Lon)
 		if err != nil {
 			log.Printf("notifengine: write alert veh %d: %v", t.VehicleID, err)
 			continue
@@ -248,11 +321,15 @@ func (e *Engine) evalFrequency(ctx context.Context, tenantID int64, t store.List
 	return 0, nil
 }
 
-// writeAlert persists one overspeed alert unless a recent one already exists.
+// writeAlert persists one threshold alert unless a recent one already exists.
 // Returns false when suppressed by the cooldown.
-func (e *Engine) writeAlert(ctx context.Context, tenantID int64, t store.ListActiveRuleTargetsRow, speed, limit float64, lat, lon *float64) (bool, error) {
+func (e *Engine) writeAlert(ctx context.Context, tenantID int64, t store.ListActiveRuleTargetsRow, spec liveMetric, val, limit float64, lat, lon *float64) (bool, error) {
 	code := t.AlertCode
-	name := fmt.Sprintf("Overspeed — %d km/h (limit %d)", int(speed), int(limit))
+	dir := "over"
+	if spec.below {
+		dir = "under"
+	}
+	name := fmt.Sprintf("%s %d %s (%s limit %d)", spec.label, int(math.Round(val)), spec.unit, dir, int(math.Round(limit)))
 	if t.NotificationName != nil && *t.NotificationName != "" {
 		name = *t.NotificationName
 	}
@@ -272,7 +349,7 @@ func (e *Engine) writeAlert(ctx context.Context, tenantID int64, t store.ListAct
 		}
 		if _, err := q.CreateAlert(ctx, store.CreateAlertParams{
 			TenantID: tenantID, VehicleID: &vid, AlertCode: &code, AlertName: &name, Severity: &sev,
-			ActualValue: conv.Num(&speed), LimitValue: conv.Num(&limit), Lat: lat, Lon: lon,
+			ActualValue: conv.Num(&val), LimitValue: conv.Num(&limit), Lat: lat, Lon: lon,
 		}); err != nil {
 			return err
 		}

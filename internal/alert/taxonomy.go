@@ -63,6 +63,8 @@ var Taxonomy = []AlertType{
 	{"SHARP_TURN", "Belokan Tajam", "Sharp Turn", SourceGPS, SevImportant, true},
 	{"HARSH_BUMP", "Guncangan Vertikal / Jalan Rusak", "Harsh Bump / Road Shock", SourceGPS, SevImportant, true},
 	{"OVERSPEED", "Melebihi Batas Kecepatan", "Speed Over Safety Limit", SourceGPS, SevUrgent, true},
+	{"ENGINE_OVERREV", "Putaran Mesin Berlebih (RPM)", "Engine Over-Rev (RPM)", SourceGPS, SevImportant, true},
+	{"LOW_OIL_PRESSURE", "Tekanan Oli Rendah", "Low Engine Oil Pressure", SourceGPS, SevUrgent, false},
 	{"BATTERY_DROP", "Baterai Turun / Terputus", "Battery Drop / Disconnect", SourceGPS, SevUrgent, false},
 	{"DMS_SHOCK", "DMS - Guncangan", "Shock", SourceCamera, SevImportant, false},
 	{"DMS_CAMERA_BLOCKED", "DMS - Kamera Terhalang", "Camera Blocked", SourceCamera, SevImportant, false},
