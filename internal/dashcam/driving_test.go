@@ -54,13 +54,14 @@ func TestGreenBehaviour(t *testing.T) {
 		1: {"acceleration", "X"},
 		2: {"braking", "X"},
 		3: {"cornering", "Y"},
+		4: {"road_shock", "Z"}, // raw-axis vertical bump / road shock
 	}
 	for typ, want := range cases {
 		if b, ok := greenBehaviour(typ); !ok || b != want {
 			t.Errorf("greenBehaviour(%d) = %+v,%v want %+v", typ, b, ok, want)
 		}
 	}
-	for _, bad := range []int{0, 4, -1, 99} {
+	for _, bad := range []int{0, 5, -1, 99} {
 		if _, ok := greenBehaviour(bad); ok {
 			t.Errorf("greenBehaviour(%d) should be false", bad)
 		}

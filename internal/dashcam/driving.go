@@ -2,10 +2,14 @@ package dashcam
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/karlo/fms-backend/internal/alert"
 	"github.com/karlo/fms-backend/internal/platform/db"
+	"github.com/karlo/fms-backend/internal/store"
 	"github.com/karlo/fms-backend/internal/telemetry"
 )
 
@@ -106,6 +110,8 @@ func greenBehaviour(typ int) (behaviour, bool) {
 		return behaviour{"braking", "X"}, true
 	case 3:
 		return behaviour{"cornering", "Y"}, true
+	case 4:
+		return behaviour{"road_shock", "Z"}, true
 	}
 	return behaviour{}, false
 }
@@ -145,6 +151,76 @@ VALUES ($1,'teltonika',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 ON CONFLICT (tenant_id, source, telemetry_alarm_id) DO NOTHING`,
 			tenantID, link.vehicleID, link.driverID, ev.IMEI, ev.ID,
 			ev.EventType, b.kind, b.axis, g, sev, occurred, ev.Lat, ev.Lon, ev.Speed)
+		return err
+	})
+}
+
+// harshAlertCode maps a Green Driving event_type to its taxonomy alert code +
+// English display name. ok=false for non-harsh types.
+func harshAlertCode(eventType int) (code, name string, ok bool) {
+	switch eventType {
+	case 1:
+		code = "HARSH_ACCEL"
+	case 2:
+		code = "HARSH_BRAKING"
+	case 3:
+		code = "SHARP_TURN"
+	case 4:
+		code = "HARSH_BUMP"
+	default:
+		return "", "", false
+	}
+	return code, alert.LabelFor(code), true
+}
+
+// greenNotifyCooldownMin dedups tracker-harsh notifications per vehicle+code, so
+// a rough stretch of road doesn't flood the Notifications feed.
+const greenNotifyCooldownMin = 5
+
+// notifySevereGreen raises a Notification for a SEVERE tracker harsh event
+// (g >= red). Gentle events still score via recordGreenEvent but stay off the
+// bell; that keeps the feed meaningful. Best-effort and deduped within a
+// cooldown window. Mirrors AlarmPoller's CreateAlert path so tracker harsh
+// events land in the same Notifications feed as camera ones.
+func notifySevereGreen(ctx context.Context, pool *db.Pool, tenantID int64, link devLink, ev telemetry.GreenDrivingEvent) error {
+	g := greenGforce(ev.Value)
+	if g == nil || *g < gRed { // only red/black count as severe
+		return nil
+	}
+	code, label, ok := harshAlertCode(ev.EventType)
+	if !ok {
+		return nil
+	}
+	name := fmt.Sprintf("%s (%.2f g)", label, *g)
+	sev := alert.SevImportant
+	if *g >= gBlack {
+		sev = alert.SevUrgent
+	}
+	veh := link.vehicleID
+	src := alert.SourceGPS
+	occurred := parseTime(ev.OccurredAt)
+	return db.Tx(ctx, pool, tenantID, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		recent, err := q.CountRecentAlert(ctx, store.CountRecentAlertParams{
+			TenantID: tenantID, VehicleID: &veh, AlertCode: &code, CooldownMin: greenNotifyCooldownMin,
+		})
+		if err != nil {
+			return err
+		}
+		if recent > 0 {
+			return nil // already notified for this vehicle+code recently
+		}
+		_, err = q.CreateAlert(ctx, store.CreateAlertParams{
+			TenantID:     tenantID,
+			VehicleID:    &veh,
+			AlertCode:    &code,
+			AlertName:    &name,
+			Severity:     &sev,
+			DeviceSource: src,
+			OccurredAt:   pgtype.Timestamptz{Time: occurred, Valid: true},
+			Lat:          ev.Lat,
+			Lon:          ev.Lon,
+		})
 		return err
 	})
 }

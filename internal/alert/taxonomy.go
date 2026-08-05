@@ -61,6 +61,7 @@ var Taxonomy = []AlertType{
 	{"HARSH_BRAKING", "Perlambatan Mendadak", "Harsh Braking / Sudden Deceleration", SourceGPS, SevImportant, true},
 	{"HARSH_ACCEL", "Akselerasi Mendadak", "Harsh Acceleration / Sudden Acceleration", SourceGPS, SevImportant, true},
 	{"SHARP_TURN", "Belokan Tajam", "Sharp Turn", SourceGPS, SevImportant, true},
+	{"HARSH_BUMP", "Guncangan Vertikal / Jalan Rusak", "Harsh Bump / Road Shock", SourceGPS, SevImportant, true},
 	{"OVERSPEED", "Melebihi Batas Kecepatan", "Speed Over Safety Limit", SourceGPS, SevUrgent, true},
 	{"BATTERY_DROP", "Baterai Turun / Terputus", "Battery Drop / Disconnect", SourceGPS, SevUrgent, false},
 	{"DMS_SHOCK", "DMS - Guncangan", "Shock", SourceCamera, SevImportant, false},

@@ -86,6 +86,11 @@ func (p *GreenPoller) tick(ctx context.Context) error {
 		if err := recordGreenEvent(ctx, p.pool, link.tenantID, link, e, b); err != nil {
 			log.Printf("green driving poller: record for %s: %v", e.IMEI, err)
 		}
+		// Severe harsh events (g >= red) also raise a Notification; gentle ones
+		// only score. Best-effort — a failed alert must not stop scoring.
+		if err := notifySevereGreen(ctx, p.pool, link.tenantID, link, e); err != nil {
+			log.Printf("green driving poller: notify for %s: %v", e.IMEI, err)
+		}
 	}
 	p.cursor = maxID
 	return nil
