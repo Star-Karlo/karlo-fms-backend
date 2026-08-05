@@ -246,6 +246,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/analytics/history", h.fleetHistory)
 	r.Get("/v1/analytics/fleet", h.fleetAnalytics)
 	r.Get("/v1/vehicles/{vehicle_id}/behavior", h.behavior)
+	r.Get("/v1/vehicles/{vehicle_id}/fuel-trip", h.fuelTrip)
 	r.Get("/v1/coverage", h.coverage)
 }
 
