@@ -4816,6 +4816,66 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/vehicles/{vehicle_id}/analytics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Everything derived for one vehicle over [from,to] in a single call: fuel (litres/cost/km-L/Rp-km/Rp-hour/refuels/engine-idle-moving hours), GPS behaviour (overspeed, harsh accel/brake, idle stops), accelerometer harsh events by axis, and accumulated state (lifetime engine hours, odometer, km since service). Any section that can't be computed is null (with a note in ` + "`" + `errors` + "`" + `), never failing the whole response.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "analytics"
+                ],
+                "summary": "Consolidated vehicle analytics (history + calculations)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "vehicle id",
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "overspeed limit km/h (default 60)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "minutes a stop must exceed to count as idle (default 120)",
+                        "name": "idle_threshold",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.VehicleAnalytics"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/vehicles/{vehicle_id}/behavior": {
             "get": {
                 "security": [
@@ -8227,6 +8287,58 @@ const docTemplate = `{
                 }
             }
         },
+        "liveview.VehicleAnalytics": {
+            "type": "object",
+            "properties": {
+                "behavior": {
+                    "description": "overspeed, harsh accel/brake, idle stops (GPS)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/liveview.BehaviorResult"
+                        }
+                    ]
+                },
+                "driving": {
+                    "description": "harsh events by axis (accelerometer)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/liveview.DrivingHistory"
+                        }
+                    ]
+                },
+                "errors": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "from": {
+                    "type": "string"
+                },
+                "fuel": {
+                    "description": "distance, litres, cost, km/L, Rp/km, Rp/hour, refuels, engine/idle/moving hours",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/liveview.FuelTrip"
+                        }
+                    ]
+                },
+                "state": {
+                    "description": "lifetime engine hours, odometer, service context",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/liveview.VehicleState"
+                        }
+                    ]
+                },
+                "to": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
         "liveview.VehicleLive": {
             "type": "object",
             "properties": {
@@ -8280,6 +8392,27 @@ const docTemplate = `{
                 },
                 "vehicle_type": {
                     "type": "string"
+                }
+            }
+        },
+        "liveview.VehicleState": {
+            "type": "object",
+            "properties": {
+                "engine_hours": {
+                    "description": "lifetime ignition-on hours",
+                    "type": "number"
+                },
+                "km_since_service": {
+                    "type": "number"
+                },
+                "last_service_at": {
+                    "type": "string"
+                },
+                "last_service_km": {
+                    "type": "number"
+                },
+                "odometer_km": {
+                    "type": "number"
                 }
             }
         },

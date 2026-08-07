@@ -248,6 +248,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/vehicles/{vehicle_id}/behavior", h.behavior)
 	r.Get("/v1/vehicles/{vehicle_id}/fuel-trip", h.fuelTrip)
 	r.Get("/v1/vehicles/{vehicle_id}/driving-events", h.drivingEvents)
+	r.Get("/v1/vehicles/{vehicle_id}/analytics", h.analytics)
 	r.Get("/v1/coverage", h.coverage)
 }
 
@@ -468,8 +469,8 @@ type BehaviorResult struct {
 
 // fuelConfig reads a vehicle's fuel figures, tenant-scoped. Returns nils when
 // the vehicle has none — not an error, just nothing to estimate with.
-func (h *Handler) fuelConfig(ctx context.Context, tenantID, vehicleID int64) (ratio, tank *float64) {
-	_ = db.Tx(ctx, h.svc.pool, tenantID, func(tx pgx.Tx) error {
+func (s *Service) fuelConfig(ctx context.Context, tenantID, vehicleID int64) (ratio, tank *float64) {
+	_ = db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
 			`SELECT fuel_ratio_kmpl, fuel_tank_liters FROM vehicles WHERE id = $1`, vehicleID).
 			Scan(&ratio, &tank)
@@ -567,10 +568,21 @@ func (h *Handler) behavior(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	pts, err := h.svc.History(r.Context(), auth.TenantID(r.Context()), id, from, to, 5000)
+	res, err := h.svc.Behavior(r.Context(), auth.TenantID(r.Context()), id, from, to, limit, idleThreshold)
 	if err != nil {
 		httpx.Error(w, http.StatusBadGateway, "history unavailable: "+err.Error())
 		return
+	}
+	httpx.JSON(w, http.StatusOK, res)
+}
+
+// Behavior computes the GPS-derived driving behaviour (overspeed, harsh
+// accel/brake, idle stops, distance) for a vehicle over [from,to]. Extracted
+// from the handler so the consolidated analytics endpoint can reuse it.
+func (s *Service) Behavior(ctx context.Context, tenantID, vehicleID int64, from, to time.Time, limit, idleThreshold float64) (*BehaviorResult, error) {
+	pts, err := s.History(ctx, tenantID, vehicleID, from, to, 5000)
+	if err != nil {
+		return nil, err
 	}
 
 	// Harsh thresholds (km/h per second). Only trusted when samples are close in
@@ -636,8 +648,8 @@ func (h *Handler) behavior(w http.ResponseWriter, r *http.Request) {
 	}
 	res.Summary.TotalIdleMin = math.Round(res.Summary.TotalIdleMin*10) / 10
 
-	res.FuelRatioKmpl, res.FuelTankLiters = h.fuelConfig(r.Context(), auth.TenantID(r.Context()), id)
-	httpx.JSON(w, http.StatusOK, res)
+	res.FuelRatioKmpl, res.FuelTankLiters = s.fuelConfig(ctx, tenantID, vehicleID)
+	return &res, nil
 }
 
 // TripPoint is one point of a vehicle's historical track.

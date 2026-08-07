@@ -1929,6 +1929,36 @@ definitions:
       vehicle_id:
         type: integer
     type: object
+  liveview.VehicleAnalytics:
+    properties:
+      behavior:
+        allOf:
+        - $ref: '#/definitions/liveview.BehaviorResult'
+        description: overspeed, harsh accel/brake, idle stops (GPS)
+      driving:
+        allOf:
+        - $ref: '#/definitions/liveview.DrivingHistory'
+        description: harsh events by axis (accelerometer)
+      errors:
+        additionalProperties:
+          type: string
+        type: object
+      from:
+        type: string
+      fuel:
+        allOf:
+        - $ref: '#/definitions/liveview.FuelTrip'
+        description: distance, litres, cost, km/L, Rp/km, Rp/hour, refuels, engine/idle/moving
+          hours
+      state:
+        allOf:
+        - $ref: '#/definitions/liveview.VehicleState'
+        description: lifetime engine hours, odometer, service context
+      to:
+        type: string
+      vehicle_id:
+        type: integer
+    type: object
   liveview.VehicleLive:
     properties:
       battery_v:
@@ -1972,6 +2002,20 @@ definitions:
         type: integer
       vehicle_type:
         type: string
+    type: object
+  liveview.VehicleState:
+    properties:
+      engine_hours:
+        description: lifetime ignition-on hours
+        type: number
+      km_since_service:
+        type: number
+      last_service_at:
+        type: string
+      last_service_km:
+        type: number
+      odometer_km:
+        type: number
     type: object
   liveview.VehicleTotals:
     properties:
@@ -5863,6 +5907,50 @@ paths:
       summary: Documents attached to one vehicle
       tags:
       - documents
+  /v1/vehicles/{vehicle_id}/analytics:
+    get:
+      description: 'Everything derived for one vehicle over [from,to] in a single
+        call: fuel (litres/cost/km-L/Rp-km/Rp-hour/refuels/engine-idle-moving hours),
+        GPS behaviour (overspeed, harsh accel/brake, idle stops), accelerometer harsh
+        events by axis, and accumulated state (lifetime engine hours, odometer, km
+        since service). Any section that can''t be computed is null (with a note in
+        `errors`), never failing the whole response.'
+      parameters:
+      - description: vehicle id
+        in: path
+        name: vehicle_id
+        required: true
+        type: integer
+      - description: RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: overspeed limit km/h (default 60)
+        in: query
+        name: limit
+        type: number
+      - description: minutes a stop must exceed to count as idle (default 120)
+        in: query
+        name: idle_threshold
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/liveview.VehicleAnalytics'
+      security:
+      - BearerAuth: []
+      summary: Consolidated vehicle analytics (history + calculations)
+      tags:
+      - analytics
   /v1/vehicles/{vehicle_id}/behavior:
     get:
       parameters:
