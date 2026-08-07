@@ -1093,6 +1093,15 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformVehicle:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/platformadmin.PlatformVehicle'
+        type: array
+      total:
+        type: integer
+    type: object
   github_com_karlo_fms-backend_internal_platform_httpx.List-report_AlertRow:
     properties:
       items:
@@ -2217,6 +2226,59 @@ definitions:
       urgency:
         type: string
       window_minutes:
+        type: integer
+    type: object
+  platformadmin.Overview:
+    properties:
+      online:
+        type: integer
+      per_tenant:
+        items:
+          $ref: '#/definitions/platformadmin.TenantStat'
+        type: array
+      tenants:
+        type: integer
+      vehicles:
+        type: integer
+    type: object
+  platformadmin.PlatformVehicle:
+    properties:
+      drive_state:
+        type: string
+      last_seen:
+        type: string
+      lat:
+        type: number
+      license_plate:
+        type: string
+      location:
+        type: string
+      lon:
+        type: number
+      online:
+        type: boolean
+      speed:
+        type: number
+      stale_minutes:
+        type: number
+      tenant_id:
+        type: integer
+      tenant_name:
+        type: string
+      vehicle_id:
+        type: integer
+      vehicle_type:
+        type: string
+    type: object
+  platformadmin.TenantStat:
+    properties:
+      name:
+        type: string
+      online:
+        type: integer
+      tenant_id:
+        type: integer
+      vehicles:
         type: integer
     type: object
   report.AlertRow:
@@ -5054,6 +5116,56 @@ paths:
       summary: Mark all unchecked alerts as checked (mark all read)
       tags:
       - alerts
+  /v1/platform/overview:
+    get:
+      description: 'Totals across every account: accounts, vehicles, online, and a
+        per-account breakdown. Restricted to platform_admin.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/platformadmin.Overview'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Platform-wide overview (platform admin)
+      tags:
+      - platform
+  /v1/platform/vehicles:
+    get:
+      description: Read-only cross-tenant vehicle list with live status, each tagged
+        by owning account. Optional tenant_id drills into one account. Restricted
+        to platform_admin.
+      parameters:
+      - description: restrict to one account
+        in: query
+        name: tenant_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformVehicle'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: All vehicles across every account (platform admin)
+      tags:
+      - platform
   /v1/prefs:
     get:
       produces:

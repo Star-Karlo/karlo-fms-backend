@@ -24,8 +24,8 @@ import (
 
 	_ "github.com/karlo/fms-backend/cmd/api/docs"
 	"github.com/karlo/fms-backend/internal/aidash"
-	"github.com/karlo/fms-backend/internal/airule"
 	"github.com/karlo/fms-backend/internal/aireport"
+	"github.com/karlo/fms-backend/internal/airule"
 	"github.com/karlo/fms-backend/internal/alert"
 	"github.com/karlo/fms-backend/internal/apitoken"
 	"github.com/karlo/fms-backend/internal/auth"
@@ -53,6 +53,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/config"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platformadmin"
 	"github.com/karlo/fms-backend/internal/prefs"
 	"github.com/karlo/fms-backend/internal/report"
 	"github.com/karlo/fms-backend/internal/retention"
@@ -127,6 +128,7 @@ func main() {
 	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion)
 	usersH := users.NewHandler(pool)
 	tenantH := tenants.NewHandler(pool)
+	platformH := platformadmin.NewHandler(pool, liveSvc)
 	apiTokenH := apitoken.NewHandler(pool)
 	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)
@@ -248,6 +250,7 @@ func main() {
 		companyH.Routes(pr)
 		prefsH.Routes(pr)
 		retentionH.Routes(pr)
+		platformH.Routes(pr)
 	})
 
 	// External integration API: authenticated by a per-tenant API token (not a

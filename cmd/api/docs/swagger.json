@@ -3405,6 +3405,82 @@
                 }
             }
         },
+        "/v1/platform/overview": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Totals across every account: accounts, vehicles, online, and a per-account breakdown. Restricted to platform_admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Platform-wide overview (platform admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/platformadmin.Overview"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/platform/vehicles": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Read-only cross-tenant vehicle list with live status, each tagged by owning account. Optional tenant_id drills into one account. Restricted to platform_admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "All vehicles across every account (platform admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "restrict to one account",
+                        "name": "tenant_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformVehicle"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/prefs": {
             "get": {
                 "security": [
@@ -7180,6 +7256,20 @@
                 }
             }
         },
+        "github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformVehicle": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platformadmin.PlatformVehicle"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_karlo_fms-backend_internal_platform_httpx.List-report_AlertRow": {
             "type": "object",
             "properties": {
@@ -8761,6 +8851,87 @@
                     "type": "string"
                 },
                 "window_minutes": {
+                    "type": "integer"
+                }
+            }
+        },
+        "platformadmin.Overview": {
+            "type": "object",
+            "properties": {
+                "online": {
+                    "type": "integer"
+                },
+                "per_tenant": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platformadmin.TenantStat"
+                    }
+                },
+                "tenants": {
+                    "type": "integer"
+                },
+                "vehicles": {
+                    "type": "integer"
+                }
+            }
+        },
+        "platformadmin.PlatformVehicle": {
+            "type": "object",
+            "properties": {
+                "drive_state": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "online": {
+                    "type": "boolean"
+                },
+                "speed": {
+                    "type": "number"
+                },
+                "stale_minutes": {
+                    "type": "number"
+                },
+                "tenant_id": {
+                    "type": "integer"
+                },
+                "tenant_name": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                },
+                "vehicle_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "platformadmin.TenantStat": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "online": {
+                    "type": "integer"
+                },
+                "tenant_id": {
+                    "type": "integer"
+                },
+                "vehicles": {
                     "type": "integer"
                 }
             }
