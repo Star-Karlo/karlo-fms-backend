@@ -1582,6 +1582,13 @@ definitions:
         description: summed dwell of those stops
         type: number
     type: object
+  liveview.Bucket:
+    properties:
+      count:
+        type: integer
+      label:
+        type: string
+    type: object
   liveview.DayTotals:
     properties:
       active:
@@ -1654,6 +1661,39 @@ definitions:
       events:
         items:
           $ref: '#/definitions/liveview.DrivingEvent'
+        type: array
+      total:
+        type: integer
+    type: object
+  liveview.FleetAnalytics:
+    properties:
+      avg_moving_speed:
+        type: number
+      online:
+        type: integer
+      overspeed_count:
+        type: integer
+      overspeed_limit:
+        type: number
+      overspeeders:
+        items:
+          $ref: '#/definitions/liveview.VehSpeed'
+        type: array
+      provinces:
+        items:
+          $ref: '#/definitions/liveview.Bucket'
+        type: array
+      speed_buckets:
+        items:
+          $ref: '#/definitions/liveview.Bucket'
+        type: array
+      states:
+        additionalProperties:
+          type: integer
+        type: object
+      top_speeds:
+        items:
+          $ref: '#/definitions/liveview.VehSpeed'
         type: array
       total:
         type: integer
@@ -1879,6 +1919,15 @@ definitions:
         type: number
       time:
         type: string
+    type: object
+  liveview.VehSpeed:
+    properties:
+      license_plate:
+        type: string
+      speed:
+        type: number
+      vehicle_id:
+        type: integer
     type: object
   liveview.VehicleLive:
     properties:
@@ -3131,6 +3180,33 @@ paths:
       summary: Alert analytics for the Safety dashboard
       tags:
       - alerts
+  /v1/analytics/fleet:
+    get:
+      description: Live fleet-wide speed distribution, overspeeder + top-speed lists,
+        average moving speed and province spread, derived from the latest GPS positions.
+      parameters:
+      - description: overspeed threshold km/h (default 60)
+        in: query
+        name: limit
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/liveview.FleetAnalytics'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Fleet speed & behavior analytics (live, from GPS)
+      tags:
+      - analytics
   /v1/analytics/history:
     get:
       description: Per-day moving/idle/parked hours, distance and idle share, plus

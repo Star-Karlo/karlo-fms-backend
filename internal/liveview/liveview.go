@@ -303,6 +303,17 @@ type FleetAnalytics struct {
 	Provinces      []Bucket       `json:"provinces"`
 }
 
+// fleetAnalytics serves the live fleet speed/behavior summary.
+//
+// @Summary     Fleet speed & behavior analytics (live, from GPS)
+// @Description Live fleet-wide speed distribution, overspeeder + top-speed lists, average moving speed and province spread, derived from the latest GPS positions.
+// @Tags        analytics
+// @Produce     json
+// @Param       limit query number false "overspeed threshold km/h (default 60)"
+// @Success     200 {object} FleetAnalytics
+// @Failure     500 {object} map[string]string
+// @Security    BearerAuth
+// @Router      /v1/analytics/fleet [get]
 func (h *Handler) fleetAnalytics(w http.ResponseWriter, r *http.Request) {
 	limit := 60.0
 	if v := r.URL.Query().Get("limit"); v != "" {

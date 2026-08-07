@@ -543,6 +543,48 @@
                 }
             }
         },
+        "/v1/analytics/fleet": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Live fleet-wide speed distribution, overspeeder + top-speed lists, average moving speed and province spread, derived from the latest GPS positions.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "analytics"
+                ],
+                "summary": "Fleet speed \u0026 behavior analytics (live, from GPS)",
+                "parameters": [
+                    {
+                        "type": "number",
+                        "description": "overspeed threshold km/h (default 60)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.FleetAnalytics"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/analytics/history": {
             "get": {
                 "security": [
@@ -7701,6 +7743,17 @@
                 }
             }
         },
+        "liveview.Bucket": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "label": {
+                    "type": "string"
+                }
+            }
+        },
         "liveview.DayTotals": {
             "type": "object",
             "properties": {
@@ -7796,6 +7849,56 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/liveview.DrivingEvent"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "liveview.FleetAnalytics": {
+            "type": "object",
+            "properties": {
+                "avg_moving_speed": {
+                    "type": "number"
+                },
+                "online": {
+                    "type": "integer"
+                },
+                "overspeed_count": {
+                    "type": "integer"
+                },
+                "overspeed_limit": {
+                    "type": "number"
+                },
+                "overspeeders": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.VehSpeed"
+                    }
+                },
+                "provinces": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.Bucket"
+                    }
+                },
+                "speed_buckets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.Bucket"
+                    }
+                },
+                "states": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "top_speeds": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.VehSpeed"
                     }
                 },
                 "total": {
@@ -8100,6 +8203,20 @@
                 },
                 "time": {
                     "type": "string"
+                }
+            }
+        },
+        "liveview.VehSpeed": {
+            "type": "object",
+            "properties": {
+                "license_plate": {
+                    "type": "string"
+                },
+                "speed": {
+                    "type": "number"
+                },
+                "vehicle_id": {
+                    "type": "integer"
                 }
             }
         },
