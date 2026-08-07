@@ -3057,6 +3057,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/integration/vehicles/{imei}/analytics": {
+            "get": {
+                "description": "Same consolidated analytics as /v1/vehicles/{id}/analytics, but keyed by device IMEI and authenticated with a per-tenant API token (header ` + "`" + `X-Api-Key: fms_...` + "`" + ` or ` + "`" + `Authorization: Bearer fms_...` + "`" + `). The IMEI is resolved within the token's account only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integration"
+                ],
+                "summary": "External vehicle analytics by IMEI (history + calculations)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "device IMEI",
+                        "name": "imei",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "overspeed limit km/h (default 60)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "minutes a stop must exceed to count as idle (default 120)",
+                        "name": "idle_threshold",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.VehicleAnalytics"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/live-view": {
             "get": {
                 "security": [

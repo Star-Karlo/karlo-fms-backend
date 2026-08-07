@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -54,6 +55,51 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Post("/v1/api-tokens", h.create)
 		ar.Delete("/v1/api-tokens/{id}", h.revoke)
 	})
+}
+
+// Authenticator authenticates a request with a per-tenant API token instead of a
+// user JWT, for machine-to-machine callers (e.g. the TMS). The token is read
+// from `X-Api-Key` or `Authorization: Bearer fms_...`, hashed, and resolved to
+// its tenant; the tenant is injected as read-scoped Claims so downstream handlers
+// and RLS behave exactly as for a logged-in user of that account. The lookup runs
+// unscoped (SystemTx) because the tenant isn't known until the token resolves —
+// api_tokens uses the system-permitting RLS policy so this read is allowed.
+func (h *Handler) Authenticator() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw := r.Header.Get("X-Api-Key")
+			if raw == "" {
+				if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
+					raw = strings.TrimPrefix(a, "Bearer ")
+				}
+			}
+			raw = strings.TrimSpace(raw)
+			if !strings.HasPrefix(raw, "fms_") {
+				httpx.Error(w, http.StatusUnauthorized, "missing or malformed API token")
+				return
+			}
+			sum := sha256.Sum256([]byte(raw))
+
+			var tid, id int64
+			err := db.SystemTx(r.Context(), h.pool, func(tx pgx.Tx) error {
+				return tx.QueryRow(r.Context(),
+					`SELECT id, tenant_id FROM api_tokens WHERE token_hash = $1 AND revoked_at IS NULL`,
+					sum[:]).Scan(&id, &tid)
+			})
+			if err != nil {
+				httpx.Error(w, http.StatusUnauthorized, "invalid or revoked API token")
+				return
+			}
+			// Best-effort last-used stamp; never blocks the request.
+			_ = db.SystemTx(r.Context(), h.pool, func(tx pgx.Tx) error {
+				_, e := tx.Exec(r.Context(), `UPDATE api_tokens SET last_used_at = now() WHERE id = $1`, id)
+				return e
+			})
+
+			claims := &auth.Claims{TenantID: tid, Role: auth.RoleOperator}
+			next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), claims)))
+		})
+	}
 }
 
 // list godoc

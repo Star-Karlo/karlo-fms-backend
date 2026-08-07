@@ -124,26 +124,33 @@ func (h *Handler) analytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	tenantID := auth.TenantID(ctx)
-	out := VehicleAnalytics{VehicleID: id, From: from, To: to}
-	errs := map[string]string{}
+	out := h.svc.Analytics(ctx, auth.TenantID(ctx), id, from, to, limit, idleThreshold)
+	httpx.JSON(w, http.StatusOK, out)
+}
 
-	if fuel, e := h.svc.FuelTrip(ctx, tenantID, id, from, to); e != nil {
+// Analytics assembles the consolidated per-vehicle analytics for one window.
+// Each section is best-effort: a section that errors is left nil with a note in
+// Errors, so one missing input never fails the whole response. Shared by the
+// JWT endpoint and the IMEI-keyed integration endpoint.
+func (s *Service) Analytics(ctx context.Context, tenantID, vehicleID int64, from, to time.Time, limit, idleThreshold float64) VehicleAnalytics {
+	out := VehicleAnalytics{VehicleID: vehicleID, From: from, To: to}
+	errs := map[string]string{}
+	if fuel, e := s.FuelTrip(ctx, tenantID, vehicleID, from, to); e != nil {
 		errs["fuel"] = e.Error()
 	} else {
 		out.Fuel = fuel
 	}
-	if beh, e := h.svc.Behavior(ctx, tenantID, id, from, to, limit, idleThreshold); e != nil {
+	if beh, e := s.Behavior(ctx, tenantID, vehicleID, from, to, limit, idleThreshold); e != nil {
 		errs["behavior"] = e.Error()
 	} else {
 		out.Behavior = beh
 	}
-	if drv, e := h.svc.DrivingHistory(ctx, tenantID, id, from, to); e != nil {
+	if drv, e := s.DrivingHistory(ctx, tenantID, vehicleID, from, to); e != nil {
 		errs["driving"] = e.Error()
 	} else {
 		out.Driving = drv
 	}
-	if st, e := h.svc.VehicleState(ctx, tenantID, id); e != nil {
+	if st, e := s.VehicleState(ctx, tenantID, vehicleID); e != nil {
 		errs["state"] = e.Error()
 	} else {
 		out.State = st
@@ -151,5 +158,23 @@ func (h *Handler) analytics(w http.ResponseWriter, r *http.Request) {
 	if len(errs) > 0 {
 		out.Errors = errs
 	}
-	httpx.JSON(w, http.StatusOK, out)
+	return out
+}
+
+// VehicleIDByIMEI resolves a device IMEI to this tenant's vehicle id. RLS scopes
+// the lookup to the caller's tenant, so the same IMEI registered in another
+// account is invisible here. Returns ok=false when no vehicle carries the IMEI.
+func (s *Service) VehicleIDByIMEI(ctx context.Context, tenantID int64, imei string) (int64, bool, error) {
+	var id int64
+	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT v.id FROM vehicles v JOIN trackers t ON t.id = v.tracker_id WHERE t.imei = $1`, imei).Scan(&id)
+	})
+	if err == pgx.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
 }

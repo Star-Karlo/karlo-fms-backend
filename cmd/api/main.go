@@ -250,6 +250,14 @@ func main() {
 		retentionH.Routes(pr)
 	})
 
+	// External integration API: authenticated by a per-tenant API token (not a
+	// user JWT), read-only, keyed by IMEI. Its own group so it never inherits the
+	// JWT authenticator. RLS still scopes every query to the token's tenant.
+	r.Group(func(ir chi.Router) {
+		ir.Use(apiTokenH.Authenticator())
+		liveH.IntegrationRoutes(ir)
+	})
+
 	log.Printf("fms-backend api on %s  (swagger: http://localhost%s/swagger/index.html)", cfg.Addr, cfg.Addr)
 	log.Fatal(http.ListenAndServe(cfg.Addr, r))
 }
