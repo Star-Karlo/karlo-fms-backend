@@ -26,8 +26,14 @@ func (h *Handler) Routes(r chi.Router) {
 		mr.Post("/v1/vehicles", h.create)
 		mr.Put("/v1/vehicles/{id}", h.update)
 		mr.Delete("/v1/vehicles/{id}", h.archive)
-		mr.Post("/v1/vehicles/{id}/assign-tracker", h.assignTracker)
 		mr.Post("/v1/vehicles/{id}/assign-driver", h.assignDriver)
+	})
+	// Binding a tracker (IMEI) to a vehicle IS device configuration, so it is
+	// restricted to the platform operator like the tracker registry (?account_id
+	// lets them do it for any customer account).
+	r.Group(func(pr chi.Router) {
+		pr.Use(auth.RequireRole(auth.RolePlatformAdmin))
+		pr.Post("/v1/vehicles/{id}/assign-tracker", h.assignTracker)
 	})
 }
 
@@ -190,7 +196,7 @@ func (h *Handler) assignTracker(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	dto, err := h.svc.AssignTracker(r.Context(), auth.TenantID(r.Context()), id, req.TrackerID)
+	dto, err := h.svc.AssignTracker(r.Context(), auth.EffectiveTenant(r), id, req.TrackerID)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return

@@ -59,12 +59,15 @@ type Handler struct{ pool *db.Pool }
 // NewHandler builds the tracker handler.
 func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
 
-// Routes mounts tracker endpoints (reads: any user; writes: manager+).
+// Routes mounts tracker endpoints. IMEI/tracker configuration is restricted to
+// the platform operator (platform_admin) -- customers do not self-configure
+// devices. Writes accept ?account_id so the operator manages any account; reads
+// stay tenant-scoped (a customer still sees its own device on the vehicle form).
 func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/trackers", h.list)
 	r.Get("/v1/trackers/{id}", h.get)
 	r.Group(func(mr chi.Router) {
-		mr.Use(auth.RequireRole(auth.RoleManager))
+		mr.Use(auth.RequireRole(auth.RolePlatformAdmin))
 		mr.Post("/v1/trackers", h.create)
 		mr.Put("/v1/trackers/{id}", h.update)
 		mr.Delete("/v1/trackers/{id}", h.del)
@@ -95,7 +98,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			veh = &id
 		}
 	}
-	tid := auth.TenantID(r.Context())
+	tid := auth.EffectiveTenant(r)
 	var items []DTO
 	var total int64
 	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
@@ -134,7 +137,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var dto DTO
-	err := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		t, err := store.New(tx).GetTracker(r.Context(), id)
 		if err != nil {
 			return err
@@ -174,7 +177,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "imei is required")
 		return
 	}
-	tid := auth.TenantID(r.Context())
+	tid := auth.EffectiveTenant(r)
 	var dto DTO
 	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
 		t, err := store.New(tx).CreateTracker(r.Context(), store.CreateTrackerParams{TenantID: tid, Imei: req.Imei, PhoneNo: req.PhoneNo, VehicleID: req.VehicleID, Status: iface(req.Status)})
@@ -214,7 +217,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var dto DTO
-	err := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		t, err := store.New(tx).UpdateTracker(r.Context(), store.UpdateTrackerParams{ID: id, Imei: req.Imei, PhoneNo: req.PhoneNo, Status: req.Status})
 		if err != nil {
 			return err
@@ -244,7 +247,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	err := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		return store.New(tx).DeleteTracker(r.Context(), id)
 	})
 	if err != nil {
