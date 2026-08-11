@@ -175,6 +175,52 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 }
 
 // One returns a single vehicle enriched with its live fix.
+// ListAcross aggregates live vehicles across EVERY tenant, tagging each with its
+// owning account — the platform-admin cross-tenant Live View. Each account is
+// read inside its own scope (s.List uses db.Tx per tenant), never SystemTx on
+// the RLS-strict vehicle tables. only, when set, restricts to one account.
+func (s *Service) ListAcross(ctx context.Context, only *int64) ([]VehicleLive, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, name FROM tenants ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	type tref struct {
+		id   int64
+		name string
+	}
+	var tenants []tref
+	for rows.Next() {
+		var t tref
+		if err := rows.Scan(&t.id, &t.name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		tenants = append(tenants, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := []VehicleLive{}
+	for _, t := range tenants {
+		if only != nil && *only != t.id {
+			continue
+		}
+		vs, err := s.List(ctx, t.id, nil)
+		if err != nil {
+			continue // one unreadable account shouldn't blank the whole map
+		}
+		tid, name := t.id, t.name
+		for i := range vs {
+			vs[i].TenantID = &tid
+			vs[i].TenantName = &name
+		}
+		out = append(out, vs...)
+	}
+	return out, nil
+}
+
 func (s *Service) One(ctx context.Context, tenantID, vehicleID int64) (*VehicleLive, error) {
 	var row store.GetLiveViewVehicleRow
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -801,12 +847,34 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 //	@Tags		live-view
 //	@Security	BearerAuth
 //	@Produce	json
-//	@Param		fleet_group_id	query		int	false	"filter fleet group"
+//	@Param		fleet_group_id	query		int		false	"filter fleet group"
+//	@Param		all_accounts	query		bool	false	"platform_admin: every account's vehicles"
+//	@Param		account_id		query		int		false	"platform_admin: one account's vehicles"
 //	@Success	200	{object}	httpx.List[liveview.VehicleLive]
 //	@Router		/v1/live-view [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	// Platform-admin cross-tenant view: ?all_accounts=true (every account) or
+	// ?account_id=N (one account). Ignored for everyone else — a normal user
+	// always stays scoped to their own tenant.
+	if c, ok := auth.FromContext(r.Context()); ok && c.Role == auth.RolePlatformAdmin && (q.Get("all_accounts") == "true" || q.Get("account_id") != "") {
+		var only *int64
+		if v := q.Get("account_id"); v != "" {
+			if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+				only = &id
+			}
+		}
+		items, err := h.svc.ListAcross(r.Context(), only)
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		httpx.JSON(w, http.StatusOK, httpx.List[VehicleLive]{Items: items, Total: int64(len(items))})
+		return
+	}
+
 	var fg *int64
-	if v := r.URL.Query().Get("fleet_group_id"); v != "" {
+	if v := q.Get("fleet_group_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
 			fg = &id
 		}
@@ -826,6 +894,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 //	@Security	BearerAuth
 //	@Produce	json
 //	@Param		vehicle_id	path		int	true	"vehicle id"
+//	@Param		account_id	query		int	false	"platform_admin: the vehicle's account (cross-tenant)"
 //	@Success	200	{object}	liveview.VehicleLive
 //	@Failure	404	{object}	map[string]string
 //	@Router		/v1/live-view/{vehicle_id} [get]
@@ -835,10 +904,20 @@ func (h *Handler) one(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid vehicle_id")
 		return
 	}
-	v, err := h.svc.One(r.Context(), auth.TenantID(r.Context()), id)
+	tenantID := auth.TenantID(r.Context())
+	// A platform admin viewing another account's vehicle passes ?account_id=N
+	// (carried from the cross-tenant list) so the detail resolves in that account.
+	if v := r.URL.Query().Get("account_id"); v != "" {
+		if c, ok := auth.FromContext(r.Context()); ok && c.Role == auth.RolePlatformAdmin {
+			if aid, e := strconv.ParseInt(v, 10, 64); e == nil {
+				tenantID = aid
+			}
+		}
+	}
+	vObj, err := h.svc.One(r.Context(), tenantID, id)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "vehicle not found")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, v)
+	httpx.JSON(w, http.StatusOK, vObj)
 }

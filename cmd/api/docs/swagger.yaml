@@ -2014,6 +2014,13 @@ definitions:
         type: string
       stale_minutes:
         type: number
+      tenant_id:
+        description: |-
+          Owning account — populated ONLY in the platform-admin cross-tenant list, so
+          the operator (and the detail panel) knows which account a vehicle is in.
+        type: integer
+      tenant_name:
+        type: string
       tracker:
         $ref: '#/definitions/liveview.Tracker'
       vehicle_id:
@@ -4974,6 +4981,14 @@ paths:
         in: query
         name: fleet_group_id
         type: integer
+      - description: 'platform_admin: every account''s vehicles'
+        in: query
+        name: all_accounts
+        type: boolean
+      - description: 'platform_admin: one account''s vehicles'
+        in: query
+        name: account_id
+        type: integer
       produces:
       - application/json
       responses:
@@ -4993,6 +5008,10 @@ paths:
         in: path
         name: vehicle_id
         required: true
+        type: integer
+      - description: 'platform_admin: the vehicle''s account (cross-tenant)'
+        in: query
+        name: account_id
         type: integer
       produces:
       - application/json

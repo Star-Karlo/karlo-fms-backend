@@ -57,6 +57,10 @@ type Position struct {
 
 // VehicleLive is a registry vehicle enriched with its live position + state.
 type VehicleLive struct {
+	// Owning account — populated ONLY in the platform-admin cross-tenant list, so
+	// the operator (and the detail panel) knows which account a vehicle is in.
+	TenantID       *int64    `json:"tenant_id,omitempty"`
+	TenantName     *string   `json:"tenant_name,omitempty"`
 	VehicleID      int64     `json:"vehicle_id"`
 	LicensePlate   string    `json:"license_plate"`
 	VehicleType    *string   `json:"vehicle_type"`

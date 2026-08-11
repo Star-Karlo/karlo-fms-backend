@@ -3141,6 +3141,18 @@ const docTemplate = `{
                         "description": "filter fleet group",
                         "name": "fleet_group_id",
                         "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "platform_admin: every account's vehicles",
+                        "name": "all_accounts",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "platform_admin: one account's vehicles",
+                        "name": "account_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -3174,6 +3186,12 @@ const docTemplate = `{
                         "name": "vehicle_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "platform_admin: the vehicle's account (cross-tenant)",
+                        "name": "account_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -8628,6 +8646,13 @@ const docTemplate = `{
                 },
                 "stale_minutes": {
                     "type": "number"
+                },
+                "tenant_id": {
+                    "description": "Owning account — populated ONLY in the platform-admin cross-tenant list, so\nthe operator (and the detail panel) knows which account a vehicle is in.",
+                    "type": "integer"
+                },
+                "tenant_name": {
+                    "type": "string"
                 },
                 "tracker": {
                     "$ref": "#/definitions/liveview.Tracker"
