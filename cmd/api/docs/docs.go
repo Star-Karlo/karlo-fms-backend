@@ -3446,6 +3446,83 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/platform/users": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cross-tenant user list — id, account, email, role, status, last login. Read-only, platform_admin only. Also the recovery/diagnostic view (exact stored email + status).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "All login accounts across every tenant (platform admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformUser"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/platform/users/{id}/password": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Set a new login password for a user in ANY tenant and reactivate the account. The one cross-tenant write besides tenant provisioning — restricted to platform_admin, used to recover a locked-out customer admin.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Reset any user's password in any account (platform admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "user id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "{\\",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/platform/vehicles": {
             "get": {
                 "security": [
@@ -7263,6 +7340,20 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformUser": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platformadmin.PlatformUser"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformVehicle": {
             "type": "object",
             "properties": {
@@ -8882,6 +8973,35 @@ const docTemplate = `{
                 }
             }
         },
+        "platformadmin.PlatformUser": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "full_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "last_login_at": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "integer"
+                },
+                "tenant_name": {
+                    "type": "string"
+                }
+            }
+        },
         "platformadmin.PlatformVehicle": {
             "type": "object",
             "properties": {
@@ -9653,6 +9773,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "full_name": {
+                    "type": "string"
+                },
+                "password": {
                     "type": "string"
                 },
                 "role": {

@@ -1093,6 +1093,15 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformUser:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/platformadmin.PlatformUser'
+        type: array
+      total:
+        type: integer
+    type: object
   github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformVehicle:
     properties:
       items:
@@ -2241,6 +2250,25 @@ definitions:
       vehicles:
         type: integer
     type: object
+  platformadmin.PlatformUser:
+    properties:
+      email:
+        type: string
+      full_name:
+        type: string
+      id:
+        type: integer
+      last_login_at:
+        type: string
+      role:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: integer
+      tenant_name:
+        type: string
+    type: object
   platformadmin.PlatformVehicle:
     properties:
       drive_state:
@@ -2767,6 +2795,8 @@ definitions:
   users.UpdateRequest:
     properties:
       full_name:
+        type: string
+      password:
         type: string
       role:
         type: string
@@ -5136,6 +5166,58 @@ paths:
       security:
       - BearerAuth: []
       summary: Platform-wide overview (platform admin)
+      tags:
+      - platform
+  /v1/platform/users:
+    get:
+      description: Cross-tenant user list — id, account, email, role, status, last
+        login. Read-only, platform_admin only. Also the recovery/diagnostic view (exact
+        stored email + status).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_PlatformUser'
+      security:
+      - BearerAuth: []
+      summary: All login accounts across every tenant (platform admin)
+      tags:
+      - platform
+  /v1/platform/users/{id}/password:
+    put:
+      consumes:
+      - application/json
+      description: Set a new login password for a user in ANY tenant and reactivate
+        the account. The one cross-tenant write besides tenant provisioning — restricted
+        to platform_admin, used to recover a locked-out customer admin.
+      parameters:
+      - description: user id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: '{\'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Reset any user's password in any account (platform admin)
       tags:
       - platform
   /v1/platform/vehicles:

@@ -36,11 +36,13 @@ type CreateRequest struct {
 	Password string  `json:"password"`
 }
 
-// UpdateRequest patches a user.
+// UpdateRequest patches a user. A non-empty Password resets the login password
+// (bcrypt-rehashed); omit it to leave the password unchanged.
 type UpdateRequest struct {
 	FullName *string `json:"full_name"`
 	Role     *string `json:"role"`
 	Status   *string `json:"status"`
+	Password *string `json:"password"`
 }
 
 func fromRow(u store.User) DTO {
@@ -167,11 +169,26 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if req.Password != nil && len(*req.Password) < 8 {
+		httpx.Error(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
 	var dto DTO
 	e := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
 		u, err := store.New(tx).UpdateUser(r.Context(), store.UpdateUserParams{ID: id, FullName: req.FullName, Role: req.Role, Status: req.Status})
 		if err != nil {
 			return err
+		}
+		// Optional password reset — RLS scopes this UPDATE to the admin's tenant,
+		// so an admin can only reset users in their own account.
+		if req.Password != nil && *req.Password != "" {
+			hash, herr := bcrypt.GenerateFromPassword([]byte(*req.Password), 12)
+			if herr != nil {
+				return herr
+			}
+			if _, herr := tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, id, string(hash)); herr != nil {
+				return herr
+			}
 		}
 		dto = fromRow(u)
 		return nil

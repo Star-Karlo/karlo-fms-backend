@@ -18,6 +18,8 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/liveview"
@@ -40,6 +42,8 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Use(auth.RequireRole(auth.RolePlatformAdmin))
 		ar.Get("/v1/platform/overview", h.overview)
 		ar.Get("/v1/platform/vehicles", h.vehicles)
+		ar.Get("/v1/platform/users", h.users)
+		ar.Put("/v1/platform/users/{id}/password", h.resetPassword)
 	})
 }
 
@@ -205,4 +209,105 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 		per = append(per, *byTenant[t.id])
 	}
 	httpx.JSON(w, http.StatusOK, Overview{Tenants: len(tenants), Vehicles: len(all), Online: online, PerTenant: per})
+}
+
+// PlatformUser is one login account, tagged with its owning tenant.
+type PlatformUser struct {
+	ID          int64   `json:"id"`
+	TenantID    int64   `json:"tenant_id"`
+	TenantName  string  `json:"tenant_name"`
+	Email       string  `json:"email"`
+	FullName    *string `json:"full_name"`
+	Role        string  `json:"role"`
+	Status      string  `json:"status"`
+	LastLoginAt *string `json:"last_login_at"`
+}
+
+// users godoc
+//
+//	@Summary		All login accounts across every tenant (platform admin)
+//	@Description	Cross-tenant user list — id, account, email, role, status, last login. Read-only, platform_admin only. Also the recovery/diagnostic view (exact stored email + status).
+//	@Tags			platform
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Success		200	{object}	httpx.List[platformadmin.PlatformUser]
+//	@Router			/v1/platform/users [get]
+func (h *Handler) users(w http.ResponseWriter, r *http.Request) {
+	out := []PlatformUser{}
+	// users has the permissive login-bootstrap RLS policy, so an unset-tenant
+	// (SystemTx) read returns every account — exactly what a platform view needs.
+	err := db.SystemTx(r.Context(), h.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(r.Context(), `
+SELECT u.id, u.tenant_id, t.name, u.email, u.full_name, u.role, u.status,
+       to_char(u.last_login_at, 'YYYY-MM-DD"T"HH24:MI:SSOF:00')
+FROM users u JOIN tenants t ON t.id = u.tenant_id
+ORDER BY u.tenant_id, u.email`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var u PlatformUser
+			if err := rows.Scan(&u.ID, &u.TenantID, &u.TenantName, &u.Email, &u.FullName, &u.Role, &u.Status, &u.LastLoginAt); err != nil {
+				return err
+			}
+			out = append(out, u)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "list users failed")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, httpx.List[PlatformUser]{Items: out, Total: int64(len(out))})
+}
+
+// resetPassword godoc
+//
+//	@Summary		Reset any user's password in any account (platform admin)
+//	@Description	Set a new login password for a user in ANY tenant and reactivate the account. The one cross-tenant write besides tenant provisioning — restricted to platform_admin, used to recover a locked-out customer admin.
+//	@Tags			platform
+//	@Security		BearerAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path	int		true	"user id"
+//	@Param			body	body	object	true	"{\"password\":\"...\"}"
+//	@Success		204
+//	@Failure		404	{object}	map[string]string
+//	@Router			/v1/platform/users/{id}/password [put]
+func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil || len(body.Password) < 8 {
+		httpx.Error(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+	// Resolve the user's tenant first (SystemTx), then do the write INSIDE that
+	// tenant's scope so RLS still governs it — no unscoped write to users.
+	var tid int64
+	if err := db.SystemTx(r.Context(), h.pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(r.Context(), `SELECT tenant_id FROM users WHERE id = $1`, id).Scan(&tid)
+	}); err != nil {
+		httpx.Error(w, http.StatusNotFound, "user not found")
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), 12)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "hash failed")
+		return
+	}
+	if err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		_, e := tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, status = 'active', updated_at = now() WHERE id = $1`, id, string(hash))
+		return e
+	}); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "reset failed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
