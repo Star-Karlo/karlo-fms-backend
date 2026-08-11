@@ -18,13 +18,16 @@ import (
 
 // DTO is the JSON shape of a tracker.
 type DTO struct {
-	ID        int64      `json:"id"`
-	Imei      string     `json:"imei"`
-	PhoneNo   *string    `json:"phone_no"`
-	VehicleID *int64     `json:"vehicle_id"`
-	Status    string     `json:"status"`
-	CreatedAt *time.Time `json:"created_at"`
-	UpdatedAt *time.Time `json:"updated_at"`
+	// Owning account — set only in the platform-admin all-accounts list.
+	TenantID   *int64     `json:"tenant_id,omitempty"`
+	TenantName *string    `json:"tenant_name,omitempty"`
+	ID         int64      `json:"id"`
+	Imei       string     `json:"imei"`
+	PhoneNo    *string    `json:"phone_no"`
+	VehicleID  *int64     `json:"vehicle_id"`
+	Status     string     `json:"status"`
+	CreatedAt  *time.Time `json:"created_at"`
+	UpdatedAt  *time.Time `json:"updated_at"`
 }
 
 // CreateRequest is the create body.
@@ -98,6 +101,14 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			veh = &id
 		}
 	}
+	// Platform admin: ?all_accounts=true lists every account's devices at once,
+	// each read inside its own tenant scope and tagged with its account.
+	if c, ok := auth.FromContext(r.Context()); ok && c.Role == auth.RolePlatformAdmin && r.URL.Query().Get("all_accounts") == "true" {
+		items, total := h.listAllAccounts(r, p, veh)
+		httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: total})
+		return
+	}
+
 	tid := auth.EffectiveTenant(r)
 	var items []DTO
 	var total int64
@@ -119,6 +130,47 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: total})
+}
+
+// listAllAccounts aggregates trackers across every tenant (platform admin), each
+// read inside its own scope and tagged with its account.
+func (h *Handler) listAllAccounts(r *http.Request, p httpx.ListParams, veh *int64) ([]DTO, int64) {
+	out := []DTO{}
+	var total int64
+	rows, err := h.pool.Query(r.Context(), `SELECT id, name FROM tenants ORDER BY id`)
+	if err != nil {
+		return out, 0
+	}
+	type tref struct {
+		id   int64
+		name string
+	}
+	var tenants []tref
+	for rows.Next() {
+		var t tref
+		if rows.Scan(&t.id, &t.name) == nil {
+			tenants = append(tenants, t)
+		}
+	}
+	rows.Close()
+	for _, t := range tenants {
+		tid, name := t.id, t.name
+		_ = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+			q := store.New(tx)
+			trs, err := q.ListTrackers(r.Context(), store.ListTrackersParams{Q: conv.StrPtr(p.Q), Status: conv.StrPtr(p.Status), VehicleID: veh, Lim: 1000, Off: 0})
+			if err != nil {
+				return err
+			}
+			for _, tr := range trs {
+				d := fromRow(tr)
+				d.TenantID, d.TenantName = &tid, &name
+				out = append(out, d)
+			}
+			total += int64(len(trs))
+			return nil
+		})
+	}
+	return out, total
 }
 
 // get godoc

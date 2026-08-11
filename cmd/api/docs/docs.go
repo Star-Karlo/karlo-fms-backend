@@ -9597,6 +9597,13 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "tenant_id": {
+                    "description": "Owning account — set only in the platform-admin all-accounts list.",
+                    "type": "integer"
+                },
+                "tenant_name": {
+                    "type": "string"
+                },
                 "updated_at": {
                     "type": "string"
                 },
@@ -9938,6 +9945,13 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "description": "Owning account — populated only in the platform-admin cross-account list.",
+                    "type": "integer"
+                },
+                "tenant_name": {
                     "type": "string"
                 },
                 "tracker_id": {

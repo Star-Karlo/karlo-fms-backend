@@ -9,6 +9,9 @@ import (
 
 // DTO is the JSON representation of a vehicle, including a few joined labels.
 type DTO struct {
+	// Owning account — populated only in the platform-admin cross-account list.
+	TenantID        *int64     `json:"tenant_id,omitempty"`
+	TenantName      *string    `json:"tenant_name,omitempty"`
 	ID              int64      `json:"id"`
 	LicensePlate    string     `json:"license_plate"`
 	Manufacturer    *string    `json:"manufacturer"`

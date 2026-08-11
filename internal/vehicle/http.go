@@ -57,11 +57,28 @@ func pathID(r *http.Request) (int64, bool) {
 //	@Router		/v1/vehicles [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	p := httpx.ParseList(r)
+	q := r.URL.Query()
 	var fg *int64
-	if v := r.URL.Query().Get("fleet_group_id"); v != "" {
+	if v := q.Get("fleet_group_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
 			fg = &id
 		}
+	}
+	// Platform admin may list across accounts: ?all_accounts=true or ?account_id=N.
+	if c, ok := auth.FromContext(r.Context()); ok && c.Role == auth.RolePlatformAdmin && (q.Get("all_accounts") == "true" || q.Get("account_id") != "") {
+		var only *int64
+		if v := q.Get("account_id"); v != "" {
+			if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+				only = &id
+			}
+		}
+		items, total, err := h.svc.ListAcross(r.Context(), only, p, fg)
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		httpx.JSON(w, http.StatusOK, httpx.List[DTO]{Items: items, Total: total})
+		return
 	}
 	items, total, err := h.svc.List(r.Context(), auth.TenantID(r.Context()), p, fg)
 	if err != nil {

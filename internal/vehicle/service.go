@@ -43,6 +43,54 @@ func (s *Service) List(ctx context.Context, tenantID int64, p httpx.ListParams, 
 	return out, total, err
 }
 
+// ListAcross aggregates vehicles across every tenant (platform admin), each read
+// inside its own scope and tagged with its owning account. only, when set,
+// restricts to one account. Paging applies per account then concatenates — fine
+// for the account-filtered master-data list (usually one account at a time).
+func (s *Service) ListAcross(ctx context.Context, only *int64, p httpx.ListParams, fleetGroupID *int64) ([]DTO, int64, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, name FROM tenants ORDER BY id`)
+	if err != nil {
+		return nil, 0, err
+	}
+	type tref struct {
+		id   int64
+		name string
+	}
+	var tenants []tref
+	for rows.Next() {
+		var t tref
+		if err := rows.Scan(&t.id, &t.name); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		tenants = append(tenants, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	out := []DTO{}
+	var total int64
+	for _, t := range tenants {
+		if only != nil && *only != t.id {
+			continue
+		}
+		items, cnt, err := s.List(ctx, t.id, p, fleetGroupID)
+		if err != nil {
+			continue
+		}
+		tid, name := t.id, t.name
+		for i := range items {
+			items[i].TenantID = &tid
+			items[i].TenantName = &name
+		}
+		out = append(out, items...)
+		total += cnt
+	}
+	return out, total, nil
+}
+
 // Get returns one vehicle with joined labels.
 func (s *Service) Get(ctx context.Context, tenantID, id int64) (*DTO, error) {
 	var dto DTO
