@@ -261,7 +261,7 @@ func (h *Handler) fleetHistory(w http.ResponseWriter, r *http.Request) {
 			days = n
 		}
 	}
-	out, err := h.svc.FleetDaily(r.Context(), auth.TenantID(r.Context()), days)
+	out, err := h.svc.FleetDaily(r.Context(), auth.EffectiveTenant(r), days)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)

@@ -131,7 +131,7 @@ func (h *Handler) fuelTrip(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "from/to must be RFC3339")
 		return
 	}
-	out, err := h.svc.FuelTrip(r.Context(), auth.TenantID(r.Context()), id, from, to)
+	out, err := h.svc.FuelTrip(r.Context(), auth.EffectiveTenant(r), id, from, to)
 	if err != nil {
 		httpx.Error(w, http.StatusBadGateway, "fuel trip unavailable: "+err.Error())
 		return

@@ -124,7 +124,7 @@ func (h *Handler) analytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	out := h.svc.Analytics(ctx, auth.TenantID(ctx), id, from, to, limit, idleThreshold)
+	out := h.svc.Analytics(ctx, auth.EffectiveTenant(r), id, from, to, limit, idleThreshold)
 	httpx.JSON(w, http.StatusOK, out)
 }
 

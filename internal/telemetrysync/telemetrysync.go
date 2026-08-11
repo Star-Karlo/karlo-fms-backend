@@ -522,7 +522,7 @@ func (h *Handler) state(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var res StateResponse
-	err = db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	err = db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		var sec int64
 		var mv *float64
 		err := tx.QueryRow(r.Context(), `

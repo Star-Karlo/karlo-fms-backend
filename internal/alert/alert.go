@@ -304,7 +304,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	from, to := tsFromQuery(r, "from"), tsFromQuery(r, "to")
-	tid := auth.TenantID(r.Context())
+	tid := auth.EffectiveTenant(r) // platform_admin may pass ?account_id to read another account
 
 	// Hot query bounds. When the range reaches into cold storage, the hot side is
 	// clamped to the boundary so hot ([boundary,to]) and cold ([from,boundary))

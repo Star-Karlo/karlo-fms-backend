@@ -108,7 +108,7 @@ func (h *Handler) drivingEvents(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "from/to must be RFC3339")
 		return
 	}
-	out, err := h.svc.DrivingHistory(r.Context(), auth.TenantID(r.Context()), id, from, to)
+	out, err := h.svc.DrivingHistory(r.Context(), auth.EffectiveTenant(r), id, from, to)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "driving events failed")
 		return

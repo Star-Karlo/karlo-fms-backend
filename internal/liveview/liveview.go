@@ -614,7 +614,7 @@ func (h *Handler) behavior(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := h.svc.Behavior(r.Context(), auth.TenantID(r.Context()), id, from, to, limit, idleThreshold)
+	res, err := h.svc.Behavior(r.Context(), auth.EffectiveTenant(r), id, from, to, limit, idleThreshold)
 	if err != nil {
 		httpx.Error(w, http.StatusBadGateway, "history unavailable: "+err.Error())
 		return
@@ -819,7 +819,7 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 			limit = f
 		}
 	}
-	points, err := h.svc.History(r.Context(), auth.TenantID(r.Context()), id, from, to, maxPoints)
+	points, err := h.svc.History(r.Context(), auth.EffectiveTenant(r), id, from, to, maxPoints)
 	if err != nil {
 		httpx.Error(w, http.StatusBadGateway, "history unavailable: "+err.Error())
 		return

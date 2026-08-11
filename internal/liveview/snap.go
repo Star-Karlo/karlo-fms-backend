@@ -98,7 +98,7 @@ func (h *Handler) snapHistory(w http.ResponseWriter, r *http.Request) {
 	// thinning a long journey spreads them kilometres apart and the matcher
 	// then joins them by the shortest path rather than the travelled one. The
 	// matcher splits the trace into consecutive chunks instead.
-	points, err := h.svc.History(r.Context(), auth.TenantID(r.Context()), vehicleID, from, to, 0)
+	points, err := h.svc.History(r.Context(), auth.EffectiveTenant(r), vehicleID, from, to, 0)
 	if err != nil {
 		httpx.Error(w, http.StatusBadGateway, err.Error())
 		return

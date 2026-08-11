@@ -40,6 +40,27 @@ func TenantID(ctx context.Context) int64 {
 	return 0
 }
 
+// EffectiveTenant is the tenant a request operates on. Normally the caller's own
+// tenant — but a platform_admin may target ANOTHER account by passing
+// ?account_id=N (carried from the cross-tenant lists). Ignored for everyone else,
+// so a normal user can never reach outside their own tenant. RLS still applies to
+// whatever tenant this returns, so a bad id simply sees nothing.
+func EffectiveTenant(r *http.Request) int64 {
+	tid := TenantID(r.Context())
+	v := r.URL.Query().Get("account_id")
+	if v == "" {
+		return tid
+	}
+	c, ok := FromContext(r.Context())
+	if !ok || c.Role != RolePlatformAdmin {
+		return tid
+	}
+	if aid, err := strconv.ParseInt(v, 10, 64); err == nil && aid > 0 {
+		return aid
+	}
+	return tid
+}
+
 // Authenticator verifies the Bearer access token and injects claims into the
 // request context. Requests without a valid token are rejected with 401.
 func Authenticator(tm *TokenManager) func(http.Handler) http.Handler {
