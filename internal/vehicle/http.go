@@ -132,7 +132,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "license_plate is required")
 		return
 	}
-	dto, err := h.svc.Create(r.Context(), auth.TenantID(r.Context()), req)
+	// Platform admin may create the vehicle in a chosen customer account via
+	// ?account_id (EffectiveTenant); everyone else creates in their own tenant.
+	dto, err := h.svc.Create(r.Context(), auth.EffectiveTenant(r), req)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return

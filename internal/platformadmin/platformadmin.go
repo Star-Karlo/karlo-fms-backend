@@ -16,6 +16,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -44,7 +45,44 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Get("/v1/platform/vehicles", h.vehicles)
 		ar.Get("/v1/platform/users", h.users)
 		ar.Put("/v1/platform/users/{id}/password", h.resetPassword)
+		ar.Put("/v1/platform/tenants/{id}/name", h.renameTenant)
 	})
+}
+
+// renameTenant godoc
+//
+//	@Summary		Rename a customer account (platform admin)
+//	@Description	Change an account's display name. The tenants table carries no RLS, so this is a direct scoped update — platform_admin only.
+//	@Tags			platform
+//	@Security		BearerAuth
+//	@Accept			json
+//	@Param			id		path	int		true	"tenant id"
+//	@Param			body	body	object	true	"{\"name\":\"...\"}"
+//	@Success		204
+//	@Router			/v1/platform/tenants/{id}/name [put]
+func (h *Handler) renameTenant(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil || strings.TrimSpace(body.Name) == "" {
+		httpx.Error(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	tag, err := h.pool.Exec(r.Context(), `UPDATE tenants SET name = $2, updated_at = now() WHERE id = $1`, id, strings.TrimSpace(body.Name))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "rename failed")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		httpx.Error(w, http.StatusNotFound, "account not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type tenantRef struct {

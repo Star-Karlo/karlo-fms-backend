@@ -5199,6 +5199,32 @@ paths:
       summary: Platform-wide overview (platform admin)
       tags:
       - platform
+  /v1/platform/tenants/{id}/name:
+    put:
+      consumes:
+      - application/json
+      description: Change an account's display name. The tenants table carries no
+        RLS, so this is a direct scoped update — platform_admin only.
+      parameters:
+      - description: tenant id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: '{\'
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Rename a customer account (platform admin)
+      tags:
+      - platform
   /v1/platform/users:
     get:
       description: Cross-tenant user list — id, account, email, role, status, last

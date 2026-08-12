@@ -3457,6 +3457,46 @@
                 }
             }
         },
+        "/v1/platform/tenants/{id}/name": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Change an account's display name. The tenants table carries no RLS, so this is a direct scoped update — platform_admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Rename a customer account (platform admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "tenant id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "{\\",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/v1/platform/users": {
             "get": {
                 "security": [
