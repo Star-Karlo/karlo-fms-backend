@@ -107,7 +107,9 @@ func id64(r *http.Request) (int64, bool) {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	p := httpx.ParseList(r)
 	role := conv.StrPtr(r.URL.Query().Get("role"))
-	tid := auth.TenantID(r.Context())
+	// Platform admin may list another account's drivers via ?account_id, so the
+	// vehicle form can assign a driver when editing that account's vehicle.
+	tid := auth.EffectiveTenant(r)
 	var items []DTO
 	var total int64
 	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
