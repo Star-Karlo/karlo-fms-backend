@@ -104,7 +104,9 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	dto, err := h.svc.Get(r.Context(), auth.TenantID(r.Context()), id)
+	// Platform admin may view a vehicle in another account via ?account_id
+	// (EffectiveTenant); everyone else is scoped to their own tenant.
+	dto, err := h.svc.Get(r.Context(), auth.EffectiveTenant(r), id)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "vehicle not found")
 		return
@@ -164,7 +166,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	dto, err := h.svc.Update(r.Context(), auth.TenantID(r.Context()), id, req)
+	dto, err := h.svc.Update(r.Context(), auth.EffectiveTenant(r), id, req)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
@@ -186,7 +188,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.svc.Archive(r.Context(), auth.TenantID(r.Context()), id); err != nil {
+	if err := h.svc.Archive(r.Context(), auth.EffectiveTenant(r), id); err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -245,7 +247,7 @@ func (h *Handler) assignDriver(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	dto, err := h.svc.AssignDriver(r.Context(), auth.TenantID(r.Context()), id, req.DriverID)
+	dto, err := h.svc.AssignDriver(r.Context(), auth.EffectiveTenant(r), id, req.DriverID)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
