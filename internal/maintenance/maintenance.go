@@ -106,7 +106,7 @@ func (h *Handler) Routes(r chi.Router) {
 //	@Router		/v1/service-schedules [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	p := httpx.ParseList(r)
-	tid := auth.TenantID(r.Context())
+	tid := auth.EffectiveTenant(r) // platform_admin may read another account via ?account_id
 	var resp Response
 	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
 		st := store.New(tx)

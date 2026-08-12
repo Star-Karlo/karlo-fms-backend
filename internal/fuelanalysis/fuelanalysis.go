@@ -101,7 +101,7 @@ type Response struct {
 //	@Success		200	{object}	fuelanalysis.Response
 //	@Router			/v1/fuel/analysis [get]
 func (h *Handler) analysis(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.TenantID(r.Context())
+	tenantID := auth.EffectiveTenant(r)
 	days := clampInt(qInt(r, "days", defaultDays), 1, maxDays)
 	price := qFloat(r, "price", defaultPricePerLitre)
 	idleLph := qFloat(r, "idle_lph", defaultIdleLph)
