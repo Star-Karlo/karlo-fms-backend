@@ -37,6 +37,20 @@ const (
 	// small blip is NOT a refuel — only a sustained double-digit jump is.
 	refuelMinPct  = 12.0
 	maxTripGapSec = 600.0 // gap between fixes over this = offline, not engine-on time
+	// Suspected theft: a single-step level DROP this large, over a SHORT interval
+	// (burning fuel can't drop the tank double digits in half an hour).
+	theftMinPct    = 15.0
+	theftMaxGapMin = 30.0
+)
+
+// Demo fuel-theft: one clearly-flagged sample event for a specific truck +
+// window, so the historical view can be shown end-to-end before real siphoning
+// data exists. Guarded tightly by IMEI + date so it never appears elsewhere.
+const mockTheftIMEI = "354002392595920"
+
+var (
+	mockTheftFrom = time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
+	mockTheftTo   = time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC) // through Aug 8 (exclusive of Aug 9)
 )
 
 // fuelPriceByProvince overrides the national Solar/Biosolar price (Rp/L) where a
@@ -45,6 +59,54 @@ const (
 // empty on purpose: fill from a verified source (there is no reliable official
 // price API) rather than shipping guessed numbers. Missing province -> default.
 var fuelPriceByProvince = map[string]float64{}
+
+// detectTheft is the real detection: a fuel-level DROP of dropPct over gapMin
+// minutes that's too large + too fast to be consumption is flagged as theft.
+// mock tags the event when the underlying reading is fabricated (the detector
+// itself is identical either way).
+func detectTheft(dropPct, gapMin float64, pt telemetry.Position, tank *float64, mock bool) (TheftEvent, bool) {
+	if dropPct < theftMinPct || gapMin < 0 || gapMin > theftMaxGapMin {
+		return TheftEvent{}, false
+	}
+	te := TheftEvent{
+		Time: pt.Time, Lat: pt.Lat, Lon: pt.Lon,
+		Address: joinAddr(pt.Jalan, pt.Kota, pt.Provinsi), Pct: round1(dropPct), IsMock: mock,
+	}
+	if tank != nil && *tank > 0 {
+		liters := *tank * dropPct / 100
+		te.Liters, te.CostRp = round1(liters), round0(liters*fuelPrice(pt.Provinsi))
+	}
+	return te, true
+}
+
+// mockTheftEvent fabricates a theft-shaped reading (an 18% drop over 5 minutes)
+// at a point on the route, then runs it through the REAL detector above — so the
+// event is produced by the production feature; only the data is a mock.
+func mockTheftEvent(ps []telemetry.Position, tank *float64) (TheftEvent, bool) {
+	pt := telemetry.Position{Time: mockTheftFrom.Add(30 * time.Hour)} // ~Aug 7
+	var pts []telemetry.Position
+	for _, p := range ps {
+		if p.Lat != nil && p.Lon != nil {
+			pts = append(pts, p)
+		}
+	}
+	if len(pts) > 0 {
+		p := pts[len(pts)*2/5]
+		pt.Lat, pt.Lon, pt.Jalan, pt.Kota, pt.Provinsi = p.Lat, p.Lon, p.Jalan, p.Kota, p.Provinsi
+		if !p.Time.IsZero() {
+			pt.Time = p.Time
+		}
+	} else {
+		lat, lon := -7.02, 111.42 // Blora, Jawa Tengah — this truck's usual area
+		pt.Lat, pt.Lon, pt.Kota, pt.Provinsi = &lat, &lon, "Blora", "Jawa Tengah"
+	}
+	t := tank
+	if t == nil || *t == 0 {
+		d := 65.0 // a typical tank, so the demo has litres/cost even if none set
+		t = &d
+	}
+	return detectTheft(18, 5, pt, t, true)
+}
 
 // fuelPrice returns the Rp/L for a province, or the national default.
 func fuelPrice(province string) float64 {
@@ -67,6 +129,19 @@ type RefuelEvent struct {
 	CostRp   float64   `json:"cost_rp"`  // liters × price
 }
 
+// TheftEvent is a suspected fuel theft (a large, fast level DROP that burning
+// fuel can't explain — e.g. siphoning while parked). IsMock flags demo data.
+type TheftEvent struct {
+	Time    time.Time `json:"time"`
+	Lat     *float64  `json:"lat"`
+	Lon     *float64  `json:"lon"`
+	Address string    `json:"address"`
+	Pct     float64   `json:"pct"`     // level drop
+	Liters  float64   `json:"liters"`  // tank × pct
+	CostRp  float64   `json:"cost_rp"` // liters × price (value lost)
+	IsMock  bool      `json:"is_mock"` // demo/sample event, not real telemetry
+}
+
 // FuelTrip is the actual-fuel picture for one vehicle over a time range.
 type FuelTrip struct {
 	Points     int     `json:"points"`
@@ -87,6 +162,10 @@ type FuelTrip struct {
 	RefuelLiters *float64      `json:"refuel_liters"`
 	RefuelEvents int           `json:"refuel_events"`
 	Refuels      []RefuelEvent `json:"refuels"` // where + how much + cost, per refuel
+
+	// Suspected fuel thefts (large fast drops). Always surfaced on the history —
+	// no toggle — because a theft is not something to opt into seeing.
+	Thefts []TheftEvent `json:"thefts"`
 
 	KmplActual     *float64 `json:"kmpl_actual"`     // distance ÷ used_liters (sensor-measured)
 	KmplConfigured *float64 `json:"kmpl_configured"` // = fuel_ratio_kmpl (echo)
@@ -225,6 +304,15 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 		}
 	}
 	out.FuelReadings = len(fps)
+
+	// Demo: fabricated theft-shaped data for the guarded truck + window, run
+	// through the real detector so it surfaces exactly like a genuine theft.
+	if imei == mockTheftIMEI && from.Before(mockTheftTo) && to.After(mockTheftFrom) {
+		if te, ok := mockTheftEvent(ps, tank); ok {
+			out.Thefts = append(out.Thefts, te)
+		}
+	}
+
 	if len(fps) < 2 {
 		out.Note = "No fuel-sensor readings in this window — showing distance only."
 		finish() // still yields Rp/km + Rp/hour from the configured km/L rate
@@ -234,14 +322,22 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	start, end := fps[0].lvl, fps[len(fps)-1].lvl
 	out.FuelStartPct, out.FuelEndPct = &start, &end
 
-	// Walk the level series: sum drops as consumption, large rises as refuels.
+	// Walk the level series: sum drops as consumption, large rises as refuels,
+	// large FAST drops as suspected theft.
 	var consumedPct, refuelPct float64
 	prev := fps[0].lvl
+	prevPt := fps[0].p
 	for _, fp := range fps[1:] {
 		cur := fp.lvl
 		switch d := prev - cur; {
 		case d > 0:
-			consumedPct += d
+			// A big drop over a short interval is theft, not consumption — the
+			// SAME detector the mock runs through.
+			if te, ok := detectTheft(d, fp.p.Time.Sub(prevPt.Time).Minutes(), fp.p, tank, false); ok {
+				out.Thefts = append(out.Thefts, te)
+			} else {
+				consumedPct += d
+			}
 		case -d >= refuelMinPct:
 			risePct := -d
 			refuelPct += risePct
@@ -261,6 +357,7 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 			// (small rises are sensor noise — ignored, neither consumed nor refuel)
 		}
 		prev = cur
+		prevPt = fp.p
 	}
 	out.UsedPct = ptrF(round1(consumedPct))
 	if refuelPct > 0 {

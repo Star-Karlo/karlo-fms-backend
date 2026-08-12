@@ -8381,6 +8381,13 @@ const docTemplate = `{
                     "description": "from the vehicle record",
                     "type": "number"
                 },
+                "thefts": {
+                    "description": "Suspected fuel thefts (large fast drops). Always surfaced on the history —\nno toggle — because a theft is not something to opt into seeing.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.TheftEvent"
+                    }
+                },
                 "used_liters": {
                     "description": "tank × used_pct (nil = no tank set)",
                     "type": "number"
@@ -8528,6 +8535,39 @@ const docTemplate = `{
                 },
                 "vehicle_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "liveview.TheftEvent": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "cost_rp": {
+                    "description": "liters × price (value lost)",
+                    "type": "number"
+                },
+                "is_mock": {
+                    "description": "demo/sample event, not real telemetry",
+                    "type": "boolean"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "liters": {
+                    "description": "tank × pct",
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "pct": {
+                    "description": "level drop",
+                    "type": "number"
+                },
+                "time": {
+                    "type": "string"
                 }
             }
         },

@@ -1793,6 +1793,13 @@ definitions:
       tank_liters:
         description: from the vehicle record
         type: number
+      thefts:
+        description: |-
+          Suspected fuel thefts (large fast drops). Always surfaced on the history —
+          no toggle — because a theft is not something to opt into seeing.
+        items:
+          $ref: '#/definitions/liveview.TheftEvent'
+        type: array
       used_liters:
         description: tank × used_pct (nil = no tank set)
         type: number
@@ -1905,6 +1912,29 @@ definitions:
         type: string
       vehicle_id:
         type: integer
+    type: object
+  liveview.TheftEvent:
+    properties:
+      address:
+        type: string
+      cost_rp:
+        description: liters × price (value lost)
+        type: number
+      is_mock:
+        description: demo/sample event, not real telemetry
+        type: boolean
+      lat:
+        type: number
+      liters:
+        description: tank × pct
+        type: number
+      lon:
+        type: number
+      pct:
+        description: level drop
+        type: number
+      time:
+        type: string
     type: object
   liveview.Tracker:
     properties:
