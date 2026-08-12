@@ -53,6 +53,20 @@ var (
 	mockTheftTo   = time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC) // through Aug 8 (exclusive of Aug 9)
 )
 
+// mockTheftSpots pins the demo thefts to FIXED moments inside the window, so each
+// one shows up once, at the same place, only when the queried range covers that
+// moment — instead of floating to 25%/70% of whatever slice is on screen. Times
+// are UTC (WIB−7); the spot snaps onto the real route position nearest that time.
+var mockTheftSpots = []struct {
+	at           time.Time
+	liters       float64
+	fbLat, fbLon float64 // fallback location if the route has no fix near `at`
+	fbAddr       string
+}{
+	{time.Date(2026, 8, 7, 4, 34, 0, 0, time.UTC), 44, -7.05, 111.30, "Grobogan, Jawa Tengah"},  // ~11:34 WIB
+	{time.Date(2026, 8, 7, 9, 55, 0, 0, time.UTC), 49, -6.75, 111.55, "Rembang, Jawa Tengah"},   // ~16:55 WIB
+}
+
 // fuelPriceByProvince overrides the national Solar/Biosolar price (Rp/L) where a
 // region differs — subsidised Biosolar is broadly flat nationally, but non-
 // subsidised diesel (Dexlite/Pertamina Dex) is higher and varies. Left mostly
@@ -98,39 +112,42 @@ func dedupThefts(ts []TheftEvent) []TheftEvent {
 	return out
 }
 
-// mockTheftEvents fabricates the demo: exactly TWO thefts at well-separated
-// points on the route (~25% and ~70% through), ~44 L and ~49 L. Flagged is_mock.
-func mockTheftEvents(ps []telemetry.Position, tank *float64) []TheftEvent {
-	var pts []telemetry.Position
-	for _, p := range ps {
-		if p.Lat != nil && p.Lon != nil {
-			pts = append(pts, p)
-		}
-	}
+// mockTheftEvents fabricates the demo: the fixed-timestamp thefts (see
+// mockTheftSpots) whose moment falls inside [from,to]. Each is placed on the real
+// route fix nearest its time (fallback coords if none within 2h), so it appears
+// once, in the same place, only when the window covers it.
+func mockTheftEvents(from, to time.Time, ps []telemetry.Position, tank *float64) []TheftEvent {
 	tankL := 250.0 // a typical truck tank, so the % reads sensibly
 	if tank != nil && *tank > 0 {
 		tankL = *tank
 	}
-	specs := []struct {
-		frac, liters      float64
-		fbLat, fbLon      float64
-		fbKota            string
-	}{
-		{0.25, 44, -7.05, 111.30, "Blora"},
-		{0.70, 49, -6.75, 111.55, "Rembang"},
-	}
 	out := []TheftEvent{}
-	for _, s := range specs {
-		te := TheftEvent{IsMock: true, Time: mockTheftFrom.Add(30 * time.Hour), Pct: round1(s.liters / tankL * 100), Liters: s.liters, CostRp: round0(s.liters * fuelPricePerLitre)}
-		if len(pts) > 0 {
-			p := pts[int(float64(len(pts))*s.frac)]
-			te.Lat, te.Lon, te.Address = p.Lat, p.Lon, joinAddr(p.Jalan, p.Kota, p.Provinsi)
-			if !p.Time.IsZero() {
-				te.Time = p.Time
+	for _, s := range mockTheftSpots {
+		if s.at.Before(from) || !s.at.Before(to) {
+			continue // this theft's moment isn't in the queried window
+		}
+		te := TheftEvent{IsMock: true, Time: s.at, Pct: round1(s.liters / tankL * 100), Liters: s.liters, CostRp: round0(s.liters * fuelPricePerLitre)}
+		// Snap onto the actual route: the fix closest in time to the fixed moment.
+		var best *telemetry.Position
+		var bestGap time.Duration
+		for i := range ps {
+			p := ps[i]
+			if p.Lat == nil || p.Lon == nil || p.Time.IsZero() {
+				continue
 			}
+			gap := p.Time.Sub(s.at)
+			if gap < 0 {
+				gap = -gap
+			}
+			if best == nil || gap < bestGap {
+				best, bestGap = &ps[i], gap
+			}
+		}
+		if best != nil && bestGap <= 2*time.Hour {
+			te.Lat, te.Lon, te.Address = best.Lat, best.Lon, joinAddr(best.Jalan, best.Kota, best.Provinsi)
 		} else {
 			lat, lon := s.fbLat, s.fbLon
-			te.Lat, te.Lon, te.Address = &lat, &lon, s.fbKota+", Jawa Tengah"
+			te.Lat, te.Lon, te.Address = &lat, &lon, s.fbAddr
 		}
 		out = append(out, te)
 	}
@@ -308,7 +325,7 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 		// DIFFERENT locations; otherwise dedupe close real detections (one
 		// siphoning shows as several nearby readings) into one spot each.
 		if imei == mockTheftIMEI && from.Before(mockTheftTo) && to.After(mockTheftFrom) {
-			out.Thefts = mockTheftEvents(ps, tank)
+			out.Thefts = mockTheftEvents(from, to, ps, tank)
 		} else {
 			out.Thefts = dedupThefts(out.Thefts)
 		}
