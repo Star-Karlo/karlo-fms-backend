@@ -79,33 +79,62 @@ func detectTheft(dropPct, gapMin float64, pt telemetry.Position, tank *float64, 
 	return te, true
 }
 
-// mockTheftEvent fabricates a theft-shaped reading (an 18% drop over 5 minutes)
-// at a point on the route, then runs it through the REAL detector above — so the
-// event is produced by the production feature; only the data is a mock.
-func mockTheftEvent(ps []telemetry.Position, tank *float64) (TheftEvent, bool) {
-	pt := telemetry.Position{Time: mockTheftFrom.Add(30 * time.Hour)} // ~Aug 7
+// dedupThefts collapses theft events that are within ~250 m of an earlier one —
+// a single siphoning shows up across several nearby readings, but it's one spot.
+func dedupThefts(ts []TheftEvent) []TheftEvent {
+	out := []TheftEvent{}
+	for _, t := range ts {
+		dup := false
+		for _, k := range out {
+			if t.Lat != nil && t.Lon != nil && k.Lat != nil && k.Lon != nil && haversine(*t.Lat, *t.Lon, *k.Lat, *k.Lon) < 0.25 {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// mockTheftEvents fabricates the demo: exactly TWO thefts at well-separated
+// points on the route (~25% and ~70% through), ~44 L and ~49 L. Flagged is_mock.
+func mockTheftEvents(ps []telemetry.Position, tank *float64) []TheftEvent {
 	var pts []telemetry.Position
 	for _, p := range ps {
 		if p.Lat != nil && p.Lon != nil {
 			pts = append(pts, p)
 		}
 	}
-	if len(pts) > 0 {
-		p := pts[len(pts)*2/5]
-		pt.Lat, pt.Lon, pt.Jalan, pt.Kota, pt.Provinsi = p.Lat, p.Lon, p.Jalan, p.Kota, p.Provinsi
-		if !p.Time.IsZero() {
-			pt.Time = p.Time
+	tankL := 250.0 // a typical truck tank, so the % reads sensibly
+	if tank != nil && *tank > 0 {
+		tankL = *tank
+	}
+	specs := []struct {
+		frac, liters      float64
+		fbLat, fbLon      float64
+		fbKota            string
+	}{
+		{0.25, 44, -7.05, 111.30, "Blora"},
+		{0.70, 49, -6.75, 111.55, "Rembang"},
+	}
+	out := []TheftEvent{}
+	for _, s := range specs {
+		te := TheftEvent{IsMock: true, Time: mockTheftFrom.Add(30 * time.Hour), Pct: round1(s.liters / tankL * 100), Liters: s.liters, CostRp: round0(s.liters * fuelPricePerLitre)}
+		if len(pts) > 0 {
+			p := pts[int(float64(len(pts))*s.frac)]
+			te.Lat, te.Lon, te.Address = p.Lat, p.Lon, joinAddr(p.Jalan, p.Kota, p.Provinsi)
+			if !p.Time.IsZero() {
+				te.Time = p.Time
+			}
+		} else {
+			lat, lon := s.fbLat, s.fbLon
+			te.Lat, te.Lon, te.Address = &lat, &lon, s.fbKota+", Jawa Tengah"
 		}
-	} else {
-		lat, lon := -7.02, 111.42 // Blora, Jawa Tengah — this truck's usual area
-		pt.Lat, pt.Lon, pt.Kota, pt.Provinsi = &lat, &lon, "Blora", "Jawa Tengah"
+		out = append(out, te)
 	}
-	t := tank
-	if t == nil || *t == 0 {
-		d := 65.0 // a typical tank, so the demo has litres/cost even if none set
-		t = &d
-	}
-	return detectTheft(18, 5, pt, t, true)
+	return out
 }
 
 // fuelPrice returns the Rp/L for a province, or the national default.
@@ -275,6 +304,15 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	// Rp/km and Rp/hour, from the best fuel-cost basis available. Runs on both
 	// exit paths (with or without a usable fuel sensor), so it's a closure.
 	finish := func() {
+		// Thefts: for the demo truck + window show exactly two mock spots at
+		// DIFFERENT locations; otherwise dedupe close real detections (one
+		// siphoning shows as several nearby readings) into one spot each.
+		if imei == mockTheftIMEI && from.Before(mockTheftTo) && to.After(mockTheftFrom) {
+			out.Thefts = mockTheftEvents(ps, tank)
+		} else {
+			out.Thefts = dedupThefts(out.Thefts)
+		}
+
 		var costRp float64
 		switch {
 		case out.CostRp != nil && *out.CostRp > 0:
@@ -304,14 +342,6 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 		}
 	}
 	out.FuelReadings = len(fps)
-
-	// Demo: fabricated theft-shaped data for the guarded truck + window, run
-	// through the real detector so it surfaces exactly like a genuine theft.
-	if imei == mockTheftIMEI && from.Before(mockTheftTo) && to.After(mockTheftFrom) {
-		if te, ok := mockTheftEvent(ps, tank); ok {
-			out.Thefts = append(out.Thefts, te)
-		}
-	}
 
 	if len(fps) < 2 {
 		out.Note = "No fuel-sensor readings in this window — showing distance only."
