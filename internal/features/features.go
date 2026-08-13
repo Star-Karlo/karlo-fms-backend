@@ -21,29 +21,49 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 )
 
-// Def is one gateable feature. Group is only for how the admin UI clusters them.
+// Def is one gateable feature. Parent ("" for top-level) nests a sub-feature
+// under another, so the admin editor mirrors the app's sidebar hierarchy. Order
+// in Registry is the display order.
 type Def struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
-	Group string `json:"group"`
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Parent string `json:"parent"`
 }
 
-// Registry is the canonical list of module-level features that can be toggled.
-// Core infrastructure (dashboard, master data, settings, user/tenant admin) is
-// deliberately NOT here — it's always available so an admin can't lock a customer
-// out of managing their own account.
+// Registry is the canonical, ordered list of toggleable features, arranged as
+// parent → sub-feature to match the sidebar. Settings and tenant/platform admin
+// are intentionally absent (always available so an admin can't lock a customer
+// out of their own account).
 var Registry = []Def{
-	{Key: "live", Label: "Live Tracking", Group: "Monitoring"},
-	{Key: "controltower", Label: "Control Tower", Group: "Monitoring"},
-	{Key: "notifications", Label: "Notifications", Group: "Monitoring"},
-	{Key: "reports", Label: "Reports", Group: "Monitoring"},
-	{Key: "camera", Label: "Camera (TrackVision)", Group: "Camera"},
-	{Key: "geofence", Label: "Geofence", Group: "Geofence"},
-	{Key: "temp_tracking", Label: "Temporary Tracking Share", Group: "Sharing"},
-	{Key: "maintenance", Label: "Maintenance", Group: "Fleet Management"},
-	{Key: "hangars", Label: "Workshops", Group: "Fleet Management"},
-	{Key: "license", Label: "License Management", Group: "Fleet Management"},
-	{Key: "marketplace", Label: "Marketplace", Group: "Marketplace"},
+	{Key: "dashboard", Label: "Dashboard"},
+	{Key: "ai_dashboard", Label: "AI Dashboard", Parent: "dashboard"},
+
+	{Key: "live", Label: "Live View"},
+	{Key: "geofence", Label: "Geofence", Parent: "live"},
+
+	{Key: "controltower", Label: "Control Tower"},
+	{Key: "notifications", Label: "Notifications"},
+
+	{Key: "share_link", Label: "Share Link"},
+	{Key: "generate_link", Label: "Generate Link", Parent: "share_link"},
+
+	{Key: "reports", Label: "Reporting"},
+	{Key: "custom_report", Label: "Custom Report", Parent: "reports"},
+	{Key: "ai_reporting", Label: "AI Reporting", Parent: "reports"},
+
+	{Key: "camera", Label: "Camera (TrackVision)"},
+
+	{Key: "fleet_management", Label: "Fleet Management"},
+	{Key: "maintenance", Label: "Maintenance", Parent: "fleet_management"},
+	{Key: "hangars", Label: "Workshops", Parent: "fleet_management"},
+	{Key: "license", Label: "License", Parent: "fleet_management"},
+
+	{Key: "master_data", Label: "Master Data"},
+	{Key: "dashcams", Label: "Dashcam", Parent: "master_data"},
+	{Key: "rfid", Label: "RFID", Parent: "master_data"},
+	{Key: "users", Label: "Users", Parent: "master_data"},
+
+	{Key: "marketplace", Label: "Marketplace"},
 }
 
 func valid(key string) bool {
