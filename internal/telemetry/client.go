@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -61,28 +62,60 @@ func NewClient(baseURL, apiKey string, timeout time.Duration) *Client {
 	}
 }
 
-// LiveMany fetches the latest position for a set of IMEIs in one call, trimming
-// columns via ?fields=. Chunks requests that exceed the upstream 5000 cap.
+// liveConcurrency bounds how many IMEI batches are fetched at once. Batches were
+// previously fetched one after another, so a large fleet paid (N/150) sequential
+// upstream round trips; fetching them concurrently collapses that to ~1 round
+// trip of wall-clock for typical fleets.
+const liveConcurrency = 8
+
+// LiveMany fetches the latest position for a set of IMEIs, trimming columns via
+// ?fields=. IMEIs are chunked into URL-safe batches which are fetched CONCURRENTLY
+// (bounded) and concatenated in order.
 func (c *Client) LiveMany(ctx context.Context, imeis, fields []string) ([]Position, error) {
 	if len(imeis) == 0 {
 		return nil, nil
 	}
-	var all []Position
+	var batches [][]string
 	for start := 0; start < len(imeis); start += liveBatchSize {
 		end := start + liveBatchSize
 		if end > len(imeis) {
 			end = len(imeis)
 		}
-		q := url.Values{}
-		q.Set("imeis", strings.Join(imeis[start:end], ","))
-		if len(fields) > 0 {
-			q.Set("fields", strings.Join(fields, ","))
-		}
-		var batch []Position
-		if err := c.getJSON(ctx, "/v1/live?"+q.Encode(), &batch); err != nil {
+		batches = append(batches, imeis[start:end])
+	}
+
+	results := make([][]Position, len(batches))
+	errs := make([]error, len(batches))
+	sem := make(chan struct{}, liveConcurrency)
+	var wg sync.WaitGroup
+	for i := range batches {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			q := url.Values{}
+			q.Set("imeis", strings.Join(batches[i], ","))
+			if len(fields) > 0 {
+				q.Set("fields", strings.Join(fields, ","))
+			}
+			var batch []Position
+			if err := c.getJSON(ctx, "/v1/live?"+q.Encode(), &batch); err != nil {
+				errs[i] = err
+				return
+			}
+			results[i] = batch
+		}(i)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
 			return nil, err
 		}
-		all = append(all, batch...)
+	}
+	var all []Position
+	for _, r := range results {
+		all = append(all, r...)
 	}
 	return all, nil
 }
