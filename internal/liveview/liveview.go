@@ -78,6 +78,42 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 		}
 	}
 
+	// Collector state (battery / GSM / odometer + latest service odometer) is a
+	// local DB query that only needs the vehicle IDs, so run it CONCURRENTLY with
+	// the telemetry fetch below instead of after it — the two independent round
+	// trips overlap, so the response returns in max(telemetry, state) not the sum.
+	type telState struct{ mv, gsm, odo, svcKm *float64 }
+	statesCh := make(chan map[int64]telState, 1)
+	go func() {
+		states := map[int64]telState{}
+		if err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+			rs, err := tx.Query(ctx, `
+				SELECT s.vehicle_id, s.last_voltage_mv::float8, s.last_gsm_signal::float8,
+				       s.last_odometer_km::float8, sv.last_service_km
+				FROM vehicle_telemetry_state s
+				LEFT JOIN (
+					SELECT vehicle_id, max(last_odometer)::float8 AS last_service_km
+					FROM service_schedules WHERE last_odometer IS NOT NULL GROUP BY vehicle_id
+				) sv ON sv.vehicle_id = s.vehicle_id`)
+			if err != nil {
+				return err
+			}
+			defer rs.Close()
+			for rs.Next() {
+				var vid int64
+				var st telState
+				if err := rs.Scan(&vid, &st.mv, &st.gsm, &st.odo, &st.svcKm); err != nil {
+					return err
+				}
+				states[vid] = st
+			}
+			return rs.Err()
+		}); err != nil {
+			log.Printf("liveview: telemetry state join failed: %v", err) // non-fatal
+		}
+		statesCh <- states
+	}()
+
 	// Fetch live fixes; on telemetry failure, log and return offline vehicles.
 	byIMEI := map[string]*telemetry.Position{}
 	if len(imeis) > 0 {
@@ -126,35 +162,9 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 		}
 	}
 
-	// Attach collector state (battery / GSM / odometer) plus the latest service
-	// odometer — one cheap local query fleet-wide, powers the list filters.
-	type telState struct{ mv, gsm, odo, svcKm *float64 }
-	states := map[int64]telState{}
-	if err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		rs, err := tx.Query(ctx, `
-			SELECT s.vehicle_id, s.last_voltage_mv::float8, s.last_gsm_signal::float8,
-			       s.last_odometer_km::float8, sv.last_service_km
-			FROM vehicle_telemetry_state s
-			LEFT JOIN (
-				SELECT vehicle_id, max(last_odometer)::float8 AS last_service_km
-				FROM service_schedules WHERE last_odometer IS NOT NULL GROUP BY vehicle_id
-			) sv ON sv.vehicle_id = s.vehicle_id`)
-		if err != nil {
-			return err
-		}
-		defer rs.Close()
-		for rs.Next() {
-			var vid int64
-			var st telState
-			if err := rs.Scan(&vid, &st.mv, &st.gsm, &st.odo, &st.svcKm); err != nil {
-				return err
-			}
-			states[vid] = st
-		}
-		return rs.Err()
-	}); err != nil {
-		log.Printf("liveview: telemetry state join failed: %v", err) // non-fatal
-	}
+	// Attach collector state (battery / GSM / odometer + latest service odometer),
+	// fetched concurrently above; powers the list filters.
+	states := <-statesCh
 	for i := range out {
 		if st, ok := states[out[i].VehicleID]; ok {
 			if st.mv != nil {
