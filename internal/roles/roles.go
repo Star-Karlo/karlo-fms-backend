@@ -64,6 +64,29 @@ func (h *Handler) Require(perm string) func(http.Handler) http.Handler {
 	}
 }
 
+// RequireRW is method-aware: safe reads (GET/HEAD) need viewPerm, writes
+// (POST/PUT/PATCH/DELETE) need editPerm. Same pass-through rules as Require, so a
+// role can grant "see this" without "change this".
+func (h *Handler) RequireRW(viewPerm, editPerm string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if c, ok := auth.FromContext(r.Context()); ok && auth.AtLeast(c.Role, auth.RolePlatformAdmin) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			perm := viewPerm
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				perm = editPerm
+			}
+			if h.userHasPerm(r.Context(), auth.TenantID(r.Context()), auth.UserID(r.Context()), perm) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			httpx.Error(w, http.StatusForbidden, "your role does not permit this")
+		})
+	}
+}
+
 // userHasPerm reports whether the user's assigned role grants perm. No custom
 // role (ErrNoRows) or a lookup error fails OPEN — the legacy rank still applies
 // and an error must not lock the app.
