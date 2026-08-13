@@ -38,8 +38,8 @@ import (
 	"github.com/karlo/fms-backend/internal/document"
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/driverscore"
-	"github.com/karlo/fms-backend/internal/fleetgroup"
 	"github.com/karlo/fms-backend/internal/features"
+	"github.com/karlo/fms-backend/internal/fleetgroup"
 	"github.com/karlo/fms-backend/internal/fuel"
 	"github.com/karlo/fms-backend/internal/fuelanalysis"
 	"github.com/karlo/fms-backend/internal/geofence"
@@ -58,6 +58,7 @@ import (
 	"github.com/karlo/fms-backend/internal/prefs"
 	"github.com/karlo/fms-backend/internal/report"
 	"github.com/karlo/fms-backend/internal/retention"
+	"github.com/karlo/fms-backend/internal/roles"
 	"github.com/karlo/fms-backend/internal/routing"
 	"github.com/karlo/fms-backend/internal/scorecard"
 	"github.com/karlo/fms-backend/internal/telemetry"
@@ -140,6 +141,7 @@ func main() {
 	usersH := users.NewHandler(pool)
 	tenantH := tenants.NewHandler(pool)
 	featureH := features.NewHandler(pool)
+	rolesH := roles.NewHandler(pool)
 	platformH := platformadmin.NewHandler(pool, liveSvc)
 	apiTokenH := apitoken.NewHandler(pool)
 	webhookH := webhook.NewHandler(pool)
@@ -249,6 +251,7 @@ func main() {
 		gated(pr, featureH.RequireFeature("dashcams"), dashcamH.Routes)
 		tenantH.Routes(pr)
 		featureH.Routes(pr)
+		rolesH.Routes(pr)
 		apiTokenH.Routes(pr)
 		webhookH.Routes(pr)
 		dashboardH.Routes(pr)

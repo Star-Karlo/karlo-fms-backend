@@ -26,6 +26,9 @@ type DTO struct {
 	Status      string     `json:"status"`
 	LastLoginAt *time.Time `json:"last_login_at"`
 	CreatedAt   *time.Time `json:"created_at"`
+	// Assigned custom role (RBAC). Nil when the user has none (legacy rank applies).
+	RoleID   *int64  `json:"role_id"`
+	RoleName *string `json:"role_name"`
 }
 
 // CreateRequest is the new-user body.
@@ -93,6 +96,34 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		items = make([]DTO, 0, len(rows))
 		for _, u := range rows {
 			items = append(items, fromRow(u))
+		}
+		// Enrich with the assigned custom role (role_id/name) — kept out of the
+		// generated query so no sqlc change is needed for this additive field.
+		rrows, err := tx.Query(r.Context(),
+			`SELECT u.id, u.role_id, r.name FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.tenant_id = $1 AND u.role_id IS NOT NULL`, tid)
+		if err == nil {
+			roleID := map[int64]int64{}
+			roleName := map[int64]string{}
+			for rrows.Next() {
+				var uid, rid int64
+				var name *string
+				if rrows.Scan(&uid, &rid, &name) == nil {
+					roleID[uid] = rid
+					if name != nil {
+						roleName[uid] = *name
+					}
+				}
+			}
+			rrows.Close()
+			for i := range items {
+				if rid, ok := roleID[items[i].ID]; ok {
+					items[i].RoleID = &rid
+					if n, ok := roleName[items[i].ID]; ok {
+						nn := n
+						items[i].RoleName = &nn
+					}
+				}
+			}
 		}
 		total, err = st.CountUsers(r.Context(), store.CountUsersParams{Q: conv.StrPtr(p.Q), Status: conv.StrPtr(p.Status)})
 		return err
