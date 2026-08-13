@@ -28,6 +28,10 @@ type Def struct {
 	Key    string `json:"key"`
 	Label  string `json:"label"`
 	Parent string `json:"parent"`
+	// Dev marks a roadmap module that isn't built yet: it appears in the
+	// configurator (so an account can pre-enable it) and the sidebar shows it as
+	// a stub, but there's no working page behind it yet.
+	Dev bool `json:"dev,omitempty"`
 }
 
 // Registry is the canonical, ordered list of toggleable features, arranged as
@@ -63,7 +67,42 @@ var Registry = []Def{
 	{Key: "rfid", Label: "RFID", Parent: "master_data"},
 	{Key: "users", Label: "Users", Parent: "master_data"},
 
+	{Key: "scorecard", Label: "Driver Performance"},
 	{Key: "marketplace", Label: "Marketplace"},
+
+	// --- Business modules (roadmap — under development) ---------------------
+	// Per-account toggleable so each account enables what fits its flow. The
+	// keys mirror the frontend nav (nav.config.tsx): a section key gates the
+	// whole group, its children gate individual modules.
+	{Key: "sales", Label: "Sales & Orders", Dev: true},
+	{Key: "orders", Label: "Orders", Parent: "sales", Dev: true},
+	{Key: "invoices", Label: "Invoices", Parent: "sales", Dev: true},
+	{Key: "quotations", Label: "Quotations", Parent: "sales", Dev: true},
+
+	{Key: "procurement", Label: "Procurement", Dev: true},
+	{Key: "purchase-orders", Label: "Purchase Orders", Parent: "procurement", Dev: true},
+	{Key: "purchase-invoices", Label: "Purchase Invoices", Parent: "procurement", Dev: true},
+	{Key: "purchase-quotes", Label: "Purchase Quotes", Parent: "procurement", Dev: true},
+	{Key: "expenses", Label: "Expenses", Parent: "procurement", Dev: true},
+
+	{Key: "inventory", Label: "Inventory & Products", Dev: true},
+	{Key: "products", Label: "Products", Parent: "inventory", Dev: true},
+	{Key: "stock", Label: "Inventory", Parent: "inventory", Dev: true},
+	{Key: "warehouses", Label: "Warehouses", Parent: "inventory", Dev: true},
+	{Key: "fixed-assets", Label: "Fixed Assets", Parent: "inventory", Dev: true},
+
+	{Key: "finance", Label: "Finance", Dev: true},
+	{Key: "cash-bank", Label: "Cash & Bank", Parent: "finance", Dev: true},
+	{Key: "chart-of-accounts", Label: "Chart of Accounts", Parent: "finance", Dev: true},
+	{Key: "cost-centers", Label: "Cost Centers", Parent: "finance", Dev: true},
+	{Key: "journal", Label: "Journal Entries", Parent: "finance", Dev: true},
+	{Key: "payroll", Label: "Payroll", Parent: "finance", Dev: true},
+
+	{Key: "commerce", Label: "Commerce & CRM", Dev: true},
+	{Key: "pos", Label: "Point of Sale", Parent: "commerce", Dev: true},
+	{Key: "distribution", Label: "Distribution", Parent: "commerce", Dev: true},
+	{Key: "crm", Label: "CRM", Parent: "commerce", Dev: true},
+	{Key: "contacts", Label: "Contacts", Parent: "commerce", Dev: true},
 }
 
 func valid(key string) bool {
