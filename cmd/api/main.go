@@ -81,6 +81,17 @@ func gated(r chi.Router, mw func(http.Handler) http.Handler, routes func(chi.Rou
 	})
 }
 
+// chain composes middlewares into one (applied left-to-right), so a module can be
+// guarded by BOTH its account feature and the caller's role permission.
+func chain(mws ...func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		for i := len(mws) - 1; i >= 0; i-- {
+			next = mws[i](next)
+		}
+		return next
+	}
+}
+
 func main() {
 	ctx := context.Background()
 	cfg := config.Load()
@@ -237,32 +248,32 @@ func main() {
 		trackerH.Routes(pr)
 		liveH.Routes(pr)
 		alertH.Routes(pr)
-		gated(pr, featureH.RequireFeature("controltower"), controlH.Routes)
+		gated(pr, chain(featureH.RequireFeature("controltower"), rolesH.Require("controltower.view")), controlH.Routes)
 		notifRuleH.Routes(pr)
-		reportH.Routes(pr)
-		gated(pr, featureH.RequireFeature("custom_report"), customReportH.Routes)
-		gated(pr, featureH.RequireFeature("ai_reporting"), aiReportH.Routes)
+		gated(pr, rolesH.Require("reports.view"), reportH.Routes)
+		gated(pr, chain(featureH.RequireFeature("custom_report"), rolesH.Require("reports.custom")), customReportH.Routes)
+		gated(pr, chain(featureH.RequireFeature("ai_reporting"), rolesH.Require("reports.ai")), aiReportH.Routes)
 		aiRuleH.Routes(pr)
-		gated(pr, featureH.RequireFeature("license"), licenseH.Routes)
-		gated(pr, featureH.RequireFeature("maintenance"), maintenanceH.Routes)
+		gated(pr, chain(featureH.RequireFeature("license"), rolesH.Require("license.view")), licenseH.Routes)
+		gated(pr, chain(featureH.RequireFeature("maintenance"), rolesH.Require("maintenance.view")), maintenanceH.Routes)
 		scorecardH.Routes(pr)
-		gated(pr, featureH.RequireFeature("share_link"), trackingH.Routes)
+		gated(pr, chain(featureH.RequireFeature("share_link"), rolesH.Require("share_link.view")), trackingH.Routes)
 		usersH.Routes(pr)
-		gated(pr, featureH.RequireFeature("dashcams"), dashcamH.Routes)
+		gated(pr, chain(featureH.RequireFeature("dashcams"), rolesH.Require("dashcams.manage")), dashcamH.Routes)
 		tenantH.Routes(pr)
 		featureH.Routes(pr)
 		rolesH.Routes(pr)
 		apiTokenH.Routes(pr)
 		webhookH.Routes(pr)
 		dashboardH.Routes(pr)
-		gated(pr, featureH.RequireFeature("geofence"), geofenceH.Routes)
+		gated(pr, chain(featureH.RequireFeature("geofence"), rolesH.Require("geofence.view")), geofenceH.Routes)
 		fuelH.Routes(pr)
 		fuelAnalysisH.Routes(pr)
 		insightH.Routes(pr)
-		gated(pr, featureH.RequireFeature("hangars"), hangarH.Routes)
+		gated(pr, chain(featureH.RequireFeature("hangars"), rolesH.Require("hangars.view")), hangarH.Routes)
 		documentH.Routes(pr)
 		telemetrySyncH.Routes(pr)
-		gated(pr, featureH.RequireFeature("ai_dashboard"), aiDashH.Routes)
+		gated(pr, chain(featureH.RequireFeature("ai_dashboard"), rolesH.Require("dashboard.ai")), aiDashH.Routes)
 		companyH.Routes(pr)
 		prefsH.Routes(pr)
 		retentionH.Routes(pr)

@@ -7,6 +7,7 @@
 package roles
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -39,6 +40,47 @@ func (h *Handler) Routes(r chi.Router) {
 	})
 	// Any authenticated user reads their OWN effective permissions (for UI gating).
 	r.Get("/v1/me/permissions", h.mine)
+}
+
+// Require blocks (403) a request whose user's assigned role lacks `perm`.
+// Pass-through cases keep everyone working during the migration:
+//   - platform_admin           → always allowed
+//   - user with NO custom role → allowed (legacy rank still governs)
+//
+// So enforcement only bites once a user is given a custom role.
+func (h *Handler) Require(perm string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if c, ok := auth.FromContext(r.Context()); ok && auth.AtLeast(c.Role, auth.RolePlatformAdmin) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if h.userHasPerm(r.Context(), auth.TenantID(r.Context()), auth.UserID(r.Context()), perm) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			httpx.Error(w, http.StatusForbidden, "your role does not permit this")
+		})
+	}
+}
+
+// userHasPerm reports whether the user's assigned role grants perm. No custom
+// role (ErrNoRows) or a lookup error fails OPEN — the legacy rank still applies
+// and an error must not lock the app.
+func (h *Handler) userHasPerm(ctx context.Context, tenantID, userID int64, perm string) bool {
+	var ps []string
+	err := db.Tx(ctx, h.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT r.permissions FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, userID).Scan(&ps)
+	})
+	if err == pgx.ErrNoRows || err != nil {
+		return true
+	}
+	for _, p := range ps {
+		if p == perm {
+			return true
+		}
+	}
+	return false
 }
 
 // DTO is a role as returned to the client.
