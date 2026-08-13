@@ -39,6 +39,7 @@ import (
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/driverscore"
 	"github.com/karlo/fms-backend/internal/fleetgroup"
+	"github.com/karlo/fms-backend/internal/features"
 	"github.com/karlo/fms-backend/internal/fuel"
 	"github.com/karlo/fms-backend/internal/fuelanalysis"
 	"github.com/karlo/fms-backend/internal/geofence"
@@ -68,6 +69,16 @@ import (
 	"github.com/karlo/fms-backend/internal/vehicle"
 	"github.com/karlo/fms-backend/internal/webhook"
 )
+
+// gated mounts a handler's routes inside a group guarded by a feature middleware,
+// so every route that handler registers returns 403 when the feature is disabled
+// for the caller's tenant (platform admins bypass the gate).
+func gated(r chi.Router, mw func(http.Handler) http.Handler, routes func(chi.Router)) {
+	r.Group(func(gr chi.Router) {
+		gr.Use(mw)
+		routes(gr)
+	})
+}
 
 func main() {
 	ctx := context.Background()
@@ -128,6 +139,7 @@ func main() {
 	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion)
 	usersH := users.NewHandler(pool)
 	tenantH := tenants.NewHandler(pool)
+	featureH := features.NewHandler(pool)
 	platformH := platformadmin.NewHandler(pool, liveSvc)
 	apiTokenH := apitoken.NewHandler(pool)
 	webhookH := webhook.NewHandler(pool)
@@ -223,27 +235,28 @@ func main() {
 		trackerH.Routes(pr)
 		liveH.Routes(pr)
 		alertH.Routes(pr)
-		controlH.Routes(pr)
+		gated(pr, featureH.RequireFeature("controltower"), controlH.Routes)
 		notifRuleH.Routes(pr)
 		reportH.Routes(pr)
 		customReportH.Routes(pr)
 		aiReportH.Routes(pr)
 		aiRuleH.Routes(pr)
-		licenseH.Routes(pr)
-		maintenanceH.Routes(pr)
+		gated(pr, featureH.RequireFeature("license"), licenseH.Routes)
+		gated(pr, featureH.RequireFeature("maintenance"), maintenanceH.Routes)
 		scorecardH.Routes(pr)
-		trackingH.Routes(pr)
+		gated(pr, featureH.RequireFeature("temp_tracking"), trackingH.Routes)
 		usersH.Routes(pr)
-		dashcamH.Routes(pr)
+		gated(pr, featureH.RequireFeature("camera"), dashcamH.Routes)
 		tenantH.Routes(pr)
+		featureH.Routes(pr)
 		apiTokenH.Routes(pr)
 		webhookH.Routes(pr)
 		dashboardH.Routes(pr)
-		geofenceH.Routes(pr)
+		gated(pr, featureH.RequireFeature("geofence"), geofenceH.Routes)
 		fuelH.Routes(pr)
 		fuelAnalysisH.Routes(pr)
 		insightH.Routes(pr)
-		hangarH.Routes(pr)
+		gated(pr, featureH.RequireFeature("hangars"), hangarH.Routes)
 		documentH.Routes(pr)
 		telemetrySyncH.Routes(pr)
 		aiDashH.Routes(pr)
