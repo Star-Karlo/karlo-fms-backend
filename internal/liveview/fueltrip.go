@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/platform/config"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 	"github.com/karlo/fms-backend/internal/telemetry"
@@ -46,6 +47,16 @@ const (
 // Demo fuel-theft: one clearly-flagged sample event for a specific truck +
 // window, so the historical view can be shown end-to-end before real siphoning
 // data exists. Guarded tightly by IMEI + date so it never appears elsewhere.
+//
+// OFF BY DEFAULT. The IMEI below belongs to a real vehicle in a real account,
+// so with the demo on, that customer sees two fabricated thefts — with
+// locations and rupiah amounts — rendered exactly like genuine detections, and
+// nothing in the UI distinguishes them. A demo that is indistinguishable from
+// evidence has to be opt-in, per environment.
+//
+// Set FUEL_DEMO_THEFT=true in a demo environment to show it.
+var demoTheftEnabled = config.EnvBool("FUEL_DEMO_THEFT", false)
+
 const mockTheftIMEI = "354002392595920"
 
 var (
@@ -107,6 +118,34 @@ func dedupThefts(ts []TheftEvent) []TheftEvent {
 		}
 		if !dup {
 			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// dedupRefuels collapses refuel readings that are the SAME fill — within ~250 m
+// and an hour of an earlier one — summing the rise, so one top-up shows as one
+// event rather than several. Separate fills (a different place or a different
+// time) stay apart.
+func dedupRefuels(rs []RefuelEvent) []RefuelEvent {
+	out := []RefuelEvent{}
+	for _, r := range rs {
+		merged := false
+		for i := range out {
+			k := &out[i]
+			near := r.Lat != nil && r.Lon != nil && k.Lat != nil && k.Lon != nil &&
+				haversine(*r.Lat, *r.Lon, *k.Lat, *k.Lon) < 0.25
+			soon := r.Time.Sub(k.Time) < time.Hour && k.Time.Sub(r.Time) < time.Hour // |Δt| < 1h
+			if near && soon {
+				k.Pct = round1(k.Pct + r.Pct)
+				k.Liters = round1(k.Liters + r.Liters)
+				k.CostRp = round0(k.CostRp + r.CostRp)
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			out = append(out, r)
 		}
 	}
 	return out
@@ -324,7 +363,11 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 		// Thefts: for the demo truck + window show exactly two mock spots at
 		// DIFFERENT locations; otherwise dedupe close real detections (one
 		// siphoning shows as several nearby readings) into one spot each.
-		if imei == mockTheftIMEI && from.Before(mockTheftTo) && to.After(mockTheftFrom) {
+		//
+		// Note the demo REPLACES real detections rather than adding to them, so
+		// while it was unconditionally on, any genuine siphoning on this truck
+		// in this window was silently discarded. Another reason it defaults off.
+		if demoTheftEnabled && imei == mockTheftIMEI && from.Before(mockTheftTo) && to.After(mockTheftFrom) {
 			out.Thefts = mockTheftEvents(from, to, ps, tank)
 		} else {
 			out.Thefts = dedupThefts(out.Thefts)
@@ -371,7 +414,7 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 
 	// Walk the level series: sum drops as consumption, large rises as refuels,
 	// large FAST drops as suspected theft.
-	var consumedPct, refuelPct float64
+	var consumedPct float64
 	prev := fps[0].lvl
 	prevPt := fps[0].p
 	for _, fp := range fps[1:] {
@@ -386,9 +429,14 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 				consumedPct += d
 			}
 		case -d >= refuelMinPct:
+			// A real refuel happens at a STOP. A ≥12% rise while the truck is
+			// MOVING is fuel sloshing in the tank (the sender momentarily reads
+			// high), not a fill — ignore it, and DON'T advance prev, so the
+			// slosh reversal on the next reading isn't misread as a drop/theft.
+			if fp.p.Speed != nil && *fp.p.Speed > movingSpeed {
+				continue
+			}
 			risePct := -d
-			refuelPct += risePct
-			out.RefuelEvents++
 			// Record where + how much (litres/cost need a tank size).
 			re := RefuelEvent{
 				Time: fp.p.Time, Lat: fp.p.Lat, Lon: fp.p.Lon,
@@ -405,6 +453,14 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 		}
 		prev = cur
 		prevPt = fp.p
+	}
+	// One physical fill can register across several nearby readings — collapse
+	// them (same place, within an hour) so the count reflects real fills.
+	out.Refuels = dedupRefuels(out.Refuels)
+	out.RefuelEvents = len(out.Refuels)
+	var refuelPct float64
+	for _, re := range out.Refuels {
+		refuelPct += re.Pct
 	}
 	out.UsedPct = ptrF(round1(consumedPct))
 	if refuelPct > 0 {
