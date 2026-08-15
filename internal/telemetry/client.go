@@ -46,19 +46,29 @@ type Position struct {
 
 // Client calls the telemetry read API.
 type Client struct {
-	base string
-	key  string
-	hc   *http.Client
+	base   string
+	key    string
+	hc     *http.Client
+	histHC *http.Client // longer timeout for history (may hit cold/Athena)
 }
 
 // NewClient builds a telemetry client. baseURL points at the ingest service
 // (e.g. http://localhost:8082 or https://fms-tracking.karlo.id); apiKey, if set,
 // is sent as X-Ingest-Key.
 func NewClient(baseURL, apiKey string, timeout time.Duration) *Client {
+	// History can span COLD storage (Athena over Parquet), which is legitimately
+	// far slower than a live read — a multi-day range easily exceeds the snappy
+	// live timeout. Give history its own, much longer ceiling so it doesn't 15s
+	// time-out before Athena returns; live/latest keep the tight `timeout`.
+	histTimeout := 55 * time.Second
+	if timeout > histTimeout {
+		histTimeout = timeout
+	}
 	return &Client{
-		base: strings.TrimRight(baseURL, "/"),
-		key:  apiKey,
-		hc:   &http.Client{Timeout: timeout},
+		base:   strings.TrimRight(baseURL, "/"),
+		key:    apiKey,
+		hc:     &http.Client{Timeout: timeout},
+		histHC: &http.Client{Timeout: histTimeout},
 	}
 }
 
@@ -144,7 +154,7 @@ func (c *Client) History(ctx context.Context, imei string, from, to time.Time, f
 	var page struct {
 		Points []Position `json:"points"`
 	}
-	if err := c.getJSON(ctx, "/v1/history/"+url.PathEscape(imei)+"?"+q.Encode(), &page); err != nil {
+	if err := c.getJSONSlow(ctx, "/v1/history/"+url.PathEscape(imei)+"?"+q.Encode(), &page); err != nil {
 		return nil, err
 	}
 	return page.Points, nil
@@ -240,6 +250,16 @@ func (c *Client) Coverage(ctx context.Context, rawQuery string) (json.RawMessage
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
+	return c.getJSONVia(ctx, c.hc, path, dst)
+}
+
+// getJSONSlow is getJSON on the longer-timeout client, for reads that can touch
+// cold storage (history over Athena/Parquet).
+func (c *Client) getJSONSlow(ctx context.Context, path string, dst any) error {
+	return c.getJSONVia(ctx, c.histHC, path, dst)
+}
+
+func (c *Client) getJSONVia(ctx context.Context, hc *http.Client, path string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
 	if err != nil {
 		return err
@@ -247,7 +267,7 @@ func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
 	if c.key != "" {
 		req.Header.Set("X-Ingest-Key", c.key)
 	}
-	resp, err := c.hc.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return err
 	}
