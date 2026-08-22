@@ -147,3 +147,38 @@ company that has FMS (no entitlement gate).
 
 31 keys. This table is generated from `internal/perms/perms.go` — update both
 together.
+
+## Migration to the shared Karlo IAM (proposed — NOT adopted)
+
+A shared IAM (one login for TMS + FMS, RS256 tokens) is designed and agreed with
+the TMS session, but **not adopted**. Nothing here changes FMS until Nathan
+greenlights it. Recorded so the plan survives and the go/no-go is evidence-based.
+
+**Go/no-go decisions (Nathan's):**
+1. Adopt the shared IAM for FMS at all.
+2. **Token:** FMS self-issues **HS256** and looks entitlements up per request; the
+   shared design is **RS256** with entitlements embedded (short TTL + revocation).
+   Decisive reason to converge: a shared HS256 secret lets any holder mint a token
+   as anyone across both products.
+3. **IDs:** keep `companies.id` a UUID with a `tenant_id bigint UNIQUE` alias
+   seeded from FMS's existing ids; token carries both; **FMS RLS is untouched**.
+4. Replace FMS's "no-role = all keys" fallback with explicit per-role default
+   bundles? (Today there are none — role is rank, permissions is an optional grant.)
+
+**⚠️ The critical migration risk — entitlement default inverts.**
+FMS is **opt-out / fail-OPEN**: absent `tenant_features` row = ENABLED, so most
+tenants (sparse or empty rows) hold the full live feature set by default. The
+shared `company_modules` is **opt-in / fail-CLOSED**: absent = DENIED. The danger
+is entirely the switch moment: the day absence flips meaning, **every FMS tenant
+with sparse/empty rows loses all features at once** — blast radius is the customer
+base, not an edge case. Requirements for a safe cut-over:
+- **Backfill from EFFECTIVE entitlement, not existing rows.** Enumerate the LIVE
+  registry per tenant and subtract their explicit disables. A naive
+  `INSERT … SELECT FROM tenant_features` grants zero-row tenants nothing — that is
+  the exact accident. **Exclude `dev:true` roadmap stubs** (pre-enablement, not
+  entitlement; carrying them would grant modules that don't exist).
+- **Dry-run must be a DIFF, not a count.** For every tenant: features held before
+  vs after, listing by name any tenant whose set shrinks. "Backfilled N rows" says
+  nothing about whether anyone went dark.
+
+The TMS side is surfacing this inversion to Nathan independently.
