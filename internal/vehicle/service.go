@@ -191,7 +191,19 @@ func (s *Service) AssignTracker(ctx context.Context, tenantID, id int64, tracker
 		if err != nil {
 			return err
 		}
-		if trackerID != nil {
+		// Keep trackers.vehicle_id (the assignment-history trigger's source of
+		// truth) consistent on BOTH bind and unbind:
+		//   unbind → detach whatever tracker is on this vehicle (closes its period);
+		//   bind   → detach any OTHER tracker on this vehicle, then attach the chosen
+		//            one (so the vehicle never has two open device assignments).
+		if trackerID == nil {
+			if err := q.ClearTrackerByVehicle(ctx, &id); err != nil {
+				return err
+			}
+		} else {
+			if err := q.ClearOtherTrackersOnVehicle(ctx, store.ClearOtherTrackersOnVehicleParams{VehicleID: &id, ID: *trackerID}); err != nil {
+				return err
+			}
 			if _, err := q.SetTrackerVehicle(ctx, store.SetTrackerVehicleParams{ID: *trackerID, VehicleID: &id}); err != nil {
 				return err
 			}

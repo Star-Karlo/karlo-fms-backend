@@ -285,3 +285,16 @@ CREATE TABLE dashcams (
   access_mode   int,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
+
+-- Tracker↔vehicle assignment history (see 0040). Table only; the maintenance
+-- trigger + RLS live in the migration and aren't needed for codegen.
+CREATE TABLE tracker_assignments (
+  id          bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id   bigint      NOT NULL REFERENCES tenants(id),
+  tracker_id  bigint      NOT NULL REFERENCES trackers(id)  ON DELETE CASCADE,
+  vehicle_id  bigint      NOT NULL REFERENCES vehicles(id)  ON DELETE CASCADE,
+  imei        text        NOT NULL,
+  fitted_at   timestamptz NOT NULL DEFAULT now(),
+  unfitted_at timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);

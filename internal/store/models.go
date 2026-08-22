@@ -214,6 +214,17 @@ type Tracker struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TrackerAssignment struct {
+	ID         int64              `json:"id"`
+	TenantID   int64              `json:"tenant_id"`
+	TrackerID  int64              `json:"tracker_id"`
+	VehicleID  int64              `json:"vehicle_id"`
+	Imei       string             `json:"imei"`
+	FittedAt   pgtype.Timestamptz `json:"fitted_at"`
+	UnfittedAt pgtype.Timestamptz `json:"unfitted_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type TrackingLink struct {
 	ID         int64              `json:"id"`
 	TenantID   int64              `json:"tenant_id"`

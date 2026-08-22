@@ -9,6 +9,34 @@ import (
 	"context"
 )
 
+const clearOtherTrackersOnVehicle = `-- name: ClearOtherTrackersOnVehicle :exec
+UPDATE trackers SET vehicle_id = NULL WHERE vehicle_id = $1 AND id <> $2
+`
+
+type ClearOtherTrackersOnVehicleParams struct {
+	VehicleID *int64 `json:"vehicle_id"`
+	ID        int64  `json:"id"`
+}
+
+// On BIND: detach any OTHER tracker still pointing at this vehicle (fixes the
+// bidirectional staleness so a vehicle never has two open device assignments).
+func (q *Queries) ClearOtherTrackersOnVehicle(ctx context.Context, arg ClearOtherTrackersOnVehicleParams) error {
+	_, err := q.db.Exec(ctx, clearOtherTrackersOnVehicle, arg.VehicleID, arg.ID)
+	return err
+}
+
+const clearTrackerByVehicle = `-- name: ClearTrackerByVehicle :exec
+UPDATE trackers SET vehicle_id = NULL WHERE vehicle_id = $1
+`
+
+// Detach whatever tracker currently points at this vehicle. Used on UNBIND so the
+// change to trackers.vehicle_id fires the assignment-history trigger (closes the
+// open period) — the bind path already syncs the tracker side, unbind did not.
+func (q *Queries) ClearTrackerByVehicle(ctx context.Context, vehicleID *int64) error {
+	_, err := q.db.Exec(ctx, clearTrackerByVehicle, vehicleID)
+	return err
+}
+
 const countTrackers = `-- name: CountTrackers :one
 SELECT count(*) FROM trackers
 WHERE ($1::text IS NULL

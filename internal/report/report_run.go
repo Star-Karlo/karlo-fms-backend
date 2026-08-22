@@ -228,24 +228,73 @@ func (s *Service) plateFor(ctx context.Context, tenantID, vehicleID int64) strin
 }
 
 // track resolves a vehicle's labels + telemetry history for the range.
+//
+// Telemetry is keyed by IMEI, and a device can move between trucks. So the range
+// is split by the vehicle's tracker-ASSIGNMENT periods and each device's history
+// is fetched only for the window it was actually fitted to THIS vehicle — a
+// device that left last month no longer credits its new truck's driving here, and
+// a device fitted mid-range contributes only from when it arrived. When there is
+// no recorded history for the window (a vehicle not yet in the assignment table)
+// it falls back to the current tracker, preserving prior behaviour.
 func (s *Service) track(ctx context.Context, tenantID int64, vehicleID int64, from, to time.Time) (store.GetVehicleRow, []telemetry.Position, error) {
 	var veh store.GetVehicleRow
+	var periods []store.VehicleTrackerPeriodsRow
 	if err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		v, err := store.New(tx).GetVehicle(ctx, vehicleID)
+		q := store.New(tx)
+		v, err := q.GetVehicle(ctx, vehicleID)
+		if err != nil {
+			return err
+		}
 		veh = v
+		periods, err = q.VehicleTrackerPeriods(ctx, store.VehicleTrackerPeriodsParams{
+			VehicleID: vehicleID,
+			RangeFrom: pgtype.Timestamptz{Time: from, Valid: true},
+			RangeTo:   pgtype.Timestamptz{Time: to, Valid: true},
+		})
 		return err
 	}); err != nil {
 		return veh, nil, fmt.Errorf("vehicle not found")
 	}
-	if veh.TrackerImei == nil || *veh.TrackerImei == "" {
-		return veh, nil, fmt.Errorf("vehicle has no tracker/IMEI")
-	}
-	pos, err := s.tel.History(ctx, *veh.TrackerImei, from, to, nil, 5000)
-	if err != nil {
-		return veh, nil, fmt.Errorf("telemetry history unavailable: %w", err)
+
+	var pos []telemetry.Position
+	if len(periods) == 0 {
+		// No recorded assignment for this window — fall back to the current tracker.
+		if veh.TrackerImei == nil || *veh.TrackerImei == "" {
+			return veh, nil, fmt.Errorf("vehicle has no tracker/IMEI")
+		}
+		p, err := s.tel.History(ctx, *veh.TrackerImei, from, to, nil, 5000)
+		if err != nil {
+			return veh, nil, fmt.Errorf("telemetry history unavailable: %w", err)
+		}
+		pos = p
+	} else {
+		for _, pr := range periods {
+			lo, hi := clampPeriod(from, to, pr.FittedAt, pr.UnfittedAt)
+			if !hi.After(lo) {
+				continue
+			}
+			p, err := s.tel.History(ctx, pr.Imei, lo, hi, nil, 5000)
+			if err != nil {
+				return veh, nil, fmt.Errorf("telemetry history unavailable: %w", err)
+			}
+			pos = append(pos, p...)
+		}
 	}
 	// GPS quality filter: drop physically impossible fixes before analytics.
 	return veh, telemetry.FilterTeleports(pos), nil
+}
+
+// clampPeriod intersects the report window [from,to) with a device's fitted
+// window [fitted, unfitted); an invalid unfitted means "still fitted" (open end).
+func clampPeriod(from, to time.Time, fitted, unfitted pgtype.Timestamptz) (time.Time, time.Time) {
+	lo, hi := from, to
+	if fitted.Valid && fitted.Time.After(lo) {
+		lo = fitted.Time
+	}
+	if unfitted.Valid && unfitted.Time.Before(hi) {
+		hi = unfitted.Time
+	}
+	return lo, hi
 }
 
 func plate(v store.GetVehicleRow) string { return v.LicensePlate }
