@@ -38,6 +38,11 @@ type Def struct {
 // parent → sub-feature to match the sidebar. Settings and tenant/platform admin
 // are intentionally absent (always available so an admin can't lock a customer
 // out of their own account).
+// The published artifact fms-features.json (module root) is a verbatim copy of
+// this Registry, consumed by the shared Karlo IAM to detect drift. Regenerate it
+// whenever this list changes:
+//
+//go:generate go run github.com/karlo/fms-backend/cmd/features-json
 var Registry = []Def{
 	{Key: "dashboard", Label: "Dashboard"},
 	{Key: "ai_dashboard", Label: "AI Dashboard", Parent: "dashboard"},
