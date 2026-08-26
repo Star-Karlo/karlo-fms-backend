@@ -151,6 +151,32 @@ func dedupRefuels(rs []RefuelEvent) []RefuelEvent {
 	return out
 }
 
+// nearestFixCoords finds the fix closest in time to t that actually has a GPS
+// coordinate, and returns its lat/lon plus address parts. Used to place an event
+// (a refuel) whose own fix reported a sensor value but no position, so it can be
+// pinned on the map instead of falling at (0,0). Returns nil lat if no fix in the
+// window has coords at all.
+func nearestFixCoords(ps []telemetry.Position, t time.Time) (lat, lon *float64, address, province string) {
+	var best *telemetry.Position
+	var bestGap time.Duration
+	for i := range ps {
+		if ps[i].Lat == nil || ps[i].Lon == nil {
+			continue
+		}
+		gap := ps[i].Time.Sub(t)
+		if gap < 0 {
+			gap = -gap
+		}
+		if best == nil || gap < bestGap {
+			best, bestGap = &ps[i], gap
+		}
+	}
+	if best == nil {
+		return nil, nil, "", ""
+	}
+	return best.Lat, best.Lon, joinAddr(best.Jalan, best.Kota, best.Provinsi), best.Provinsi
+}
+
 // mockTheftEvents fabricates the demo: the fixed-timestamp thefts (see
 // mockTheftSpots) whose moment falls inside [from,to]. Each is placed on the real
 // route fix nearest its time (fallback coords if none within 2h), so it appears
@@ -442,6 +468,22 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 				Time: fp.p.Time, Lat: fp.p.Lat, Lon: fp.p.Lon,
 				Address: joinAddr(fp.p.Jalan, fp.p.Kota, fp.p.Provinsi),
 				Province: fp.p.Provinsi, Pct: round1(risePct),
+			}
+			// A fill happens at a stop, where the device may report a fuel level
+			// with no fresh GPS lock — so this fix can lack lat/lon. Without a
+			// coordinate the event still lists but the map drops the pin (no blue
+			// circle). Borrow the nearest fix in time that HAS coords, same as the
+			// theft detector, so every refuel is placeable.
+			if re.Lat == nil || re.Lon == nil {
+				if lat, lon, addr, prov := nearestFixCoords(ps, fp.p.Time); lat != nil {
+					re.Lat, re.Lon = lat, lon
+					if re.Address == "" {
+						re.Address = addr
+					}
+					if re.Province == "" {
+						re.Province = prov
+					}
+				}
 			}
 			if tank != nil && *tank > 0 {
 				liters := *tank * risePct / 100
