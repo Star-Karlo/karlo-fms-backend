@@ -24,6 +24,7 @@ type DTO struct {
 	FullName    *string    `json:"full_name"`
 	Role        string     `json:"role"`
 	Status      string     `json:"status"`
+	IsRoot      bool       `json:"is_root"`
 	LastLoginAt *time.Time `json:"last_login_at"`
 	CreatedAt   *time.Time `json:"created_at"`
 	// Assigned custom role (RBAC). Nil when the user has none (legacy rank applies).
@@ -49,7 +50,7 @@ type UpdateRequest struct {
 }
 
 func fromRow(u store.User) DTO {
-	return DTO{ID: u.ID, Email: u.Email, FullName: u.FullName, Role: u.Role, Status: u.Status, LastLoginAt: conv.Time(u.LastLoginAt), CreatedAt: conv.Time(u.CreatedAt)}
+	return DTO{ID: u.ID, Email: u.Email, FullName: u.FullName, Role: u.Role, Status: u.Status, IsRoot: u.IsRoot, LastLoginAt: conv.Time(u.LastLoginAt), CreatedAt: conv.Time(u.CreatedAt)}
 }
 
 // Handler exposes user-management endpoints (admin only).
@@ -154,6 +155,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if req.Role == "" {
 		req.Role = auth.RoleOperator
 	}
+	// Only a root platform_admin ("the platform admin admin") may mint another
+	// platform_admin. A child platform_admin can create ordinary users but not
+	// peers or a superior.
+	if req.Role == auth.RolePlatformAdmin && !auth.IsRoot(r.Context()) {
+		httpx.Error(w, http.StatusForbidden, "only a root platform admin can create platform admins")
+		return
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "hash failed")
@@ -204,6 +212,19 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
+	// Only a root may modify a platform_admin, or grant that role to someone —
+	// otherwise a child could edit a peer/superior or escalate a user to platform.
+	var curRole string
+	_ = db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+		if u, err := store.New(tx).GetUserByID(r.Context(), id); err == nil {
+			curRole = u.Role
+		}
+		return nil
+	})
+	if (curRole == auth.RolePlatformAdmin || (req.Role != nil && *req.Role == auth.RolePlatformAdmin)) && !auth.IsRoot(r.Context()) {
+		httpx.Error(w, http.StatusForbidden, "only a root platform admin can modify platform admins")
+		return
+	}
 	var dto DTO
 	e := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
 		u, err := store.New(tx).UpdateUser(r.Context(), store.UpdateUserParams{ID: id, FullName: req.FullName, Role: req.Role, Status: req.Status})
@@ -247,6 +268,18 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 	}
 	if id == auth.UserID(r.Context()) {
 		httpx.Error(w, http.StatusBadRequest, "cannot delete yourself")
+		return
+	}
+	// Only a root may delete a platform_admin.
+	var curRole string
+	_ = db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+		if u, err := store.New(tx).GetUserByID(r.Context(), id); err == nil {
+			curRole = u.Role
+		}
+		return nil
+	})
+	if curRole == auth.RolePlatformAdmin && !auth.IsRoot(r.Context()) {
+		httpx.Error(w, http.StatusForbidden, "only a root platform admin can delete platform admins")
 		return
 	}
 	e := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {

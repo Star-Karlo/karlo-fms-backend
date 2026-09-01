@@ -32,6 +32,15 @@ func UserID(ctx context.Context) int64 {
 	return 0
 }
 
+// IsRoot reports whether the caller is a root platform_admin ("the platform
+// admin admin") — the only tier that may manage other platform_admin accounts.
+func IsRoot(ctx context.Context) bool {
+	if c, ok := FromContext(ctx); ok {
+		return c.IsRoot && c.Role == RolePlatformAdmin
+	}
+	return false
+}
+
 // TenantID returns the authenticated tenant id (0 if unauthenticated).
 func TenantID(ctx context.Context) int64 {
 	if c, ok := FromContext(ctx); ok {

@@ -34,7 +34,7 @@ func NewService(pool *db.Pool, tm *TokenManager) *Service {
 }
 
 func toUserDTO(u store.User) UserDTO {
-	return UserDTO{ID: u.ID, Email: u.Email, FullName: u.FullName, Role: u.Role, Status: u.Status, TenantID: u.TenantID}
+	return UserDTO{ID: u.ID, Email: u.Email, FullName: u.FullName, Role: u.Role, Status: u.Status, TenantID: u.TenantID, IsRoot: u.IsRoot}
 }
 
 // Login verifies credentials and issues an access+refresh token pair.
@@ -194,7 +194,7 @@ func (s *Service) Me(ctx context.Context, tenantID, userID int64) (*UserDTO, err
 
 // issue mints an access token and a stored refresh token for a user.
 func (s *Service) issue(ctx context.Context, user store.User, userAgent string) (*TokenResponse, error) {
-	access, err := s.tm.SignAccess(user.ID, user.TenantID, user.Role, user.Email)
+	access, err := s.tm.SignAccess(user.ID, user.TenantID, user.Role, user.Email, user.IsRoot)
 	if err != nil {
 		return nil, err
 	}

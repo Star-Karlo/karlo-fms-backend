@@ -27,6 +27,7 @@ CREATE TABLE users (
   full_name     text,
   role          text NOT NULL DEFAULT 'operator',
   status        text NOT NULL DEFAULT 'active',
+  is_root       boolean NOT NULL DEFAULT false,
   last_login_at timestamptz,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now()

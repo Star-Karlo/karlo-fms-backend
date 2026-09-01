@@ -26,12 +26,13 @@ func (m *TokenManager) AccessTTL() time.Duration  { return m.accessTTL }
 func (m *TokenManager) RefreshTTL() time.Duration { return m.refreshTTL }
 
 // SignAccess issues a signed access token for a user.
-func (m *TokenManager) SignAccess(userID, tenantID int64, role, email string) (string, error) {
+func (m *TokenManager) SignAccess(userID, tenantID int64, role, email string, isRoot bool) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		TenantID: tenantID,
 		Role:     role,
 		Email:    email,
+		IsRoot:   isRoot,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   fmt.Sprintf("%d", userID),
 			IssuedAt:  jwt.NewNumericDate(now),

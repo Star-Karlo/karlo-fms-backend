@@ -34,6 +34,10 @@ type Claims struct {
 	TenantID int64  `json:"tid"`
 	Role     string `json:"role"`
 	Email    string `json:"email"`
+	// IsRoot marks the top-tier ("platform admin admin"). Only a root platform_admin
+	// may create/edit/delete other platform_admin accounts; a child platform_admin
+	// has cross-vendor visibility but its actions are bounded by its custom role.
+	IsRoot bool `json:"root,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -45,6 +49,7 @@ type UserDTO struct {
 	Role     string  `json:"role"`
 	Status   string  `json:"status"`
 	TenantID int64   `json:"tenant_id"`
+	IsRoot   bool    `json:"is_root"`
 }
 
 // LoginRequest is the /v1/auth/login body.

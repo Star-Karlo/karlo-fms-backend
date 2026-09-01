@@ -247,6 +247,7 @@ type User struct {
 	FullName     *string            `json:"full_name"`
 	Role         string             `json:"role"`
 	Status       string             `json:"status"`
+	IsRoot       bool               `json:"is_root"`
 	LastLoginAt  pgtype.Timestamptz `json:"last_login_at"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`

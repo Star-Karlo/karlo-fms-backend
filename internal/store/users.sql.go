@@ -32,7 +32,7 @@ func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (tenant_id, email, password_hash, full_name, role, status)
 VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'active'))
-RETURNING id, tenant_id, email, password_hash, full_name, role, status, last_login_at, created_at, updated_at
+RETURNING id, tenant_id, email, password_hash, full_name, role, status, is_root, last_login_at, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -62,6 +62,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.FullName,
 		&i.Role,
 		&i.Status,
+		&i.IsRoot,
 		&i.LastLoginAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -79,7 +80,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, tenant_id, email, password_hash, full_name, role, status, last_login_at, created_at, updated_at FROM users WHERE email = $1
+SELECT id, tenant_id, email, password_hash, full_name, role, status, is_root, last_login_at, created_at, updated_at FROM users WHERE email = $1
 `
 
 // Login bootstrap: runs unscoped (SystemTx); email is globally unique.
@@ -94,6 +95,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.FullName,
 		&i.Role,
 		&i.Status,
+		&i.IsRoot,
 		&i.LastLoginAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -102,7 +104,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, tenant_id, email, password_hash, full_name, role, status, last_login_at, created_at, updated_at FROM users WHERE id = $1
+SELECT id, tenant_id, email, password_hash, full_name, role, status, is_root, last_login_at, created_at, updated_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -116,6 +118,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.FullName,
 		&i.Role,
 		&i.Status,
+		&i.IsRoot,
 		&i.LastLoginAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -124,7 +127,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, tenant_id, email, password_hash, full_name, role, status, last_login_at, created_at, updated_at FROM users
+SELECT id, tenant_id, email, password_hash, full_name, role, status, is_root, last_login_at, created_at, updated_at FROM users
 WHERE ($1::text IS NULL
        OR email ILIKE '%' || $1 || '%'
        OR full_name ILIKE '%' || $1 || '%')
@@ -162,6 +165,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 			&i.FullName,
 			&i.Role,
 			&i.Status,
+			&i.IsRoot,
 			&i.LastLoginAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -191,7 +195,7 @@ SET full_name = COALESCE($2, full_name),
     role      = COALESCE($3, role),
     status    = COALESCE($4, status)
 WHERE id = $1
-RETURNING id, tenant_id, email, password_hash, full_name, role, status, last_login_at, created_at, updated_at
+RETURNING id, tenant_id, email, password_hash, full_name, role, status, is_root, last_login_at, created_at, updated_at
 `
 
 type UpdateUserParams struct {
@@ -217,6 +221,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.FullName,
 		&i.Role,
 		&i.Status,
+		&i.IsRoot,
 		&i.LastLoginAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
