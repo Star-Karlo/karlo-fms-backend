@@ -99,7 +99,7 @@ func (h *Handler) Routes(r chi.Router) {
 //	@Router		/v1/dashcams [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	var items []DTO
-	err := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		rows, err := tx.Query(r.Context(), `
 SELECT d.id, d.vehicle_id, v.license_plate, v.vehicle_type, e.full_name,
        d.vss_device_id, d.device_name, d.channels, d.channel_names
@@ -174,7 +174,7 @@ func (h *Handler) available(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	linked := map[string]string{}
-	_ = db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	_ = db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		rows, err := tx.Query(r.Context(), `
 SELECT d.vss_device_id, coalesce(v.license_plate,'') FROM dashcams d
 LEFT JOIN vehicles v ON v.id = d.vehicle_id`)
@@ -240,7 +240,7 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tid := auth.TenantID(r.Context())
+	tid := auth.EffectiveTenant(r)
 	var out DTO
 	err = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
 		return tx.QueryRow(r.Context(), `
@@ -280,7 +280,7 @@ func (h *Handler) detach(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	if err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		_, e := tx.Exec(r.Context(), `DELETE FROM dashcams WHERE id=$1`, id)
 		return e
 	}); err != nil {
@@ -336,7 +336,7 @@ func (h *Handler) clipURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var bucket, key *string
-	err = db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	err = db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		// RLS scopes this: another tenant's id returns no rows -> 404.
 		return tx.QueryRow(r.Context(),
 			`SELECT s3_bucket, s3_key FROM video_clips WHERE id=$1 AND status='ready'`, id).Scan(&bucket, &key)
@@ -460,7 +460,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	// instant the operator clicks Save. The reconciler flips it to ready/failed
 	// when the background download finishes — the client need not wait or poll.
 	pc := pendingClip{
-		tenantID: auth.TenantID(r.Context()), dashcamID: dc.id, vehicleID: dc.vehicleID,
+		tenantID: auth.EffectiveTenant(r), dashcamID: dc.id, vehicleID: dc.vehicleID,
 		deviceID: dc.deviceID, channel: req.Channel, start: req.Start, stop: req.Stop,
 		lat: req.Lat, lon: req.Lon, note: req.Note, userID: auth.UserID(r.Context()),
 	}
@@ -517,7 +517,7 @@ func (h *Handler) listClips(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var items []ClipDTO
-	err := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		rows, err := tx.Query(r.Context(), `
 SELECT c.id, c.vehicle_id, v.license_plate, c.vss_device_id, c.channel,
        to_char(c.clip_start, 'YYYY-MM-DD"T"HH24:MI:SSOF:00'),
@@ -586,7 +586,7 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) (resolved, boo
 	}
 	var out resolved
 	out.id = id
-	if err := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
+	if err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		return tx.QueryRow(r.Context(),
 			`SELECT vss_device_id, vehicle_id FROM dashcams WHERE id=$1`, id).Scan(&out.deviceID, &out.vehicleID)
 	}); err != nil {
