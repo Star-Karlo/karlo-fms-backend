@@ -356,6 +356,11 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	// an overnight stop doesn't inflate engine hours.
 	var lastLat, lastLon *float64
 	var engineSec, idleSec, movingSec float64
+	// Fuel burned from the ECU's instantaneous fuel-rate (L/h), integrated over
+	// engine-on time. This is the OBD path: vehicles that report "Fuel Rate" but
+	// have no tank-level sensor still get real consumption/km-L/cost (and it
+	// captures idle burn, which the configured km/L rate does not).
+	var rateLiters float64
 	for i := range ps {
 		p := ps[i]
 		if p.Lat != nil && p.Lon != nil {
@@ -372,6 +377,9 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 					movingSec += dt
 				} else {
 					idleSec += dt
+				}
+				if r, ok := fuelRate(p.Metadata); ok && r > 0 {
+					rateLiters += r * dt / 3600.0 // L/h × h
 				}
 			}
 		}
@@ -430,6 +438,27 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	out.FuelReadings = len(fps)
 
 	if len(fps) < 2 {
+		// No tank-level sensor. If the ECU reported a fuel RATE, we still have real
+		// consumption — just not refuels/theft (those need a level to see a jump).
+		if rateLiters > 0 {
+			used := round1(rateLiters)
+			costRp := rateLiters * fuelPricePerLitre
+			cost := round0(costRp)
+			out.UsedLiters, out.CostRp, out.CostBasis = &used, &cost, "obd_rate"
+			if tank != nil && *tank > 0 {
+				up := round1(rateLiters / *tank * 100)
+				out.UsedPct = &up
+			}
+			if out.DistanceKm > 0 {
+				out.KmplActual = ptrF(round1(out.DistanceKm / rateLiters))
+				out.CostPerKm = ptrF(round0(costRp / out.DistanceKm))
+			}
+			if engineSec > 0 {
+				out.CostPerHour = ptrF(round0(costRp / (engineSec / 3600)))
+			}
+			out.Note = "Fuel from the engine's OBD fuel-rate — consumption, km/L and cost. Refuels and theft need a tank-level sensor."
+			return out, nil
+		}
 		out.Note = "No fuel-sensor readings in this window — showing distance only."
 		finish() // still yields Rp/km + Rp/hour from the configured km/L rate
 		return out, nil
@@ -541,6 +570,27 @@ func fuelLevelPct(md json.RawMessage) (float64, bool) {
 		return 0, false
 	}
 	for _, k := range []string{"Fuel Level (CAN)", "Fuel Level", "fuel_level"} {
+		if v, ok := m[k]; ok {
+			if f, ok := ioNum(v); ok {
+				return f, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// fuelRate reads the ECU's instantaneous fuel consumption rate (litres/hour)
+// from an OBD device's metadata. Distinct from fuel LEVEL: rate is what's being
+// burned now, which integrates to consumption; it can't reveal a refuel or theft.
+func fuelRate(md json.RawMessage) (float64, bool) {
+	if len(md) == 0 {
+		return 0, false
+	}
+	var m map[string]any
+	if err := json.Unmarshal(md, &m); err != nil {
+		return 0, false
+	}
+	for _, k := range []string{"Fuel Rate", "Fuel Rate (CAN)", "fuel_rate"} {
 		if v, ok := m[k]; ok {
 			if f, ok := ioNum(v); ok {
 				return f, true
