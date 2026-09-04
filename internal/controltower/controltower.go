@@ -171,6 +171,50 @@ func (s *Service) Get(ctx context.Context, tenantID int64, from, to time.Time) (
 	}, nil
 }
 
+// GetAcross aggregates the control-tower view over every tenant (platform admin
+// "All fleet"), each read INSIDE its own scope — the same RLS-safe discipline as
+// the cross-tenant vehicle list. Counters sum; the per-state card lists concat.
+// `only`, when set, restricts to one account. Per-tenant errors are skipped so
+// one bad account doesn't blank the whole board.
+func (s *Service) GetAcross(ctx context.Context, only *int64, from, to time.Time) (*Response, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id FROM tenants ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := &Response{Groups: map[string][]VehicleCard{}}
+	for _, tid := range ids {
+		if only != nil && *only != tid {
+			continue
+		}
+		r, err := s.Get(ctx, tid, from, to)
+		if err != nil {
+			continue
+		}
+		out.Summary.UncheckedVehicles += r.Summary.UncheckedVehicles
+		out.Summary.UncheckedAlerts += r.Summary.UncheckedAlerts
+		out.Summary.CheckedAlerts += r.Summary.CheckedAlerts
+		out.Summary.OverspeedingNow += r.Summary.OverspeedingNow
+		for k, cards := range r.Groups {
+			out.Groups[k] = append(out.Groups[k], cards...)
+		}
+	}
+	return out, nil
+}
+
 // Handler exposes the control-tower endpoint.
 type Handler struct{ svc *Service }
 
@@ -205,7 +249,17 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 			to = t
 		}
 	}
-	resp, err := h.svc.Get(r.Context(), auth.TenantID(r.Context()), from, to)
+	// Platform admin may aggregate ALL fleets (?all_accounts=true) or target one
+	// (?account_id=N, via EffectiveTenant). Everyone else is scoped to their own
+	// tenant — a platform admin's own tenant is usually empty, which is why the
+	// Operations Center looked bare for admins until this.
+	var resp *Response
+	var err error
+	if c, ok := auth.FromContext(r.Context()); ok && c.Role == auth.RolePlatformAdmin && r.URL.Query().Get("all_accounts") == "true" {
+		resp, err = h.svc.GetAcross(r.Context(), nil, from, to)
+	} else {
+		resp, err = h.svc.Get(r.Context(), auth.EffectiveTenant(r), from, to)
+	}
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err.Error())
 		return
