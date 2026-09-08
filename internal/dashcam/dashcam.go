@@ -59,6 +59,7 @@ type Handler struct {
 	pool    *db.Pool
 	tel     *telemetry.Client
 	presign *s3.PresignClient // signs GET URLs for saved clips (nil = disabled)
+	s3c     *s3.Client        // deletes the S3 object when a saved clip is removed
 }
 
 // NewHandler builds the handler. tel is the telemetry-service client — the only
@@ -66,7 +67,9 @@ type Handler struct {
 func NewHandler(ctx context.Context, pool *db.Pool, tel *telemetry.Client, region string) *Handler {
 	h := &Handler{pool: pool, tel: tel}
 	if cfg, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region)); err == nil {
-		h.presign = s3.NewPresignClient(s3.NewFromConfig(cfg))
+		c := s3.NewFromConfig(cfg)
+		h.s3c = c
+		h.presign = s3.NewPresignClient(c)
 	}
 	return h
 }
@@ -86,6 +89,7 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Use(auth.RequireRole(auth.RoleManager))
 		ar.Post("/v1/dashcams", h.attach)
 		ar.Delete("/v1/dashcams/{id}", h.detach)
+		ar.Delete("/v1/video-clips/{id}", h.deleteClip)
 	})
 }
 
@@ -358,6 +362,55 @@ func (h *Handler) clipURL(w http.ResponseWriter, r *http.Request) {
 }
 
 func awsString(s string) *string { return &s }
+
+// deleteClip removes a saved evidence clip: the S3 object (best-effort) and the
+// video_clips row. RLS scopes it to the caller's tenant (EffectiveTenant lets a
+// platform admin target ?account_id), so one tenant can't delete another's clip.
+//
+//	@Summary		Delete a saved evidence clip
+//	@Description	Removes the video_clips record and its S3 object. Manager+.
+//	@Tags			dashcams
+//	@Security		BearerAuth
+//	@Param			id	path	int	true	"clip id"
+//	@Success		204
+//	@Router			/v1/video-clips/{id} [delete]
+func (h *Handler) deleteClip(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var bucket, key *string
+	err = db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
+		// Read the object location, then delete the row — both under RLS, so a
+		// missing/other-tenant id affects nothing and 404s.
+		if e := tx.QueryRow(r.Context(),
+			`SELECT s3_bucket, s3_key FROM video_clips WHERE id=$1`, id).Scan(&bucket, &key); e != nil {
+			return e
+		}
+		tag, e := tx.Exec(r.Context(), `DELETE FROM video_clips WHERE id=$1`, id)
+		if e != nil {
+			return e
+		}
+		if tag.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
+		return nil
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "clip not found")
+		return
+	}
+	// Best-effort S3 removal — the row is already gone, so a delete failure (e.g.
+	// missing s3:DeleteObject permission) just leaves the object for the bucket's
+	// lifecycle to expire rather than failing the user's action.
+	if h.s3c != nil && bucket != nil && key != nil && *key != "" {
+		if _, derr := h.s3c.DeleteObject(r.Context(), &s3.DeleteObjectInput{Bucket: bucket, Key: key}); derr != nil {
+			log.Printf("dashcam: clip %d row deleted but S3 object %q not removed: %v", id, *key, derr)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 // EvidenceDTO is one alarm-evidence clip, named for the UI.
 type EvidenceDTO struct {
