@@ -467,9 +467,10 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	start, end := fps[0].lvl, fps[len(fps)-1].lvl
 	out.FuelStartPct, out.FuelEndPct = &start, &end
 
-	// Walk the level series: sum drops as consumption, large rises as refuels,
-	// large FAST drops as suspected theft.
-	var consumedPct float64
+	// Walk the level series to flag refuels (large rises) and theft (large fast
+	// drops). Consumption is NOT summed per drop — that counts a noisy sensor's
+	// down-and-up jitter as burnt fuel and over-counts badly — it is derived from
+	// the tank BALANCE after the walk (start − end + refuels − thefts).
 	prev := fps[0].lvl
 	prevPt := fps[0].p
 	for _, fp := range fps[1:] {
@@ -480,9 +481,8 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 			// SAME detector the mock runs through.
 			if te, ok := detectTheft(d, fp.p.Time.Sub(prevPt.Time).Minutes(), fp.p, tank, false); ok {
 				out.Thefts = append(out.Thefts, te)
-			} else {
-				consumedPct += d
 			}
+			// An ordinary drop needs no tally — consumption comes from the balance.
 		case -d >= refuelMinPct:
 			// A real refuel happens at a STOP. A ≥12% rise while the truck is
 			// MOVING is fuel sloshing in the tank (the sender momentarily reads
@@ -533,13 +533,25 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	for _, re := range out.Refuels {
 		refuelPct += re.Pct
 	}
-	out.UsedPct = ptrF(round1(consumedPct))
+	var theftPct float64
+	for _, tf := range out.Thefts {
+		theftPct += tf.Pct
+	}
+	// Fuel actually burned, by tank balance: what left the tank is the net level
+	// fall plus everything that was added (refuels) minus what was siphoned
+	// (thefts). This reconciles with the level + refuels a user can see, and does
+	// not accumulate sensor jitter. Clamp at 0 (can't burn a negative amount).
+	usedPct := start - end + refuelPct - theftPct
+	if usedPct < 0 {
+		usedPct = 0
+	}
+	out.UsedPct = ptrF(round1(usedPct))
 	if refuelPct > 0 {
 		out.RefuelPct = ptrF(round1(refuelPct))
 	}
 
 	if tank != nil && *tank > 0 {
-		usedL := *tank * consumedPct / 100
+		usedL := *tank * usedPct / 100
 		out.UsedLiters = ptrF(round1(usedL))
 		out.CostRp = ptrF(round0(usedL * fuelPricePerLitre))
 		if refuelPct > 0 {
@@ -553,7 +565,7 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	switch {
 	case tank == nil || *tank == 0:
 		out.Note = "Set a Fuel Tank (L) on the vehicle to convert % used into litres and km/L."
-	case consumedPct == 0:
+	case usedPct == 0:
 		out.Note = "Fuel level did not change measurably this trip (coarse 1% sensor) — km/L needs a longer trip."
 	}
 	finish()
