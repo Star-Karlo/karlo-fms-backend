@@ -38,9 +38,12 @@ const (
 	// small blip is NOT a refuel — only a sustained double-digit jump is.
 	refuelMinPct  = 12.0
 	maxTripGapSec = 600.0 // gap between fixes over this = offline, not engine-on time
-	// Suspected theft: a single-step level DROP this large, over a SHORT interval
-	// (burning fuel can't drop the tank double digits in half an hour).
-	theftMinPct    = 15.0
+	// Suspected theft: a single-transmission fuel DROP while the truck is STOPPED.
+	// Judged in LITRES when a tank size is set (theftMinLiters — what an operator
+	// actually watches for), falling back to a percentage otherwise. A drop while
+	// moving, or across a long offline gap, is ordinary consumption, not theft.
+	theftMinLiters = 5.0  // litres lost in one transmission (needs a tank size)
+	theftMinPct    = 15.0 // fallback threshold when the vehicle has no tank size
 	theftMaxGapMin = 30.0
 )
 
@@ -90,15 +93,32 @@ var fuelPriceByProvince = map[string]float64{}
 // mock tags the event when the underlying reading is fabricated (the detector
 // itself is identical either way).
 func detectTheft(dropPct, gapMin float64, pt telemetry.Position, tank *float64, mock bool) (TheftEvent, bool) {
-	if dropPct < theftMinPct || gapMin < 0 || gapMin > theftMaxGapMin {
+	// One transmission, short gap — a drop spread over a long offline gap is
+	// consumption, not a siphon.
+	if gapMin < 0 || gapMin > theftMaxGapMin {
 		return TheftEvent{}, false
+	}
+	// Theft happens at a STOP — you can't siphon a moving truck, and a drop while
+	// driving is ordinary burn. (Mock/demo events carry no speed and pass.)
+	if pt.Speed != nil && *pt.Speed > movingSpeed {
+		return TheftEvent{}, false
+	}
+	hasTank := tank != nil && *tank > 0
+	var liters float64
+	if hasTank {
+		// Judge in litres: a single-transmission loss of more than theftMinLiters.
+		liters = *tank * dropPct / 100
+		if liters < theftMinLiters {
+			return TheftEvent{}, false
+		}
+	} else if dropPct < theftMinPct {
+		return TheftEvent{}, false // no tank size — fall back to the % threshold
 	}
 	te := TheftEvent{
 		Time: pt.Time, Lat: pt.Lat, Lon: pt.Lon,
 		Address: joinAddr(pt.Jalan, pt.Kota, pt.Provinsi), Pct: round1(dropPct), IsMock: mock,
 	}
-	if tank != nil && *tank > 0 {
-		liters := *tank * dropPct / 100
+	if hasTank {
 		te.Liters, te.CostRp = round1(liters), round0(liters*fuelPrice(pt.Provinsi))
 	}
 	return te, true
