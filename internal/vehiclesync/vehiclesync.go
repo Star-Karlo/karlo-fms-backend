@@ -98,6 +98,7 @@ type Result struct {
 	Updated   int
 	Archived  int
 	Restored  int // master data says live again; was archived here
+	Released  int // pairing pointed at a document master data no longer has
 	Skipped   int
 }
 
@@ -139,12 +140,13 @@ func (s *Syncer) Once(ctx context.Context) error {
 		total.Updated += r.Updated
 		total.Archived += r.Archived
 		total.Restored += r.Restored
+		total.Released += r.Released
 		total.Skipped += r.Skipped
 	}
 
-	if total.Linked+total.Inserted+total.Updated+total.Archived+total.Restored > 0 {
-		log.Printf("vehiclesync: %d vehicle(s) across %d companies — %d linked, %d added, %d updated, %d archived, %d restored",
-			total.Seen, total.Companies, total.Linked, total.Inserted, total.Updated, total.Archived, total.Restored)
+	if total.Linked+total.Inserted+total.Updated+total.Archived+total.Restored+total.Released > 0 {
+		log.Printf("vehiclesync: %d vehicle(s) across %d companies — %d linked, %d added, %d updated, %d archived, %d restored, %d re-paired",
+			total.Seen, total.Companies, total.Linked, total.Inserted, total.Updated, total.Archived, total.Restored, total.Released)
 	}
 	return nil
 }
@@ -175,7 +177,54 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 	// policy, it is the correct reading of it: this projection genuinely is
 	// writing one customer's rows, and a bug that tried to write another's
 	// should be refused exactly as any request would be.
+	// Every ObjectId master data currently holds for this company, built BEFORE
+	// the loop so the stale-pairing sweep below can run first.
+	incoming := make([]string, 0, len(vehicles))
+	for _, v := range vehicles {
+		if !v.Deleted && strings.TrimSpace(v.LicensePlate) != "" {
+			incoming = append(incoming, v.ID)
+		}
+	}
+
 	err = db.Tx(ctx, s.pool, c.ID, func(tx pgx.Tx) error {
+		// RELEASE PAIRINGS THAT POINT AT A DOCUMENT THAT NO LONGER EXISTS.
+		//
+		// Without this the projection DUPLICATES THE ENTIRE FLEET the first time
+		// master data is rebuilt. Rebuilding gives every vehicle a fresh
+		// ObjectId; the local row still carries the old one, so the adopt step
+		// below — which only considers rows with master_data_id IS NULL — skips
+		// it, the insert fires instead, and the sweep at the end archives the
+		// original. The result reads as a healthy fleet: same plates, all
+		// active, all paired. Underneath, every alert, telemetry row and
+		// driving event still references the ARCHIVED twin, so history detaches
+		// from the vehicle it belongs to and nothing reports a problem.
+		//
+		// Observed exactly that locally: 1,988 vehicles became 3,975 — 1,987
+		// archived originals and 1,988 new actives — after master data was
+		// dropped and reloaded between runs. In production that is a plausible
+		// sequence, not a contrived one: re-run 05 after fixing a data problem
+		// and this would double the table.
+		//
+		// Clearing the id lets the plate adopt the row again, which is what
+		// should have happened. A vehicle genuinely removed upstream keeps its
+		// pairing here — it is simply absent from `incoming` and gets archived
+		// by the sweep, which is the intended path.
+		relCt, err := tx.Exec(ctx, `
+			UPDATE vehicles SET master_data_id = NULL
+			 WHERE tenant_id = $1
+			   AND master_data_id IS NOT NULL
+			   AND NOT (master_data_id = ANY($2::text[]))
+			   AND EXISTS (SELECT 1 FROM vehicles w
+			                WHERE w.tenant_id = $1 AND w.master_data_id = ANY($2::text[])
+			                  AND upper(regexp_replace(w.license_plate, '[^A-Za-z0-9]', '', 'g'))
+			                    = upper(regexp_replace(vehicles.license_plate, '[^A-Za-z0-9]', '', 'g'))
+			              ) IS NOT TRUE`,
+			c.ID, incoming)
+		if err != nil {
+			return err
+		}
+		r.Released = int(relCt.RowsAffected())
+
 		live := make([]string, 0, len(vehicles))
 
 		for _, v := range vehicles {
