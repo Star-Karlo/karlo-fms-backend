@@ -57,6 +57,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 	"github.com/karlo/fms-backend/internal/platform/iamclient"
+	"github.com/karlo/fms-backend/internal/platform/mdclient"
 	"github.com/karlo/fms-backend/internal/platform/tenantdir"
 	"github.com/karlo/fms-backend/internal/platformadmin"
 	"github.com/karlo/fms-backend/internal/prefs"
@@ -71,6 +72,7 @@ import (
 	"github.com/karlo/fms-backend/internal/tracker"
 	"github.com/karlo/fms-backend/internal/trackinglink"
 	"github.com/karlo/fms-backend/internal/vehicle"
+	"github.com/karlo/fms-backend/internal/vehiclesync"
 	"github.com/karlo/fms-backend/internal/webhook"
 )
 
@@ -142,6 +144,22 @@ func main() {
 			if sync := tenantsync.New(pool, dir); sync != nil {
 				go sync.Run(ctx, 5*time.Minute)
 				log.Printf("tenantsync: projecting companies from %s", cfg.AuthGRPCTarget)
+			}
+
+			// The fleet projection needs BOTH: the directory to know which
+			// companies are FMS customers, and master data to read their
+			// vehicles. Nested here rather than beside it because without a
+			// directory there is nothing to iterate.
+			mdConn, err := mdclient.New(cfg.MDGRPCTarget, "fms-backend", cfg.MDServiceToken)
+			if err != nil {
+				log.Fatalf("masterdata grpc: %v", err)
+			}
+			if mdConn != nil {
+				defer mdConn.Close()
+				if vs := vehiclesync.New(pool, dir, mdConn); vs != nil {
+					go vs.Run(ctx, 5*time.Minute)
+					log.Printf("vehiclesync: projecting the fleet from %s", cfg.MDGRPCTarget)
+				}
 			}
 		}
 	}

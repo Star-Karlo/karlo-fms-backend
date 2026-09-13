@@ -64,6 +64,27 @@ type Config struct {
 	// carry a service token rather than a user's.
 	AuthGRPCTarget string
 
+	// MDGRPCTarget is the master-data service's gRPC address. Unset, the fleet
+	// projection does not run and fms_app.vehicles keeps whatever it has — the
+	// state of a deployment that has not cut over.
+	MDGRPCTarget string
+
+	// MDServiceToken is the credential presented to MASTER DATA, which is not
+	// necessarily the one the authentication service accepts.
+	//
+	// The platform issues a token PER CALLING SERVICE and each service accepts
+	// all of them (AUTH_SERVICE_TOKEN, MASTERDATA_SERVICE_TOKEN, … in the
+	// microservices .env). One shared SERVICE_TOKEN therefore works only while
+	// every upstream happens to accept the same string — and locally they do
+	// not: auth runs with `dev-service-token` while master data accepts a
+	// different set entirely, which is exactly how the fleet projection came up
+	// answering "invalid service token" for all five companies while the
+	// tenant directory beside it worked.
+	//
+	// Falls back to SERVICE_TOKEN so a deployment that really does share one
+	// needs no extra configuration.
+	MDServiceToken string
+
 	TelemetryBaseURL string
 	TelemetryAPIKey  string
 	TelemetryTimeout time.Duration
@@ -180,6 +201,8 @@ func Load() Config {
 		// perfectly correct token sitting in the environment under the other name.
 		ServiceToken:   Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", "")),
 		AuthGRPCTarget: Env("AUTH_GRPC_TARGET", ""),
+		MDGRPCTarget:   Env("MD_GRPC_TARGET", ""),
+		MDServiceToken: Env("MD_SERVICE_TOKEN", Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", ""))),
 
 		TelemetryBaseURL: Env("TELEMETRY_BASE_URL", "http://localhost:8082"),
 		TelemetryAPIKey:  Env("TELEMETRY_API_KEY", ""),
