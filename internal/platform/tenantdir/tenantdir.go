@@ -46,6 +46,12 @@ import (
 type Tenant struct {
 	ID   int64
 	Name string
+	// CompanyID is the shared IAM's UUID for this customer. Carried because it
+	// is the only thing a caller from outside FMS knows them by: the acting-for
+	// header names a COMPANY, and every other service on the platform speaks
+	// UUIDs. Resolving it here means fms-backend still keys everything by the
+	// bigint, and translates once, at the edge.
+	CompanyID string
 }
 
 // Directory lists the tenants this service knows about.
@@ -124,6 +130,29 @@ func (d *Directory) Name(ctx context.Context, id int64) string {
 	return ""
 }
 
+// TenantForCompany maps a shared-IAM company UUID to the FMS tenant id.
+//
+// Reports "not found" rather than guessing. An unknown company must not fall
+// back to the caller's own tenant: a Karlo staff member acting for a customer
+// would then silently read and write somebody else's fleet, which is exactly
+// the isolation failure the header exists to make explicit. A company with no
+// fms_tenant_id is not an FMS customer and lands here too.
+func (d *Directory) TenantForCompany(ctx context.Context, companyID string) (int64, bool) {
+	if companyID == "" {
+		return 0, false
+	}
+	ts, err := d.List(ctx)
+	if err != nil {
+		return 0, false
+	}
+	for _, t := range ts {
+		if t.CompanyID == companyID {
+			return t.ID, true
+		}
+	}
+	return 0, false
+}
+
 // fetch asks the authentication service for every FMS company.
 //
 // Paging lives in the client, which walks to exhaustion. Reading a single page
@@ -137,7 +166,7 @@ func (d *Directory) fetch(ctx context.Context) ([]Tenant, error) {
 	}
 	out := make([]Tenant, 0, len(companies))
 	for _, c := range companies {
-		out = append(out, Tenant{ID: c.FMSTenantID, Name: c.Name})
+		out = append(out, Tenant{ID: c.FMSTenantID, Name: c.Name, CompanyID: c.ID})
 	}
 	return out, nil
 }

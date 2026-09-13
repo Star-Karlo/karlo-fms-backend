@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -141,7 +142,7 @@ func roleFor(p authctx.Principal, access authctx.ProductAccess) string {
 // a locally minted HS256 token still works. Both are checked because during the
 // cutover both are in circulation — the web app may have moved while a mobile
 // client or a saved integration has not.
-func AuthenticatorWith(tm *TokenManager, sso *SSO) func(http.Handler) http.Handler {
+func AuthenticatorWith(tm *TokenManager, sso *SSO, dir TenantResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
@@ -154,6 +155,10 @@ func AuthenticatorWith(tm *TokenManager, sso *SSO) func(http.Handler) http.Handl
 			if sso != nil {
 				switch claims, err := sso.Claims(raw); {
 				case err == nil:
+					claims, ok := actingFor(w, r, claims, dir)
+					if !ok {
+						return
+					}
 					next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), claims)))
 					return
 				case errors.Is(err, ErrNotFMS):
@@ -172,9 +177,78 @@ func AuthenticatorWith(tm *TokenManager, sso *SSO) func(http.Handler) http.Handl
 				httpx.Error(w, http.StatusUnauthorized, "invalid or expired token")
 				return
 			}
+			claims, ok := actingFor(w, r, claims, dir)
+			if !ok {
+				return
+			}
 			next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), claims)))
 		})
 	}
+}
+
+// ActingForHeader names the company a Karlo staff member is acting for.
+//
+// Absent means "myself", which is what every ordinary request sends.
+const ActingForHeader = "X-Acting-For"
+
+// TenantResolver maps a shared-IAM company UUID to this service's tenant id.
+// An interface so the auth package does not depend on tenantdir, and so a test
+// can supply a two-line fake instead of a live directory.
+type TenantResolver interface {
+	TenantForCompany(ctx context.Context, companyID string) (int64, bool)
+}
+
+// actingFor lets Karlo staff read one customer's data, and refuses everyone
+// else. Returns false when it has already written the response.
+//
+// WHY THIS EXISTS. Platform staff legitimately have no FMS tenant of their own,
+// so their token carries ftid 0 — and `app.current_tenant = 0` matches no row
+// under RLS. Every per-tenant screen therefore answers an empty list. The
+// cross-tenant endpoints (platform overview) work, which is what made this easy
+// to miss: the admin dashboard looked fine while the vehicle list was blank.
+//
+// It used to work by accident. Karlo's company held fms_tenant_id = 1 only
+// because Siba Surya's fleet was mislabelled as the platform's, so staff landed
+// in a real customer's tenant by default. Fixing the ownership took that away
+// and exposed the gap underneath — the feature had never existed.
+//
+// The authentication and master-data services have both honoured this header
+// since acting-for was introduced, and the frontend already sends it
+// (iam.actingFor / actingForCompany). fms-backend was the one service that
+// ignored it, so a staff member could edit a client's catalogue and not see
+// their trucks.
+//
+// REFUSED, NOT IGNORED, for a non-staff caller. Silently dropping the header
+// would let a company send another company's id and quietly get its own data
+// back — an answer that looks right and is about the wrong customer. And an
+// UNKNOWN company is refused rather than falling back to the caller's own
+// tenant, for the same reason.
+func actingFor(w http.ResponseWriter, r *http.Request, c *Claims, dir TenantResolver) (*Claims, bool) {
+	target := strings.TrimSpace(r.Header.Get(ActingForHeader))
+	if target == "" {
+		return c, true
+	}
+	if !c.IsRoot {
+		httpx.Error(w, http.StatusForbidden, "only Karlo staff may act on another company's behalf")
+		return nil, false
+	}
+	if dir == nil {
+		httpx.Error(w, http.StatusServiceUnavailable,
+			"acting for another company needs the authentication service, which is not configured")
+		return nil, false
+	}
+	tenantID, ok := dir.TenantForCompany(r.Context(), target)
+	if !ok {
+		httpx.Error(w, http.StatusNotFound, "no FMS customer for that company")
+		return nil, false
+	}
+
+	// Copied, not mutated: Claims comes from a cache in the SSO path, and
+	// writing the acting tenant into it would leak one request's target into
+	// every later request that reuses it.
+	acting := *c
+	acting.TenantID = tenantID
+	return &acting, true
 }
 
 // UserFromToken renders the signed-in person in this service's shape, from a

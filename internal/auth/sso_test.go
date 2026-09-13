@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -205,7 +206,7 @@ func TestTMSOnlyAccountIsForbiddenNotUnauthorised(t *testing.T) {
 		},
 	})
 
-	h := auth.AuthenticatorWith(mustTokenManager(t), sso)(http.HandlerFunc(
+	h := auth.AuthenticatorWith(mustTokenManager(t), sso, nil)(http.HandlerFunc(
 		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	rec := httptest.NewRecorder()
@@ -231,7 +232,7 @@ func TestLocallyMintedTokensStillWork(t *testing.T) {
 	}
 
 	var got *auth.Claims
-	h := auth.AuthenticatorWith(tm, sso)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	h := auth.AuthenticatorWith(tm, sso, nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		got, _ = auth.FromContext(r.Context())
 	}))
 
@@ -256,5 +257,130 @@ func TestSSODisabledWhenNoKeyConfigured(t *testing.T) {
 	}
 	if sso != nil {
 		t.Fatal("no key configured should disable SSO, not fail — a deployment not yet cut over must keep working")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Acting for a customer
+// ---------------------------------------------------------------------------
+
+// fakeDir is the two-line resolver the interface exists for.
+type fakeDir map[string]int64
+
+func (f fakeDir) TenantForCompany(_ context.Context, id string) (int64, bool) {
+	t, ok := f[id]
+	return t, ok
+}
+
+// actingReq runs one request through the middleware and reports the status and
+// the tenant the handler actually saw — which is the only thing that matters
+// here, since every RLS policy compares against it.
+func actingReq(t *testing.T, token, header string, dir auth.TenantResolver, sso *auth.SSO) (int, int64) {
+	t.Helper()
+	var seen int64 = -1
+	h := auth.AuthenticatorWith(mustTokenManager(t), sso, dir)(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if c, ok := auth.FromContext(r.Context()); ok {
+				seen = c.TenantID
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/vehicles", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if header != "" {
+		req.Header.Set(auth.ActingForHeader, header)
+	}
+	h.ServeHTTP(rec, req)
+	return rec.Code, seen
+}
+
+func staffToken(t *testing.T, priv *rsa.PrivateKey) string {
+	t.Helper()
+	return issue(t, priv, authctx.Principal{
+		UserID: "5555aaaa-1111-2222-3333-444444444444", CompanyID: "karlo-platform",
+		IsPlatformStaff: true,
+	})
+}
+
+// Staff carry ftid 0 — they have no tenant of their own — so without the header
+// every per-tenant query matches nothing. This is the whole point of the
+// feature: naming a company gives them that company's tenant.
+func TestStaffActingForACompanyGetsThatTenant(t *testing.T) {
+	priv, pub := keypair(t)
+	sso, _ := auth.NewSSO(pub)
+	dir := fakeDir{"11111111-1111-1111-1111-111111111111": 1}
+
+	code, tenant := actingReq(t, staffToken(t, priv), "", dir, sso)
+	if code != http.StatusOK || tenant != 0 {
+		t.Fatalf("staff with no header should pass through with ftid 0, got %d tenant=%d", code, tenant)
+	}
+
+	code, tenant = actingReq(t, staffToken(t, priv), "11111111-1111-1111-1111-111111111111", dir, sso)
+	if code != http.StatusOK {
+		t.Fatalf("staff acting for a known company: got %d, want 200", code)
+	}
+	if tenant != 1 {
+		t.Errorf("handler saw tenant %d, want 1 — the acting company's tenant", tenant)
+	}
+}
+
+// The isolation boundary. Dropping the header for a non-staff caller would hand
+// them their OWN data in response to a request naming somebody else's company:
+// an answer that looks correct and is about the wrong customer.
+func TestOnlyStaffMayActForAnotherCompany(t *testing.T) {
+	priv, pub := keypair(t)
+	sso, _ := auth.NewSSO(pub)
+	dir := fakeDir{"11111111-1111-1111-1111-111111111111": 1}
+
+	customer := issue(t, priv, authctx.Principal{
+		UserID: "bbbb1111-2222-3333-4444-555555555555", CompanyID: "some-customer",
+		FMSTenantID: 7,
+		Access: map[authctx.Product]authctx.ProductAccess{
+			authctx.ProductFMS: {Role: "admin", GrantsAll: true},
+		},
+	})
+
+	code, tenant := actingReq(t, customer, "11111111-1111-1111-1111-111111111111", dir, sso)
+	if code != http.StatusForbidden {
+		t.Fatalf("a customer naming another company: got %d, want 403", code)
+	}
+	if tenant != -1 {
+		t.Errorf("the handler ran anyway and saw tenant %d — the request must not reach it", tenant)
+	}
+}
+
+// An unknown company must not fall back to the caller's own tenant. Staff would
+// then read their default fleet while believing they were looking at a client's.
+func TestActingForAnUnknownCompanyIsRefused(t *testing.T) {
+	priv, pub := keypair(t)
+	sso, _ := auth.NewSSO(pub)
+
+	code, tenant := actingReq(t, staffToken(t, priv), "99999999-9999-9999-9999-999999999999", fakeDir{}, sso)
+	if code != http.StatusNotFound {
+		t.Fatalf("unknown company: got %d, want 404", code)
+	}
+	if tenant != -1 {
+		t.Errorf("the handler ran and saw tenant %d — it must not", tenant)
+	}
+}
+
+// Claims come from a cache on the SSO path, so writing the acting tenant into
+// the shared value would leak one request's target into the next request that
+// reuses it. Two requests, different companies, in a row.
+func TestActingForDoesNotLeakBetweenRequests(t *testing.T) {
+	priv, pub := keypair(t)
+	sso, _ := auth.NewSSO(pub)
+	dir := fakeDir{"company-a": 1, "company-b": 2}
+	token := staffToken(t, priv)
+
+	if _, tenant := actingReq(t, token, "company-a", dir, sso); tenant != 1 {
+		t.Fatalf("first request saw tenant %d, want 1", tenant)
+	}
+	if _, tenant := actingReq(t, token, "company-b", dir, sso); tenant != 2 {
+		t.Fatalf("second request saw tenant %d, want 2", tenant)
+	}
+	if _, tenant := actingReq(t, token, "", dir, sso); tenant != 0 {
+		t.Errorf("after acting for two companies, a plain request saw tenant %d, want 0", tenant)
 	}
 }

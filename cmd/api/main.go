@@ -130,9 +130,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("auth grpc: %v", err)
 	}
+	// Declared as the INTERFACE and assigned only when there is a real
+	// directory. `var d *tenantdir.Directory` assigned unconditionally would
+	// give a non-nil interface holding a nil pointer, and the nil check in
+	// actingFor would pass straight through to a method call on nil.
+	var tenantDir auth.TenantResolver
 	if iamConn != nil {
 		defer iamConn.Close()
 		if dir := tenantdir.New(iamConn, time.Minute); dir != nil {
+			tenantDir = dir
 			if sync := tenantsync.New(pool, dir); sync != nil {
 				go sync.Run(ctx, 5*time.Minute)
 				log.Printf("tenantsync: projecting companies from %s", cfg.AuthGRPCTarget)
@@ -277,7 +283,7 @@ func main() {
 
 	// Authenticated endpoints.
 	r.Group(func(pr chi.Router) {
-		pr.Use(auth.AuthenticatorWith(tm, sso))
+		pr.Use(auth.AuthenticatorWith(tm, sso, tenantDir))
 		authH.PrivateRoutes(pr)
 		gated(pr, rolesH.RequireRW("vehicles.view", "vehicles.edit"), vehicleH.Routes)
 		fleetGroupH.Routes(pr)
