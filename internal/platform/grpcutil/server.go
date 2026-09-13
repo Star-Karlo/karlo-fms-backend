@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/karlo/fms-backend/internal/platform/authctx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -155,13 +157,31 @@ type DialConfig struct {
 
 // Dial opens a client connection with the standard interceptors.
 //
-// Transport credentials are insecure here because in both target deployments
-// the hop is already protected: locally it is the docker network, and on AWS it
-// is inside the VPC behind the service mesh. If services are ever exposed
-// across trust boundaries, this is the single place to add TLS.
+// TLS IS CHOSEN BY THE TARGET, not by a separate flag.
+//
+// Insecure was right while both deployments kept the hop inside a trust
+// boundary: locally the docker network, on AWS a single VPC. That stopped being
+// true here. FMS runs in ap-southeast-1 and the platform services in
+// ap-southeast-3, so Cloud Map's karlo.internal names do not resolve and the
+// only route between them crosses the public internet — where a service token
+// travelling in clear text is the whole credential.
+//
+// Port 443 means TLS. It is the one signal that cannot be set inconsistently
+// with the address it applies to: a separate GRPC_TLS variable can be left
+// false against a public hostname, and the failure is silent — the connection
+// works and the token is readable in transit. An operator who writes :443 has
+// already said what they mean.
+//
+// nil TLS config uses the host's root CAs and verifies the server name from the
+// target, which is what an ALB with a real certificate needs and what a
+// self-signed internal endpoint would (correctly) fail against.
 func Dial(cfg DialConfig) (*grpc.ClientConn, error) {
+	creds := insecure.NewCredentials()
+	if strings.HasSuffix(cfg.Target, ":443") {
+		creds = credentials.NewTLS(nil)
+	}
 	conn, err := grpc.NewClient(cfg.Target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithChainUnaryInterceptor(
 			authctx.UnaryClientInterceptor(cfg.Service, cfg.ServiceToken),
 		),
