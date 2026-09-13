@@ -62,6 +62,13 @@ type VehicleLive struct {
 	TenantID       *int64    `json:"tenant_id,omitempty"`
 	TenantName     *string   `json:"tenant_name,omitempty"`
 	VehicleID      int64     `json:"vehicle_id"`
+	// MasterDataID is the vehicle's id in karlo_masterdata — the identity the
+	// rest of the platform keys on. VehicleID above is FMS-local and means
+	// nothing to TMS, so a caller correlating a truck across products joins on
+	// this. NULL until vehiclesync has paired the row; the alternative for
+	// callers is matching on the plate, which is not a stable identity (see
+	// migration 0042 — this dataset contains six re-plated trucks).
+	MasterDataID   *string   `json:"master_data_id"`
 	LicensePlate   string    `json:"license_plate"`
 	VehicleType    *string   `json:"vehicle_type"`
 	RegistryStatus string    `json:"registry_status"`

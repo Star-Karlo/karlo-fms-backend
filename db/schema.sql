@@ -96,6 +96,10 @@ CREATE TABLE vehicles (
   external_ref      text,
   color             text,
   attributes        jsonb NOT NULL DEFAULT '{}',
+  -- karlo_masterdata vehicles._id; the projection's stable join key. Added by
+  -- migration 0042 — this file is sqlc's only view of the schema and has to be
+  -- kept in step with db/migrations by hand, which 0042 did not do.
+  master_data_id    text,
   created_at        timestamptz NOT NULL DEFAULT now(),
   updated_at        timestamptz NOT NULL DEFAULT now()
 );

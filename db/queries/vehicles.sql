@@ -89,6 +89,10 @@ SELECT
   v.license_plate,
   v.vehicle_type,
   v.status,
+  -- The master-data vehicle id, for callers that key on the shared fleet
+  -- register rather than on this database's own ids. NULL for a row the
+  -- projection has not paired yet.
+  v.master_data_id,
   fg.name         AS fleet_group_name,
   e.id            AS driver_id,
   e.full_name     AS driver_name,
@@ -114,6 +118,7 @@ SELECT
   v.license_plate,
   v.vehicle_type,
   v.status,
+  v.master_data_id,
   fg.name         AS fleet_group_name,
   e.id            AS driver_id,
   e.full_name     AS driver_name,

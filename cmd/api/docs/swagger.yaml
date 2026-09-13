@@ -327,6 +327,8 @@ definitions:
         type: string
       id:
         type: integer
+      is_root:
+        type: boolean
       role:
         type: string
       status:
@@ -853,6 +855,21 @@ definitions:
       status:
         type: string
     type: object
+  features.Def:
+    properties:
+      dev:
+        description: |-
+          Dev marks a roadmap module that isn't built yet: it appears in the
+          configurator (so an account can pre-enable it) and the sidebar shows it as
+          a stub, but there's no working page behind it yet.
+        type: boolean
+      key:
+        type: string
+      label:
+        type: string
+      parent:
+        type: string
+    type: object
   fleetgroup.DTO:
     properties:
       created_at:
@@ -1138,15 +1155,6 @@ definitions:
       total:
         type: integer
     type: object
-  github_com_karlo_fms-backend_internal_platform_httpx.List-tenants_DTO:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/tenants.DTO'
-        type: array
-      total:
-        type: integer
-    type: object
   github_com_karlo_fms-backend_internal_platform_httpx.List-tracker_DTO:
     properties:
       items:
@@ -1161,15 +1169,6 @@ definitions:
       items:
         items:
           $ref: '#/definitions/trackinglink.DTO'
-        type: array
-      total:
-        type: integer
-    type: object
-  github_com_karlo_fms-backend_internal_platform_httpx.List-users_DTO:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/users.DTO'
         type: array
       total:
         type: integer
@@ -2036,6 +2035,15 @@ definitions:
         type: number
       license_plate:
         type: string
+      master_data_id:
+        description: |-
+          MasterDataID is the vehicle's id in karlo_masterdata — the identity the
+          rest of the platform keys on. VehicleID above is FMS-local and means
+          nothing to TMS, so a caller correlating a truck across products joins on
+          this. NULL until vehiclesync has paired the row; the alternative for
+          callers is matching on the plate, which is not a stable identity (see
+          migration 0042 — this dataset contains six re-plated trucks).
+        type: string
       online:
         type: boolean
       position:
@@ -2633,43 +2641,6 @@ definitions:
         description: latest telemetry odometer
         type: number
     type: object
-  tenants.CreateRequest:
-    properties:
-      admin_email:
-        type: string
-      admin_name:
-        type: string
-      admin_password:
-        type: string
-      name:
-        type: string
-      slug:
-        type: string
-    type: object
-  tenants.CreateResponse:
-    properties:
-      admin_email:
-        type: string
-      admin_id:
-        type: integer
-      tenant:
-        $ref: '#/definitions/tenants.DTO'
-    type: object
-  tenants.DTO:
-    properties:
-      created_at:
-        type: string
-      id:
-        type: integer
-      name:
-        type: string
-      slug:
-        type: string
-      users:
-        type: integer
-      vehicles:
-        type: integer
-    type: object
   tracker.CreateRequest:
     properties:
       imei:
@@ -2806,45 +2777,6 @@ definitions:
         items:
           type: integer
         type: array
-    type: object
-  users.CreateRequest:
-    properties:
-      email:
-        type: string
-      full_name:
-        type: string
-      password:
-        type: string
-      role:
-        type: string
-    type: object
-  users.DTO:
-    properties:
-      created_at:
-        type: string
-      email:
-        type: string
-      full_name:
-        type: string
-      id:
-        type: integer
-      last_login_at:
-        type: string
-      role:
-        type: string
-      status:
-        type: string
-    type: object
-  users.UpdateRequest:
-    properties:
-      full_name:
-        type: string
-      password:
-        type: string
-      role:
-        type: string
-      status:
-        type: string
     type: object
   vehicle.AssignDriverRequest:
     properties:
@@ -4349,6 +4281,20 @@ paths:
       summary: Update a driver
       tags:
       - drivers
+  /v1/features/registry:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/features.Def'
+            type: array
+      summary: The FMS feature registry (no per-account state)
+      tags:
+      - features
   /v1/fleet-groups:
     get:
       produces:
@@ -5673,70 +5619,6 @@ paths:
       summary: Delete a service schedule
       tags:
       - maintenance
-  /v1/tenants:
-    get:
-      description: Every customer on the platform, with user and vehicle counts.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-tenants_DTO'
-        "403":
-          description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: List tenants (platform admin)
-      tags:
-      - tenants
-    post:
-      consumes:
-      - application/json
-      description: Creates the customer, its administrator login and a default fleet
-        group in one transaction. Replaces running seed/new-tenant.sql against the
-        database by hand.
-      parameters:
-      - description: Tenant and first administrator
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/tenants.CreateRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/tenants.CreateResponse'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "409":
-          description: Conflict
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Provision a tenant and its first admin (platform admin)
-      tags:
-      - tenants
   /v1/trackers:
     get:
       parameters:
@@ -5952,85 +5834,6 @@ paths:
       summary: Update a tracking link
       tags:
       - tracking-links
-  /v1/users:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-users_DTO'
-      security:
-      - BearerAuth: []
-      summary: List system users (admin)
-      tags:
-      - users
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: user
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/users.CreateRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/users.DTO'
-      security:
-      - BearerAuth: []
-      summary: Create a system user (admin)
-      tags:
-      - users
-  /v1/users/{id}:
-    delete:
-      parameters:
-      - description: id
-        in: path
-        name: id
-        required: true
-        type: integer
-      responses:
-        "204":
-          description: No Content
-      security:
-      - BearerAuth: []
-      summary: Delete a system user (admin)
-      tags:
-      - users
-    put:
-      consumes:
-      - application/json
-      parameters:
-      - description: id
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: fields
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/users.UpdateRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/users.DTO'
-      security:
-      - BearerAuth: []
-      summary: Update a system user (admin)
-      tags:
-      - users
   /v1/vehicles:
     get:
       parameters:
@@ -6568,6 +6371,23 @@ paths:
       security:
       - BearerAuth: []
       summary: Saved clips (accident evidence)
+      tags:
+      - dashcams
+  /v1/video-clips/{id}:
+    delete:
+      description: Removes the video_clips record and its S3 object. Manager+.
+      parameters:
+      - description: clip id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a saved evidence clip
       tags:
       - dashcams
   /v1/video-clips/{id}/url:

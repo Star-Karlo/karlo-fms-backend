@@ -2103,6 +2103,28 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/features/registry": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "features"
+                ],
+                "summary": "The FMS feature registry (no per-account state)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/features.Def"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/fleet-groups": {
             "get": {
                 "security": [
@@ -4184,104 +4206,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/tenants": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Every customer on the platform, with user and vehicle counts.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tenants"
-                ],
-                "summary": "List tenants (platform admin)",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-tenants_DTO"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Creates the customer, its administrator login and a default fleet group in one transaction. Replaces running seed/new-tenant.sql against the database by hand.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tenants"
-                ],
-                "summary": "Provision a tenant and its first admin (platform admin)",
-                "parameters": [
-                    {
-                        "description": "Tenant and first administrator",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/tenants.CreateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/tenants.CreateResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/v1/trackers": {
             "get": {
                 "security": [
@@ -4617,136 +4541,6 @@ const docTemplate = `{
                     "tracking-links"
                 ],
                 "summary": "Delete a tracking link",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    }
-                }
-            }
-        },
-        "/v1/users": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "users"
-                ],
-                "summary": "List system users (admin)",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-users_DTO"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "users"
-                ],
-                "summary": "Create a system user (admin)",
-                "parameters": [
-                    {
-                        "description": "user",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/users.CreateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/users.DTO"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/users/{id}": {
-            "put": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "users"
-                ],
-                "summary": "Update a system user (admin)",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "fields",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/users.UpdateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/users.DTO"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "tags": [
-                    "users"
-                ],
-                "summary": "Delete a system user (admin)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -5595,6 +5389,34 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/video-clips/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the video_clips record and its S3 object. Manager+.",
+                "tags": [
+                    "dashcams"
+                ],
+                "summary": "Delete a saved evidence clip",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "clip id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/v1/video-clips/{id}/url": {
             "get": {
                 "security": [
@@ -6279,6 +6101,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                },
+                "is_root": {
+                    "type": "boolean"
                 },
                 "role": {
                     "type": "string"
@@ -7031,6 +6856,24 @@ const docTemplate = `{
                 }
             }
         },
+        "features.Def": {
+            "type": "object",
+            "properties": {
+                "dev": {
+                    "description": "Dev marks a roadmap module that isn't built yet: it appears in the\nconfigurator (so an account can pre-enable it) and the sidebar shows it as\na stub, but there's no working page behind it yet.",
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "parent": {
+                    "type": "string"
+                }
+            }
+        },
         "fleetgroup.DTO": {
             "type": "object",
             "properties": {
@@ -7468,20 +7311,6 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_karlo_fms-backend_internal_platform_httpx.List-tenants_DTO": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/tenants.DTO"
-                    }
-                },
-                "total": {
-                    "type": "integer"
-                }
-            }
-        },
         "github_com_karlo_fms-backend_internal_platform_httpx.List-tracker_DTO": {
             "type": "object",
             "properties": {
@@ -7503,20 +7332,6 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/trackinglink.DTO"
-                    }
-                },
-                "total": {
-                    "type": "integer"
-                }
-            }
-        },
-        "github_com_karlo_fms-backend_internal_platform_httpx.List-users_DTO": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/users.DTO"
                     }
                 },
                 "total": {
@@ -8715,6 +8530,10 @@ const docTemplate = `{
                 "license_plate": {
                     "type": "string"
                 },
+                "master_data_id": {
+                    "description": "MasterDataID is the vehicle's id in karlo_masterdata — the identity the\nrest of the platform keys on. VehicleID above is FMS-local and means\nnothing to TMS, so a caller correlating a truck across products joins on\nthis. NULL until vehiclesync has paired the row; the alternative for\ncallers is matching on the plate, which is not a stable identity (see\nmigration 0042 — this dataset contains six re-plated trucks).",
+                    "type": "string"
+                },
                 "online": {
                     "type": "boolean"
                 },
@@ -9585,63 +9404,6 @@ const docTemplate = `{
                 }
             }
         },
-        "tenants.CreateRequest": {
-            "type": "object",
-            "properties": {
-                "admin_email": {
-                    "type": "string"
-                },
-                "admin_name": {
-                    "type": "string"
-                },
-                "admin_password": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "slug": {
-                    "type": "string"
-                }
-            }
-        },
-        "tenants.CreateResponse": {
-            "type": "object",
-            "properties": {
-                "admin_email": {
-                    "type": "string"
-                },
-                "admin_id": {
-                    "type": "integer"
-                },
-                "tenant": {
-                    "$ref": "#/definitions/tenants.DTO"
-                }
-            }
-        },
-        "tenants.DTO": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "slug": {
-                    "type": "string"
-                },
-                "users": {
-                    "type": "integer"
-                },
-                "vehicles": {
-                    "type": "integer"
-                }
-            }
-        },
         "tracker.CreateRequest": {
             "type": "object",
             "properties": {
@@ -9835,66 +9597,6 @@ const docTemplate = `{
                     "items": {
                         "type": "integer"
                     }
-                }
-            }
-        },
-        "users.CreateRequest": {
-            "type": "object",
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "full_name": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                }
-            }
-        },
-        "users.DTO": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "full_name": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "integer"
-                },
-                "last_login_at": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                }
-            }
-        },
-        "users.UpdateRequest": {
-            "type": "object",
-            "properties": {
-                "full_name": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
                 }
             }
         },
