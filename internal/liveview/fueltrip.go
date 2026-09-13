@@ -77,8 +77,8 @@ var mockTheftSpots = []struct {
 	fbLat, fbLon float64 // fallback location if the route has no fix near `at`
 	fbAddr       string
 }{
-	{time.Date(2026, 8, 7, 4, 34, 0, 0, time.UTC), 44, -7.05, 111.30, "Grobogan, Jawa Tengah"},  // ~11:34 WIB
-	{time.Date(2026, 8, 7, 9, 55, 0, 0, time.UTC), 49, -6.75, 111.55, "Rembang, Jawa Tengah"},   // ~16:55 WIB
+	{time.Date(2026, 8, 7, 4, 34, 0, 0, time.UTC), 44, -7.05, 111.30, "Grobogan, Jawa Tengah"}, // ~11:34 WIB
+	{time.Date(2026, 8, 7, 9, 55, 0, 0, time.UTC), 49, -6.75, 111.55, "Rembang, Jawa Tengah"},  // ~16:55 WIB
 }
 
 // fuelPriceByProvince overrides the national Solar/Biosolar price (Rp/L) where a
@@ -515,7 +515,7 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 			// Record where + how much (litres/cost need a tank size).
 			re := RefuelEvent{
 				Time: fp.p.Time, Lat: fp.p.Lat, Lon: fp.p.Lon,
-				Address: joinAddr(fp.p.Jalan, fp.p.Kota, fp.p.Provinsi),
+				Address:  joinAddr(fp.p.Jalan, fp.p.Kota, fp.p.Provinsi),
 				Province: fp.p.Provinsi, Pct: round1(risePct),
 			}
 			// A fill happens at a stop, where the device may report a fuel level

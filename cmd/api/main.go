@@ -16,6 +16,8 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -54,6 +56,8 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/config"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/iamclient"
+	"github.com/karlo/fms-backend/internal/platform/tenantdir"
 	"github.com/karlo/fms-backend/internal/platformadmin"
 	"github.com/karlo/fms-backend/internal/prefs"
 	"github.com/karlo/fms-backend/internal/report"
@@ -63,10 +67,9 @@ import (
 	"github.com/karlo/fms-backend/internal/scorecard"
 	"github.com/karlo/fms-backend/internal/telemetry"
 	"github.com/karlo/fms-backend/internal/telemetrysync"
-	"github.com/karlo/fms-backend/internal/tenants"
+	"github.com/karlo/fms-backend/internal/tenantsync"
 	"github.com/karlo/fms-backend/internal/tracker"
 	"github.com/karlo/fms-backend/internal/trackinglink"
-	"github.com/karlo/fms-backend/internal/users"
 	"github.com/karlo/fms-backend/internal/vehicle"
 	"github.com/karlo/fms-backend/internal/webhook"
 )
@@ -104,7 +107,43 @@ func main() {
 
 	// Components.
 	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+
+	// Single sign-on against the shared authentication service. Off unless a
+	// public key is configured, so this is inert on a deployment that has not
+	// cut over. Fatal if a key IS configured and cannot be read: starting
+	// anyway would silently refuse every token from the auth service, which
+	// looks like an outage in the login rather than a missing file here.
+	sso, err := auth.NewSSO(authPublicKey(cfg.AuthPublicKeyPath, cfg.AuthPublicKey))
+	if err != nil {
+		log.Fatalf("sso: %v", err)
+	}
+	if sso != nil {
+		log.Printf("sso: accepting access tokens from the shared authentication service")
+	}
+
+	// Which customers exist is decided by the authentication service now. The
+	// fourteen background workers and dropdowns that iterate tenants keep
+	// reading the local table; this keeps that table in step, and — the part
+	// that matters — creates the row for a customer onboarded upstream, who
+	// would otherwise be skipped by every one of them in silence.
+	iamConn, err := iamclient.New(cfg.AuthGRPCTarget, "fms-backend", cfg.ServiceToken)
+	if err != nil {
+		log.Fatalf("auth grpc: %v", err)
+	}
+	if iamConn != nil {
+		defer iamConn.Close()
+		if dir := tenantdir.New(iamConn, time.Minute); dir != nil {
+			if sync := tenantsync.New(pool, dir); sync != nil {
+				go sync.Run(ctx, 5*time.Minute)
+				log.Printf("tenantsync: projecting companies from %s", cfg.AuthGRPCTarget)
+			}
+		}
+	}
 	authH := auth.NewHandler(auth.NewService(pool, tm))
+	if up := auth.NewUpstream(cfg.AuthServiceURL, 10*time.Second); up != nil {
+		authH = authH.WithUpstream(up, sso)
+		log.Printf("auth: login and refresh delegate to %s", cfg.AuthServiceURL)
+	}
 	vehicleH := vehicle.NewHandler(vehicle.NewService(pool))
 	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool))
 	driverH := driver.NewHandler(pool)
@@ -149,12 +188,10 @@ func main() {
 	scorecardH := scorecard.NewHandler(pool)
 	trackingH := trackinglink.NewHandler(pool, liveSvc)
 	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion)
-	usersH := users.NewHandler(pool)
-	tenantH := tenants.NewHandler(pool)
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
 	platformH := platformadmin.NewHandler(pool, liveSvc)
-	apiTokenH := apitoken.NewHandler(pool)
+	apiTokenH := apitoken.NewHandler(pool).WithIAM(iamConn)
 	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)
 	// AI dashboard composition (Amazon Nova Pro on Bedrock). A missing or
@@ -240,7 +277,7 @@ func main() {
 
 	// Authenticated endpoints.
 	r.Group(func(pr chi.Router) {
-		pr.Use(auth.Authenticator(tm))
+		pr.Use(auth.AuthenticatorWith(tm, sso))
 		authH.PrivateRoutes(pr)
 		gated(pr, rolesH.RequireRW("vehicles.view", "vehicles.edit"), vehicleH.Routes)
 		fleetGroupH.Routes(pr)
@@ -258,11 +295,8 @@ func main() {
 		gated(pr, chain(featureH.RequireFeature("maintenance"), rolesH.RequireRW("maintenance.view", "maintenance.manage")), maintenanceH.Routes)
 		scorecardH.Routes(pr)
 		gated(pr, chain(featureH.RequireFeature("share_link"), rolesH.Require("share_link.view")), trackingH.Routes)
-		usersH.Routes(pr)
 		gated(pr, chain(featureH.RequireFeature("dashcams"), rolesH.Require("dashcams.manage")), dashcamH.Routes)
-		tenantH.Routes(pr)
 		featureH.Routes(pr)
-		rolesH.Routes(pr)
 		apiTokenH.Routes(pr)
 		webhookH.Routes(pr)
 		dashboardH.Routes(pr)
@@ -290,4 +324,27 @@ func main() {
 
 	log.Printf("fms-backend api on %s  (swagger: http://localhost%s/swagger/index.html)", cfg.Addr, cfg.Addr)
 	log.Fatal(http.ListenAndServe(cfg.Addr, r))
+}
+
+// mustReadKey loads the auth service's public key, or returns nil when none is
+// configured — which disables SSO rather than failing, because a deployment
+// that has not cut over must keep starting.
+//
+// A configured path that cannot be read IS fatal. Continuing would leave a
+// service that starts cleanly and then refuses every token from the auth
+// service, which gets diagnosed as a login outage rather than a missing file.
+func authPublicKey(path, inline string) []byte {
+	if path == "" {
+		// Inline, as it arrives in AWS. Trimmed because a parameter store value
+		// picks up a trailing newline on its way through a shell, and
+		// ParseRSAPublicKeyFromPEM is not fussy about that — but being explicit
+		// costs nothing and the failure it prevents is a service that starts
+		// and then refuses every token.
+		return []byte(strings.TrimSpace(inline))
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatalf("auth public key %s: %v", path, err)
+	}
+	return b
 }

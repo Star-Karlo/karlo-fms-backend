@@ -371,8 +371,8 @@ GROUP BY vehicle_id, kind, severity`, period, nextMonth)
 			case "acceleration":
 				add("SMOOTHNESS", nAll) // jerky pedal use
 			case "cornering":
-				add("TURNING", nFast)          // high-speed corner (rollover risk)
-				add("STEERING", nAll-nFast)    // low-speed corner / swerve (approx)
+				add("TURNING", nFast)       // high-speed corner (rollover risk)
+				add("STEERING", nAll-nFast) // low-speed corner / swerve (approx)
 			case "road_shock":
 				// vertical shock (Z) is not one of the 5 pillars; it is shown in
 				// the harsh-driving history, not scored here.

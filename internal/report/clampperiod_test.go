@@ -7,7 +7,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func at(sec int64) pgtype.Timestamptz { return pgtype.Timestamptz{Time: time.Unix(sec, 0), Valid: true} }
+func at(sec int64) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: time.Unix(sec, 0), Valid: true}
+}
 func stillFitted() pgtype.Timestamptz { return pgtype.Timestamptz{} } // unfitted_at NULL
 
 // clampPeriod intersects the report window with a device's fitted window, so a

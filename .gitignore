@@ -3,3 +3,7 @@
 /tmp/
 dist/
 bin/
+
+# macOS Finder metadata — tracked by accident, never useful in a diff
+.DS_Store
+**/.DS_Store

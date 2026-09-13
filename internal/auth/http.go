@@ -2,7 +2,9 @@ package auth
 
 import (
 	"errors"
+	"log"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -12,10 +14,20 @@ import (
 // Handler exposes the auth endpoints.
 type Handler struct {
 	svc *Service
+	// up, when set, makes login and refresh DELEGATE to the shared
+	// authentication service instead of checking this service's own users
+	// table. Nil means no upstream is configured and the local login stands.
+	up *Upstream
+	// sso verifies tokens from that service, and is used here to read the role
+	// out of a token just issued so the login response can report it.
+	sso *SSO
 }
 
 // NewHandler builds the auth HTTP handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithUpstream routes login and refresh to the shared authentication service.
+func (h *Handler) WithUpstream(up *Upstream, sso *SSO) *Handler { h.up, h.sso = up, sso; return h }
 
 // PublicRoutes mounts the unauthenticated auth endpoints.
 func (h *Handler) PublicRoutes(r chi.Router) {
@@ -46,6 +58,18 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if h.up != nil {
+		resp, up, err := h.up.Login(r.Context(), req.Email, req.Password)
+		// Fill in who just signed in. Without this the browser gets a session
+		// with no role and every role-gated control looks the same for
+		// everybody — no edit buttons, no admin screens, and no error to
+		// explain it.
+		if err == nil && resp != nil && h.sso != nil && up != nil {
+			resp.User = h.sso.UserFromToken(resp.AccessToken, up.Email, up.FullName)
+		}
+		writeUpstream(w, resp, err)
+		return
+	}
 	resp, err := h.svc.Login(r.Context(), req.Email, req.Password, r.UserAgent())
 	if err != nil {
 		httpx.Error(w, http.StatusUnauthorized, err.Error())
@@ -70,6 +94,11 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if h.up != nil {
+		resp, err := h.up.Refresh(r.Context(), req.RefreshToken)
+		writeUpstream(w, resp, err)
+		return
+	}
 	resp, err := h.svc.Refresh(r.Context(), req.RefreshToken, r.UserAgent())
 	if err != nil {
 		httpx.Error(w, http.StatusUnauthorized, err.Error())
@@ -91,6 +120,16 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
 	_ = httpx.DecodeJSON(r, &req)
+	if h.up != nil {
+		// The session lives upstream now, so revoking it here would leave the
+		// token working: this service holds no record of it to revoke.
+		if _, _, err := h.up.Forward(r.Context(), http.MethodPost, "/api/v1/auth/logout",
+			bearerOf(r), map[string]string{"refreshToken": req.RefreshToken}); err != nil {
+			log.Printf("auth upstream logout: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if err := h.svc.Logout(r.Context(), req.RefreshToken); err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "logout failed")
 		return
@@ -111,6 +150,25 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	claims, ok := FromContext(r.Context())
 	if !ok {
 		httpx.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if h.up != nil {
+		// The profile lives upstream. Reading it from this service's own row
+		// would go stale the moment somebody edits their name in the shared
+		// IAM — and would fail outright for Karlo staff, who legitimately have
+		// no row here at all.
+		//
+		// The RESPONSE is mapped back into this service's shape rather than
+		// passed through, because /v1/auth/me is what the web app reads to
+		// decide who is signed in, and changing its field names would be a
+		// frontend change for no gain.
+		dto, err := h.up.Me(r.Context(), bearerOf(r), claims)
+		if err != nil {
+			log.Printf("auth upstream me: %v", err)
+			httpx.Error(w, http.StatusBadGateway, "the authentication service is unavailable")
+			return
+		}
+		httpx.JSON(w, http.StatusOK, dto)
 		return
 	}
 	dto, err := h.svc.Me(r.Context(), claims.TenantID, UserID(r.Context()))
@@ -155,6 +213,25 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	if h.up != nil {
+		// Changing it here would change a hash nothing authenticates against
+		// any more — the user would see "password updated" and then find the
+		// old one still works and the new one does not.
+		code, raw, err := h.up.Forward(r.Context(), http.MethodPost, "/api/v1/auth/change-password",
+			bearerOf(r), map[string]string{
+				"currentPassword": req.CurrentPassword,
+				"newPassword":     req.NewPassword,
+			})
+		if err != nil {
+			log.Printf("auth upstream change-password: %v", err)
+			httpx.Error(w, http.StatusBadGateway, "the authentication service is unavailable")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		_, _ = w.Write(raw)
+		return
+	}
 	resp, err := h.svc.ChangePassword(r.Context(), claims.TenantID, UserID(r.Context()),
 		req.CurrentPassword, req.NewPassword, r.UserAgent())
 	if err != nil {
@@ -168,4 +245,31 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, resp)
+}
+
+// writeUpstream renders a delegated login or refresh.
+//
+// The two failure kinds are kept apart on purpose. A refusal is the caller's
+// problem and a 401; anything else — the auth service down, slow, or answering
+// something unparseable — is THIS deployment's problem and a 502. Collapsing
+// them into 401 would tell somebody their password is wrong during an outage,
+// and send them to reset a credential that was never at fault.
+func writeUpstream(w http.ResponseWriter, resp *TokenResponse, err error) {
+	switch {
+	case err == nil:
+		httpx.JSON(w, http.StatusOK, resp)
+	case errors.Is(err, ErrUpstreamRejected):
+		httpx.Error(w, http.StatusUnauthorized, "invalid email or password")
+	case errors.Is(err, ErrUpstreamThrottled):
+		httpx.Error(w, http.StatusTooManyRequests, "too many attempts, try again shortly")
+	default:
+		log.Printf("auth upstream: %v", err)
+		httpx.Error(w, http.StatusBadGateway, "the authentication service is unavailable")
+	}
+}
+
+// bearerOf returns the caller's raw token, so a forwarded request carries the
+// caller's own authority and not this service's.
+func bearerOf(r *http.Request) string {
+	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 }
