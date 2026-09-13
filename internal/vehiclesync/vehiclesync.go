@@ -187,6 +187,12 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 	}
 
 	err = db.Tx(ctx, s.pool, c.ID, func(tx pgx.Tx) error {
+		// Serialise against telemetrysync, which writes the same rows in an
+		// order this job cannot match. Taken first, before any row lock.
+		if err := db.LockFleetProjection(ctx, tx, c.ID); err != nil {
+			return err
+		}
+
 		// RELEASE PAIRINGS THAT POINT AT A DOCUMENT THAT NO LONGER EXISTS.
 		//
 		// Without this the projection DUPLICATES THE ENTIRE FLEET the first time

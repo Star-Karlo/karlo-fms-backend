@@ -373,6 +373,11 @@ func (c *Collector) syncTenant(ctx context.Context, tenantID int64) error {
 	// Persist everything for the tenant in one transaction.
 	created := 0
 	err = db.Tx(ctx, c.pool, tenantID, func(tx pgx.Tx) error {
+		// Serialise against vehiclesync — see db.LockFleetProjection. Taken
+		// first, before any row lock, or the ordering guarantee is worthless.
+		if err := db.LockFleetProjection(ctx, tx, tenantID); err != nil {
+			return err
+		}
 		q := store.New(tx)
 		for _, w := range writes {
 			ids := make([]int64, 0, len(w.st.inside))

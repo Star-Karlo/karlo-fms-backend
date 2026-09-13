@@ -276,6 +276,7 @@ type Vehicle struct {
 	ExternalRef     *string            `json:"external_ref"`
 	Color           *string            `json:"color"`
 	Attributes      []byte             `json:"attributes"`
+	MasterDataID    *string            `json:"master_data_id"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }

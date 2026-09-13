@@ -66,7 +66,8 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 			imei = *r.TrackerImei
 		}
 		out = append(out, VehicleLive{
-			VehicleID: r.VehicleID, LicensePlate: r.LicensePlate, VehicleType: r.VehicleType, RegistryStatus: r.Status,
+			VehicleID: r.VehicleID, MasterDataID: r.MasterDataID,
+			LicensePlate: r.LicensePlate, VehicleType: r.VehicleType, RegistryStatus: r.Status,
 			FleetGroupName: r.FleetGroupName,
 			Driver:         Driver{ID: r.DriverID, Name: r.DriverName, Phone: r.DriverPhone},
 			Tracker:        Tracker{ID: tid, IMEI: imei},
@@ -250,7 +251,8 @@ func (s *Service) One(ctx context.Context, tenantID, vehicleID int64) (*VehicleL
 		imei = *row.TrackerImei
 	}
 	v := VehicleLive{
-		VehicleID: row.VehicleID, LicensePlate: row.LicensePlate, VehicleType: row.VehicleType, RegistryStatus: row.Status,
+		VehicleID: row.VehicleID, MasterDataID: row.MasterDataID,
+		LicensePlate: row.LicensePlate, VehicleType: row.VehicleType, RegistryStatus: row.Status,
 		FleetGroupName: row.FleetGroupName,
 		Driver:         Driver{ID: row.DriverID, Name: row.DriverName, Phone: row.DriverPhone},
 		Tracker:        Tracker{ID: tid, IMEI: imei},

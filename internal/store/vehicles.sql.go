@@ -21,7 +21,7 @@ func (q *Queries) ArchiveVehicle(ctx context.Context, id int64) error {
 }
 
 const assignVehicleDriver = `-- name: AssignVehicleDriver :one
-UPDATE vehicles SET current_driver_id = $2 WHERE id = $1 RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, created_at, updated_at
+UPDATE vehicles SET current_driver_id = $2 WHERE id = $1 RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
 
 type AssignVehicleDriverParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) AssignVehicleDriver(ctx context.Context, arg AssignVehicleDriv
 		&i.ExternalRef,
 		&i.Color,
 		&i.Attributes,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -62,7 +63,7 @@ func (q *Queries) AssignVehicleDriver(ctx context.Context, arg AssignVehicleDriv
 }
 
 const assignVehicleTracker = `-- name: AssignVehicleTracker :one
-UPDATE vehicles SET tracker_id = $2 WHERE id = $1 RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, created_at, updated_at
+UPDATE vehicles SET tracker_id = $2 WHERE id = $1 RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
 
 type AssignVehicleTrackerParams struct {
@@ -96,6 +97,7 @@ func (q *Queries) AssignVehicleTracker(ctx context.Context, arg AssignVehicleTra
 		&i.ExternalRef,
 		&i.Color,
 		&i.Attributes,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -136,7 +138,7 @@ INSERT INTO vehicles (
   $12, $13, $14, $15,
   $16, $17
 )
-RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, created_at, updated_at
+RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
 
 type CreateVehicleParams struct {
@@ -203,6 +205,7 @@ func (q *Queries) CreateVehicle(ctx context.Context, arg CreateVehicleParams) (V
 		&i.ExternalRef,
 		&i.Color,
 		&i.Attributes,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -215,6 +218,7 @@ SELECT
   v.license_plate,
   v.vehicle_type,
   v.status,
+  v.master_data_id,
   fg.name         AS fleet_group_name,
   e.id            AS driver_id,
   e.full_name     AS driver_name,
@@ -237,6 +241,7 @@ type GetLiveViewVehicleRow struct {
 	LicensePlate   string  `json:"license_plate"`
 	VehicleType    *string `json:"vehicle_type"`
 	Status         string  `json:"status"`
+	MasterDataID   *string `json:"master_data_id"`
 	FleetGroupName *string `json:"fleet_group_name"`
 	DriverID       *int64  `json:"driver_id"`
 	DriverName     *string `json:"driver_name"`
@@ -254,6 +259,7 @@ func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveView
 		&i.LicensePlate,
 		&i.VehicleType,
 		&i.Status,
+		&i.MasterDataID,
 		&i.FleetGroupName,
 		&i.DriverID,
 		&i.DriverName,
@@ -267,7 +273,7 @@ func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveView
 
 const getVehicle = `-- name: GetVehicle :one
 SELECT
-  v.id, v.tenant_id, v.license_plate, v.manufacturer, v.vehicle_type, v.box_type, v.unit_year, v.hull_no, v.fleet_group_id, v.status, v.garage, v.odometer, v.hourmeter, v.fuel_tank_liters, v.fuel_ratio_kmpl, v.tracker_id, v.current_driver_id, v.notes, v.documents, v.external_ref, v.color, v.attributes, v.created_at, v.updated_at,
+  v.id, v.tenant_id, v.license_plate, v.manufacturer, v.vehicle_type, v.box_type, v.unit_year, v.hull_no, v.fleet_group_id, v.status, v.garage, v.odometer, v.hourmeter, v.fuel_tank_liters, v.fuel_ratio_kmpl, v.tracker_id, v.current_driver_id, v.notes, v.documents, v.external_ref, v.color, v.attributes, v.master_data_id, v.created_at, v.updated_at,
   fg.name        AS fleet_group_name,
   e.full_name    AS driver_name,
   e.phone        AS driver_phone,
@@ -303,6 +309,7 @@ type GetVehicleRow struct {
 	ExternalRef     *string            `json:"external_ref"`
 	Color           *string            `json:"color"`
 	Attributes      []byte             `json:"attributes"`
+	MasterDataID    *string            `json:"master_data_id"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	FleetGroupName  *string            `json:"fleet_group_name"`
@@ -338,6 +345,7 @@ func (q *Queries) GetVehicle(ctx context.Context, id int64) (GetVehicleRow, erro
 		&i.ExternalRef,
 		&i.Color,
 		&i.Attributes,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FleetGroupName,
@@ -355,6 +363,10 @@ SELECT
   v.license_plate,
   v.vehicle_type,
   v.status,
+  -- The master-data vehicle id, for callers that key on the shared fleet
+  -- register rather than on this database's own ids. NULL for a row the
+  -- projection has not paired yet.
+  v.master_data_id,
   fg.name         AS fleet_group_name,
   e.id            AS driver_id,
   e.full_name     AS driver_name,
@@ -379,6 +391,7 @@ type ListLiveViewVehiclesRow struct {
 	LicensePlate   string  `json:"license_plate"`
 	VehicleType    *string `json:"vehicle_type"`
 	Status         string  `json:"status"`
+	MasterDataID   *string `json:"master_data_id"`
 	FleetGroupName *string `json:"fleet_group_name"`
 	DriverID       *int64  `json:"driver_id"`
 	DriverName     *string `json:"driver_name"`
@@ -406,6 +419,7 @@ func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64)
 			&i.LicensePlate,
 			&i.VehicleType,
 			&i.Status,
+			&i.MasterDataID,
 			&i.FleetGroupName,
 			&i.DriverID,
 			&i.DriverName,
@@ -426,7 +440,7 @@ func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64)
 
 const listVehicles = `-- name: ListVehicles :many
 SELECT
-  v.id, v.tenant_id, v.license_plate, v.manufacturer, v.vehicle_type, v.box_type, v.unit_year, v.hull_no, v.fleet_group_id, v.status, v.garage, v.odometer, v.hourmeter, v.fuel_tank_liters, v.fuel_ratio_kmpl, v.tracker_id, v.current_driver_id, v.notes, v.documents, v.external_ref, v.color, v.attributes, v.created_at, v.updated_at,
+  v.id, v.tenant_id, v.license_plate, v.manufacturer, v.vehicle_type, v.box_type, v.unit_year, v.hull_no, v.fleet_group_id, v.status, v.garage, v.odometer, v.hourmeter, v.fuel_tank_liters, v.fuel_ratio_kmpl, v.tracker_id, v.current_driver_id, v.notes, v.documents, v.external_ref, v.color, v.attributes, v.master_data_id, v.created_at, v.updated_at,
   fg.name     AS fleet_group_name,
   e.full_name AS driver_name,
   t.imei      AS tracker_imei
@@ -474,6 +488,7 @@ type ListVehiclesRow struct {
 	ExternalRef     *string            `json:"external_ref"`
 	Color           *string            `json:"color"`
 	Attributes      []byte             `json:"attributes"`
+	MasterDataID    *string            `json:"master_data_id"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	FleetGroupName  *string            `json:"fleet_group_name"`
@@ -519,6 +534,7 @@ func (q *Queries) ListVehicles(ctx context.Context, arg ListVehiclesParams) ([]L
 			&i.ExternalRef,
 			&i.Color,
 			&i.Attributes,
+			&i.MasterDataID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FleetGroupName,
@@ -552,7 +568,7 @@ SET license_plate     = COALESCE($2, license_plate),
     fuel_tank_liters  = COALESCE($14, fuel_tank_liters),
     fuel_ratio_kmpl   = COALESCE($15, fuel_ratio_kmpl)
 WHERE id = $1
-RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, created_at, updated_at
+RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
 
 type UpdateVehicleParams struct {
@@ -615,6 +631,7 @@ func (q *Queries) UpdateVehicle(ctx context.Context, arg UpdateVehicleParams) (V
 		&i.ExternalRef,
 		&i.Color,
 		&i.Attributes,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

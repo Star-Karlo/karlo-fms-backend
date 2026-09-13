@@ -31,6 +31,42 @@ func New(ctx context.Context, url string) (*Pool, error) {
 	return pool, nil
 }
 
+// FleetProjectionLock is the advisory-lock class shared by the background jobs
+// that bulk-write one tenant's `vehicles` rows. See LockFleetProjection.
+const FleetProjectionLock = 42
+
+// LockFleetProjection serialises this transaction against the other background
+// job that bulk-writes the same tenant's vehicles.
+//
+// vehiclesync and telemetrysync both take row locks across a tenant's whole
+// fleet, in ORDERS THAT CANNOT BE RECONCILED: vehiclesync walks master data and
+// matches rows by plate, so it never learns a vehicle's bigint id; telemetrysync
+// walks the telemetry response, which arrives in device order. Two transactions
+// taking the same rows in different orders is the textbook deadlock, and it is
+// not hypothetical — it fired twice within three minutes of the cutover, on
+// tenant 1 (~1,900 trucks), aborting a vehiclesync pass and a telemetry pass:
+//
+//	vehiclesync: Siba Surya (tenant 1): ERROR: deadlock detected (SQLSTATE 40P01)
+//	telemetrysync: tenant 1: ERROR: deadlock detected (SQLSTATE 40P01)
+//
+// It went quiet on its own only because vehiclesync converged to zero writes
+// once every row was paired; the next bulk change upstream would reopen it.
+//
+// A shared lock ORDER would be the tidier fix, but it would mean teaching
+// vehiclesync to resolve plate -> id up front and sort by it, restructuring the
+// job that had just been deployed. Serialising is a few lines and is provably
+// sufficient: the two never hold each other's rows because they never run
+// together on a tenant. Both are periodic (5m and 2m) and a whole-fleet pass is
+// ~20s, so the wait costs a delayed tick, not a dropped one — and a delayed tick
+// is what the deadlock produced anyway, minus the error and the lost work.
+//
+// Transaction-scoped, so it is released by COMMIT or ROLLBACK; there is no
+// unlock path to leak.
+func LockFleetProjection(ctx context.Context, tx pgx.Tx, tenantID int64) error {
+	_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1, $2)", int32(FleetProjectionLock), int32(tenantID))
+	return err
+}
+
 // Tx runs fn inside a tenant-scoped transaction. tenantID is applied via
 // SET LOCAL so RLS policies filter every statement to that tenant. If fn
 // returns an error the transaction is rolled back.
