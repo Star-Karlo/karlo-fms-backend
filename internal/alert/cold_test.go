@@ -54,10 +54,10 @@ func TestMatchQ(t *testing.T) {
 		q    string
 		want bool
 	}{
-		{"overspeed", true},   // matches alert_name, case-insensitive
-		{"2679", true},        // matches plate
-		{"b-2679-tiz", true},  // plate, case-insensitive
-		{"fatigue", false},    // neither
+		{"overspeed", true},  // matches alert_name, case-insensitive
+		{"2679", true},       // matches plate
+		{"b-2679-tiz", true}, // plate, case-insensitive
+		{"fatigue", false},   // neither
 	}
 	for _, c := range cases {
 		if got := matchQ(c.q, d); got != c.want {

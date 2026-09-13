@@ -603,12 +603,12 @@ ORDER BY c.created_at DESC LIMIT 500`, vehicleFilter)
 
 // ClipDTO is a saved clip.
 type ClipDTO struct {
-	ID           int64    `json:"id"`
-	VehicleID    *int64   `json:"vehicle_id"`
-	LicensePlate *string  `json:"license_plate"`
-	VSSDeviceID  string   `json:"vss_device_id"`
-	Channel      int      `json:"channel"`
-	ClipStart    string   `json:"clip_start"`
+	ID           int64   `json:"id"`
+	VehicleID    *int64  `json:"vehicle_id"`
+	LicensePlate *string `json:"license_plate"`
+	VSSDeviceID  string  `json:"vss_device_id"`
+	Channel      int     `json:"channel"`
+	ClipStart    string  `json:"clip_start"`
 	// pending | ready | failed. s3_key/bucket are null until ready.
 	Status    string   `json:"status"`
 	Error     *string  `json:"error"`

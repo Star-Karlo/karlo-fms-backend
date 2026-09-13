@@ -126,11 +126,11 @@ type circleGf struct {
 }
 
 func (c *Collector) syncTenant(ctx context.Context, tenantID int64) error {
-	vehByIMEI := map[string]int64{}      // imei -> vehicle id
-	states := map[int64]*vehState{}      // vehicle id -> accumulator state
-	gfByID := map[int64]circleGf{}       // circle geofences by id
-	assigned := map[int64][]int64{}      // vehicle id -> assigned geofence ids
-	prevOdo := map[int64]*float64{}      // vehicle id -> vehicles.odometer
+	vehByIMEI := map[string]int64{} // imei -> vehicle id
+	states := map[int64]*vehState{} // vehicle id -> accumulator state
+	gfByID := map[int64]circleGf{}  // circle geofences by id
+	assigned := map[int64][]int64{} // vehicle id -> assigned geofence ids
+	prevOdo := map[int64]*float64{} // vehicle id -> vehicles.odometer
 
 	if err := db.Tx(ctx, c.pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
@@ -483,10 +483,10 @@ func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
 
 // StateResponse is the per-vehicle accumulator snapshot.
 type StateResponse struct {
-	EngineHours  float64    `json:"engine_hours"`  // cumulative hours (ignition-on)
-	OdometerKm   *float64   `json:"odometer_km"`   // latest telemetry odometer
-	BatteryV     *float64   `json:"battery_v"`     // latest external voltage (V)
-	GsmSignal    *float64   `json:"gsm_signal"`    // latest GSM signal (0-5)
+	EngineHours  float64    `json:"engine_hours"` // cumulative hours (ignition-on)
+	OdometerKm   *float64   `json:"odometer_km"`  // latest telemetry odometer
+	BatteryV     *float64   `json:"battery_v"`    // latest external voltage (V)
+	GsmSignal    *float64   `json:"gsm_signal"`   // latest GSM signal (0-5)
 	LastSampleAt *time.Time `json:"last_sample_at"`
 	// Maintenance context for the odometer: km driven since the most recent
 	// recorded service. Nil when the vehicle has no service records yet.

@@ -20,6 +20,71 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 
+	// AuthPublicKeyPath is the RS256 public key of the shared authentication
+	// service. Set it and tokens minted by authentication-api.karlo.id are
+	// accepted alongside this service's own; leave it empty and nothing
+	// changes, which is the state every deployment starts in.
+	//
+	// A PATH rather than the key itself: it is not a secret — it is a public
+	// key — but it is multi-line PEM, and multi-line values in a task
+	// definition are where a stray \n silently becomes a key that parses to
+	// something else.
+	AuthPublicKeyPath string
+
+	// AuthPublicKey is the same key inline, for deployments with no filesystem
+	// to point at.
+	//
+	// Both exist because neither works everywhere. A path is right locally and
+	// keeps a multi-line PEM out of a task definition, where a stray \n turns
+	// it into a key that parses to something else. But a Fargate task has no
+	// file to point AT — the key would have to be baked into the image, which
+	// makes rotating it a rebuild. So in AWS it arrives inline from an SSM
+	// parameter, where newlines survive intact.
+	//
+	// The path wins when both are set: a file is the more deliberate of the two.
+	AuthPublicKey string
+
+	// AuthServiceURL, when set, makes /v1/auth/login and /v1/auth/refresh
+	// DELEGATE to the shared authentication service instead of checking this
+	// service's own users table. Independent of AuthPublicKeyPath: verifying
+	// somebody else's tokens and issuing through somebody else are separate
+	// steps, and during a cutover a deployment may sensibly do the first
+	// without the second.
+	AuthServiceURL string
+
+	// ServiceToken authenticates fms-backend to the auth service for the calls
+	// it makes on its OWN behalf rather than a user's — listing companies for
+	// the tenant projection, which runs in a background loop with no request
+	// and therefore no caller's token to forward.
+	ServiceToken string
+
+	// AuthGRPCTarget is the authentication service's gRPC address. Separate
+	// from AuthServiceURL because they are different protocols on different
+	// ports: HTTP for the login proxy, gRPC for service-to-service calls that
+	// carry a service token rather than a user's.
+	AuthGRPCTarget string
+
+	// MDGRPCTarget is the master-data service's gRPC address. Unset, the fleet
+	// projection does not run and fms_app.vehicles keeps whatever it has — the
+	// state of a deployment that has not cut over.
+	MDGRPCTarget string
+
+	// MDServiceToken is the credential presented to MASTER DATA, which is not
+	// necessarily the one the authentication service accepts.
+	//
+	// The platform issues a token PER CALLING SERVICE and each service accepts
+	// all of them (AUTH_SERVICE_TOKEN, MASTERDATA_SERVICE_TOKEN, … in the
+	// microservices .env). One shared SERVICE_TOKEN therefore works only while
+	// every upstream happens to accept the same string — and locally they do
+	// not: auth runs with `dev-service-token` while master data accepts a
+	// different set entirely, which is exactly how the fleet projection came up
+	// answering "invalid service token" for all five companies while the
+	// tenant directory beside it worked.
+	//
+	// Falls back to SERVICE_TOKEN so a deployment that really does share one
+	// needs no extra configuration.
+	MDServiceToken string
+
 	TelemetryBaseURL string
 	TelemetryAPIKey  string
 	TelemetryTimeout time.Duration
@@ -109,7 +174,7 @@ func Load() Config {
 			RefreshTokenDays: EnvInt("RETENTION_REFRESH_TOKEN_DAYS", 30),
 			TrackingLinkDays: EnvInt("RETENTION_TRACKING_LINK_DAYS", 7),
 			DeadClipDays:     EnvInt("RETENTION_DEAD_CLIP_DAYS", 7),
-			AlertDays:        EnvInt("RETENTION_ALERT_DAYS", 548),        // ~18 months
+			AlertDays:        EnvInt("RETENTION_ALERT_DAYS", 548),         // ~18 months
 			DrivingEventDays: EnvInt("RETENTION_DRIVING_EVENT_DAYS", 365), // 12 months
 		},
 		RoutingProvider: Env("ROUTING_PROVIDER", "geoapify"),
@@ -125,6 +190,19 @@ func Load() Config {
 		JWTSecret:       Env("JWT_SECRET", "dev-insecure-secret-change-me"),
 		AccessTokenTTL:  time.Duration(EnvInt("ACCESS_TTL_MIN", 15)) * time.Minute,
 		RefreshTokenTTL: time.Duration(EnvInt("REFRESH_TTL_DAYS", 30)) * 24 * time.Hour,
+
+		AuthPublicKeyPath: Env("AUTH_PUBLIC_KEY_PATH", ""),
+		AuthPublicKey:     Env("AUTH_PUBLIC_KEY", ""),
+		AuthServiceURL:    Env("AUTH_SERVICE_URL", ""),
+		// SERVICE_TOKEN is the platform's name for this across every service;
+		// AUTH_SERVICE_TOKEN is accepted as a fallback because that is what this
+		// service called it first. Reading only the latter is what sent an empty
+		// string to the auth service and produced "invalid service token" with a
+		// perfectly correct token sitting in the environment under the other name.
+		ServiceToken:   Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", "")),
+		AuthGRPCTarget: Env("AUTH_GRPC_TARGET", ""),
+		MDGRPCTarget:   Env("MD_GRPC_TARGET", ""),
+		MDServiceToken: Env("MD_SERVICE_TOKEN", Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", ""))),
 
 		TelemetryBaseURL: Env("TELEMETRY_BASE_URL", "http://localhost:8082"),
 		TelemetryAPIKey:  Env("TELEMETRY_API_KEY", ""),

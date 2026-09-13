@@ -29,15 +29,6 @@ func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
 // Routes mounts the endpoints inside the authenticated group.
 func (h *Handler) Routes(r chi.Router) {
 	// Managing roles + assigning them is a company-admin action.
-	r.Group(func(ar chi.Router) {
-		ar.Use(auth.RequireRole(auth.RoleAdmin))
-		ar.Get("/v1/permissions/catalog", h.catalog)
-		ar.Get("/v1/roles", h.list)
-		ar.Post("/v1/roles", h.create)
-		ar.Put("/v1/roles/{id}", h.update)
-		ar.Delete("/v1/roles/{id}", h.del)
-		ar.Put("/v1/users/{id}/role", h.assign)
-	})
 	// Any authenticated user reads their OWN effective permissions (for UI gating).
 	r.Get("/v1/me/permissions", h.mine)
 }
@@ -55,7 +46,7 @@ func (h *Handler) Require(perm string) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if h.userHasPerm(r.Context(), auth.TenantID(r.Context()), auth.UserID(r.Context()), perm) {
+			if allowed(r, h, perm) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -78,7 +69,7 @@ func (h *Handler) RequireRW(viewPerm, editPerm string) func(http.Handler) http.H
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				perm = editPerm
 			}
-			if h.userHasPerm(r.Context(), auth.TenantID(r.Context()), auth.UserID(r.Context()), perm) {
+			if allowed(r, h, perm) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -322,4 +313,22 @@ func allKeys() []string {
 		out = append(out, p.Key)
 	}
 	return out
+}
+
+// allowed decides a permission from whichever source is authoritative for this
+// caller.
+//
+// A token minted by the shared authentication service already carries the
+// answer that service resolved — role permissions unioned with any per-person
+// extras, intersected with the company's entitlement. Re-deriving it here from
+// fms_app.roles would consult a table that stopped deciding anything when roles
+// moved, and would disagree with what the token itself asserts.
+//
+// A locally minted token carries nothing, so the local table is still read.
+// That is what keeps a deployment that has not cut over working unchanged.
+func allowed(r *http.Request, h *Handler, perm string) bool {
+	if c, ok := auth.FromContext(r.Context()); ok && c.FromSharedIAM() {
+		return c.HasPerm(perm)
+	}
+	return h.userHasPerm(r.Context(), auth.TenantID(r.Context()), auth.UserID(r.Context()), perm)
 }

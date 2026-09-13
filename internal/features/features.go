@@ -136,6 +136,13 @@ func (h *Handler) Routes(r chi.Router) {
 	// Any authenticated user may read their OWN tenant's effective features, so
 	// the app can hide disabled modules.
 	r.Get("/v1/me/features", h.getMine)
+
+	// The registry itself — the FMS feature list and its parent/child nesting,
+	// with no per-account state. Split out because entitlement STATE moved to
+	// the shared authentication service while the vocabulary did not: the list
+	// of what an FMS feature even is belongs to FMS, and duplicating it there
+	// would give two registries to keep in step.
+	r.Get("/v1/features/registry", h.registry)
 }
 
 // overrides returns the explicit tenant_features rows for a tenant (key->enabled).
@@ -285,10 +292,56 @@ ON CONFLICT (tenant_id, feature_key) DO UPDATE SET enabled = EXCLUDED.enabled, u
 // getMine: the caller's own tenant effective features as {key: bool} — the app
 // uses this to hide disabled modules.
 func (h *Handler) getMine(w http.ResponseWriter, r *http.Request) {
+	// Answer from the TOKEN when it came from the shared authentication
+	// service, because that is what the API itself now enforces.
+	//
+	// This used to read fms_app.tenant_features, where an absent row means
+	// enabled — so with entitlements moved, every account came out with all 47
+	// features on while the token granted 27. The sidebar offered modules the
+	// API would refuse, which is the worst way round: the user finds out by
+	// clicking.
+	//
+	// A ROADMAP STUB IS SHOWN ONLY WHEN SOMEBODY TURNED IT ON.
+	//
+	// It used to be forced on for everyone, because an absent tenant_features
+	// row read as enabled and nobody had ever written a row. So every account
+	// saw Point of Sale, Procurement, Inventory, Finance and Commerce & CRM in
+	// the sidebar — five modules that do not exist, in a fleet product, looking
+	// like somebody had wired the wrong nav in.
+	//
+	// The shared IAM already excludes roadmap modules from entitlement, so
+	// simply answering from the token gives the right default: hidden. Enabling
+	// one is then a deliberate grant per account, which is what "let a customer
+	// pre-enable what is coming" was always supposed to mean — a decision, not
+	// the absence of one.
+	if c, ok := auth.FromContext(r.Context()); ok && c.FromSharedIAM() {
+		granted := make(map[string]bool, len(c.Features))
+		for _, f := range c.Features {
+			granted[f] = true
+		}
+		out := make(map[string]bool, len(Registry))
+		for _, d := range Registry {
+			out[d.Key] = granted[d.Key]
+		}
+		httpx.JSON(w, http.StatusOK, out)
+		return
+	}
+
 	ov, err := h.overrides(r.Context(), auth.TenantID(r.Context()))
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "read features failed")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, effective(ov))
+}
+
+// registry godoc
+//
+//	@Summary	The FMS feature registry (no per-account state)
+//	@Tags		features
+//	@Produce	json
+//	@Success	200	{array}	Def
+//	@Router		/v1/features/registry [get]
+func (h *Handler) registry(w http.ResponseWriter, r *http.Request) {
+	httpx.JSON(w, http.StatusOK, Registry)
 }

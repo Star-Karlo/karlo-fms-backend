@@ -14,9 +14,11 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/platform/authctx"
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/iamclient"
 	"github.com/karlo/fms-backend/internal/store"
 )
 
@@ -42,10 +44,18 @@ func fromRow(t store.ApiToken) DTO {
 }
 
 // Handler exposes API-token endpoints (admin only).
-type Handler struct{ pool *db.Pool }
+type Handler struct {
+	pool *db.Pool
+	// iam, when set, is where API keys are checked. Nil leaves the local
+	// api_tokens table in use — the state before the cutover.
+	iam *iamclient.Client
+}
 
 // NewHandler builds the handler.
 func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
+
+// WithIAM points key validation at the shared authentication service.
+func (h *Handler) WithIAM(c *iamclient.Client) *Handler { h.iam = c; return h }
 
 // Routes mounts token endpoints — all require admin.
 func (h *Handler) Routes(r chi.Router) {
@@ -78,6 +88,36 @@ func (h *Handler) Authenticator() func(http.Handler) http.Handler {
 				httpx.Error(w, http.StatusUnauthorized, "missing or malformed API token")
 				return
 			}
+			// The shared authentication service holds the key when one is
+			// configured. It is authoritative there — the importer copied every
+			// key's hash into karlo_auth.api_keys pointed at a read-only role —
+			// so checking the local table as well would let a key REVOKED
+			// upstream keep working here for as long as the old row survives.
+			//
+			// A key resolves to a principal exactly as a user token does, which
+			// is why this ends with the same auth.Claims: one way to establish
+			// a caller, not two, and the permission middleware downstream does
+			// not care which produced it.
+			if h.iam != nil {
+				p, err := h.iam.ValidateToken(r.Context(), raw)
+				if err != nil {
+					httpx.Error(w, http.StatusUnauthorized, "invalid or revoked API token")
+					return
+				}
+				access := p.Access[authctx.ProductFMS]
+				claims := &auth.Claims{
+					TenantID: p.FMSTenantID,
+					Role:     auth.RoleOperator,
+					// Carried so the permission middleware answers from the key's
+					// role rather than falling back to a local table that holds
+					// nothing for a machine credential.
+					Perms:     append([]string{}, access.Permissions...),
+					GrantsAll: access.GrantsAll || p.IsPlatformStaff,
+				}
+				next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), claims)))
+				return
+			}
+
 			sum := sha256.Sum256([]byte(raw))
 
 			var tid, id int64

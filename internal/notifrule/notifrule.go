@@ -32,13 +32,13 @@ type DTO struct {
 	// WindowMinutes, when set, makes this a FREQUENCY rule: fire when >= Threshold
 	// events of AlertCode occur for a vehicle within this many minutes (e.g.
 	// "smoking >= 10 times in 60 minutes"). Nil = an instantaneous rule.
-	WindowMinutes    *int            `json:"window_minutes"`
-	SentToSelf       bool            `json:"sent_to_self"`
-	GeofenceScoped   bool            `json:"geofence_scoped"`
-	TimeScoped       bool            `json:"time_scoped"`
-	AutoPopup        bool            `json:"auto_popup"`
-	Delivery         json.RawMessage `json:"delivery"`
-	CreatedAt        *time.Time      `json:"created_at"`
+	WindowMinutes  *int            `json:"window_minutes"`
+	SentToSelf     bool            `json:"sent_to_self"`
+	GeofenceScoped bool            `json:"geofence_scoped"`
+	TimeScoped     bool            `json:"time_scoped"`
+	AutoPopup      bool            `json:"auto_popup"`
+	Delivery       json.RawMessage `json:"delivery"`
+	CreatedAt      *time.Time      `json:"created_at"`
 }
 
 // WriteRequest is the create/update body.

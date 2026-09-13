@@ -38,7 +38,45 @@ type Claims struct {
 	// may create/edit/delete other platform_admin accounts; a child platform_admin
 	// has cross-vendor visibility but its actions are bounded by its custom role.
 	IsRoot bool `json:"root,omitempty"`
+
+	// Perms and GrantsAll carry the caller's FMS permissions AS THE SHARED IAM
+	// RESOLVED THEM, for tokens that came from there.
+	//
+	// They exist because the permission middleware used to answer from
+	// fms_app.roles, and that table stopped deciding anything the moment roles
+	// moved to the authentication service. A user whose role is defined there
+	// has no matching row here, so the old lookup would refuse them every
+	// gated route — and a user whose stale local row still grants something
+	// would be allowed past a permission the shared IAM had already removed.
+	// Wrong in both directions, silently.
+	//
+	// Empty for a locally minted token, which is how the middleware knows to
+	// fall back to the local table for a deployment that has not cut over.
+	Perms     []string `json:"-"`
+	GrantsAll bool     `json:"-"`
+	// Features is the COMPANY's entitlement for this product, as the shared IAM
+	// resolved it. Separate from Perms: a permission can only ever narrow what
+	// the company holds, and the sidebar gates on the company's set.
+	Features []string `json:"-"`
+
 	jwt.RegisteredClaims
+}
+
+// FromSharedIAM reports whether these claims were resolved by the shared
+// authentication service, and therefore carry their own permissions.
+func (c *Claims) FromSharedIAM() bool { return c.Perms != nil || c.GrantsAll }
+
+// HasPerm answers from the token. Only meaningful when FromSharedIAM.
+func (c *Claims) HasPerm(perm string) bool {
+	if c.GrantsAll {
+		return true
+	}
+	for _, p := range c.Perms {
+		if p == perm {
+			return true
+		}
+	}
+	return false
 }
 
 // UserDTO is the public shape of a user (never includes the password hash).
