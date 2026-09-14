@@ -28,10 +28,13 @@ import (
 // nothing is silently misclassified while they are unknown, and enabling each
 // pillar is then a one-line edit.
 const (
+	// From Howen's "Device Event Type Code" sheet, VSS API column. 24/25 are
+	// the MDVR's own harsh-accel/brake events; 214 and 217 are the G-sensor
+	// sub-types for harsh turn and impact (H-Protocol ec=12, dt=6 and dt=4).
 	codeHarshAccel  = 24
 	codeHarshBrake  = 25
-	codeHarshCorner = -1 // TODO: confirm the harsh-cornering code (Y axis)
-	codeRoadShock   = -1 // TODO: confirm the road-shock / vibration code (Z axis)
+	codeHarshCorner = 214
+	codeRoadShock   = 217
 )
 
 type behaviour struct {

@@ -67,6 +67,20 @@ var Taxonomy = []AlertType{
 	{"LOW_OIL_PRESSURE", "Tekanan Oli Rendah", "Low Engine Oil Pressure", SourceGPS, SevUrgent, false},
 	{"BATTERY_DROP", "Baterai Turun / Terputus", "Battery Drop / Disconnect", SourceGPS, SevUrgent, false},
 	{"DMS_SHOCK", "DMS - Guncangan", "Shock", SourceCamera, SevImportant, false},
+	// Camera-sourced events that arrived with the corrected Howen VSS mapping.
+	// Each is severe enough that a customer will want a rule or a notification
+	// on it, which requires a taxonomy entry; the long tail of device
+	// housekeeping codes stays out and renders by name only.
+	{"PANIC", "Tombol Darurat", "Emergency / Panic Button", SourceCamera, SevUrgent, false},
+	{"FUEL_THEFT", "Pencurian Bahan Bakar", "Fuel Theft", SourceCamera, SevUrgent, false},
+	{"ROLLOVER", "Kendaraan Terguling", "Rollover", SourceCamera, SevUrgent, false},
+	{"TOWING", "Kendaraan Ditarik / Derek", "Towing / Traction", SourceCamera, SevUrgent, false},
+	{"POWER_DISCONNECT", "Catu Daya Terputus Mencurigakan", "Suspicious Power Disconnection", SourceCamera, SevUrgent, false},
+	{"GPS_JAMMING", "Gangguan Sinyal GPS (Jamming)", "GPS Jamming", SourceCamera, SevUrgent, false},
+	{"GSM_JAMMING", "Gangguan Sinyal GSM (Jamming)", "GSM Jamming", SourceCamera, SevUrgent, false},
+	{"DMS_AUTH_FAILED", "DMS - Autentikasi Sopir Gagal", "Driver Authentication Failed", SourceCamera, SevUrgent, false},
+	{"HOD_NO_HANDS", "Kedua Tangan Lepas Setir", "Both Hands Off the Wheel", SourceCamera, SevUrgent, true},
+	{"LOW_SPEED", "Kecepatan Terlalu Rendah", "Low Speed", SourceCamera, SevImportant, false},
 	{"DMS_CAMERA_BLOCKED", "DMS - Kamera Terhalang", "Camera Blocked", SourceCamera, SevImportant, false},
 	{"DMS_SEATBELT", "DMS - Sabuk Pengaman", "Seatbelt", SourceCamera, SevImportant, false},
 	{"DMS_OUT_OF_FRAME", "DMS - Wajah Hilang", "Missing Face / Out of Frame", SourceCamera, SevImportant, true},
