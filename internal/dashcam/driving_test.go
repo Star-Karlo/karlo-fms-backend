@@ -40,7 +40,9 @@ func TestClassifySeverity(t *testing.T) {
 		// No G value: fall back to the code's inherent severity. Harsh brake is
 		// "important" -> yellow; a panic (urgent) -> red.
 		{"no g, important code", nil, codeHarshBrake, "yellow"},
-		{"no g, urgent code", nil, 1 /* PANIC */, "red"},
+		// 5 is the emergency/panic button per Howen's VSS API sheet. (1 is
+		// "video lost", which the old guessed table had as panic.)
+		{"no g, urgent code", nil, 5 /* PANIC */, "red"},
 	}
 	for _, c := range cases {
 		if got := classifySeverity(c.gforce, c.code); got != c.want {

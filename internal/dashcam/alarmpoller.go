@@ -92,6 +92,9 @@ func (p *AlarmPoller) tick(ctx context.Context) error {
 		if !ok {
 			continue // device not linked to any vehicle — nothing to attribute
 		}
+		if isStatusEvent(a.Code) {
+			continue // trip start, ACC on, GPS recovered… housekeeping, not alerts
+		}
 		code, name, severity := alarmMeta(a.Code)
 		// The REAL alarm time — not now(). The evidence clip (and any SD footage)
 		// lives at this instant, so a save's clip window must be built from it;
