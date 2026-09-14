@@ -36,13 +36,13 @@ func (q *Queries) CountEmployees(ctx context.Context, arg CountEmployeesParams) 
 const createEmployee = `-- name: CreateEmployee :one
 INSERT INTO employees (
   tenant_id, employee_no, full_name, phone, role,
-  license_no, license_class, license_expiry, status
+  license_no, license_class, license_expiry, status, master_data_id
 ) VALUES (
   $1, $3, $2, $4, COALESCE($5, 'driver'),
   $6, $7, $8,
-  COALESCE($9, 'active')
+  COALESCE($9, 'active'), $10
 )
-RETURNING id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, created_at, updated_at
+RETURNING id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, master_data_id, created_at, updated_at
 `
 
 type CreateEmployeeParams struct {
@@ -55,8 +55,13 @@ type CreateEmployeeParams struct {
 	LicenseClass  *string     `json:"license_class"`
 	LicenseExpiry pgtype.Date `json:"license_expiry"`
 	Status        interface{} `json:"status"`
+	MasterDataID  *string     `json:"master_data_id"`
 }
 
+// master_data_id is set at insert, not patched afterwards, so a driver created
+// through the write-through path is born paired. A row that reaches the table
+// unpaired can only be fixed by a backfill, and until it is it cannot be
+// assigned to a vehicle — which is the whole failure this column exists to end.
 func (q *Queries) CreateEmployee(ctx context.Context, arg CreateEmployeeParams) (Employee, error) {
 	row := q.db.QueryRow(ctx, createEmployee,
 		arg.TenantID,
@@ -68,6 +73,7 @@ func (q *Queries) CreateEmployee(ctx context.Context, arg CreateEmployeeParams) 
 		arg.LicenseClass,
 		arg.LicenseExpiry,
 		arg.Status,
+		arg.MasterDataID,
 	)
 	var i Employee
 	err := row.Scan(
@@ -82,6 +88,7 @@ func (q *Queries) CreateEmployee(ctx context.Context, arg CreateEmployeeParams) 
 		&i.LicenseExpiry,
 		&i.Status,
 		&i.ExternalRef,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -98,7 +105,7 @@ func (q *Queries) DeleteEmployee(ctx context.Context, id int64) error {
 }
 
 const getEmployee = `-- name: GetEmployee :one
-SELECT id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, created_at, updated_at FROM employees WHERE id = $1
+SELECT id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, master_data_id, created_at, updated_at FROM employees WHERE id = $1
 `
 
 func (q *Queries) GetEmployee(ctx context.Context, id int64) (Employee, error) {
@@ -116,6 +123,7 @@ func (q *Queries) GetEmployee(ctx context.Context, id int64) (Employee, error) {
 		&i.LicenseExpiry,
 		&i.Status,
 		&i.ExternalRef,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -123,7 +131,7 @@ func (q *Queries) GetEmployee(ctx context.Context, id int64) (Employee, error) {
 }
 
 const listEmployees = `-- name: ListEmployees :many
-SELECT id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, created_at, updated_at FROM employees
+SELECT id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, master_data_id, created_at, updated_at FROM employees
 WHERE ($1::text IS NULL
        OR full_name ILIKE '%' || $1 || '%'
        OR employee_no ILIKE '%' || $1 || '%')
@@ -168,6 +176,7 @@ func (q *Queries) ListEmployees(ctx context.Context, arg ListEmployeesParams) ([
 			&i.LicenseExpiry,
 			&i.Status,
 			&i.ExternalRef,
+			&i.MasterDataID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -181,6 +190,85 @@ func (q *Queries) ListEmployees(ctx context.Context, arg ListEmployeesParams) ([
 	return items, nil
 }
 
+const listUnpairedEmployees = `-- name: ListUnpairedEmployees :many
+SELECT id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, master_data_id, created_at, updated_at FROM employees
+ WHERE tenant_id = $1 AND master_data_id IS NULL
+ ORDER BY id
+`
+
+// Local drivers with no master-data counterpart, oldest first.
+func (q *Queries) ListUnpairedEmployees(ctx context.Context, tenantID int64) ([]Employee, error) {
+	rows, err := q.db.Query(ctx, listUnpairedEmployees, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Employee{}
+	for rows.Next() {
+		var i Employee
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.EmployeeNo,
+			&i.FullName,
+			&i.Phone,
+			&i.Role,
+			&i.LicenseNo,
+			&i.LicenseClass,
+			&i.LicenseExpiry,
+			&i.Status,
+			&i.ExternalRef,
+			&i.MasterDataID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pairEmployee = `-- name: PairEmployee :one
+UPDATE employees SET master_data_id = $2, updated_at = now()
+ WHERE id = $1 AND master_data_id IS NULL
+RETURNING id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, master_data_id, created_at, updated_at
+`
+
+type PairEmployeeParams struct {
+	ID           int64   `json:"id"`
+	MasterDataID *string `json:"master_data_id"`
+}
+
+// Attach an existing local driver to its master-data record. Used by the
+// backfill for rows created before write-through existed. Only ever fills a
+// NULL: re-pointing a driver that is already paired would silently move every
+// vehicle assignment that references it onto a different person.
+func (q *Queries) PairEmployee(ctx context.Context, arg PairEmployeeParams) (Employee, error) {
+	row := q.db.QueryRow(ctx, pairEmployee, arg.ID, arg.MasterDataID)
+	var i Employee
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.EmployeeNo,
+		&i.FullName,
+		&i.Phone,
+		&i.Role,
+		&i.LicenseNo,
+		&i.LicenseClass,
+		&i.LicenseExpiry,
+		&i.Status,
+		&i.ExternalRef,
+		&i.MasterDataID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateEmployee = `-- name: UpdateEmployee :one
 UPDATE employees
 SET employee_no    = COALESCE($2, employee_no),
@@ -192,7 +280,7 @@ SET employee_no    = COALESCE($2, employee_no),
     license_expiry = COALESCE($8, license_expiry),
     status         = COALESCE($9, status)
 WHERE id = $1
-RETURNING id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, created_at, updated_at
+RETURNING id, tenant_id, employee_no, full_name, phone, role, license_no, license_class, license_expiry, status, external_ref, master_data_id, created_at, updated_at
 `
 
 type UpdateEmployeeParams struct {
@@ -232,6 +320,7 @@ func (q *Queries) UpdateEmployee(ctx context.Context, arg UpdateEmployeeParams) 
 		&i.LicenseExpiry,
 		&i.Status,
 		&i.ExternalRef,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

@@ -2,15 +2,37 @@
 INSERT INTO vehicles (
   tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no,
   fleet_group_id, status, garage, odometer, hourmeter, tracker_id, current_driver_id, notes,
-  fuel_tank_liters, fuel_ratio_kmpl
+  fuel_tank_liters, fuel_ratio_kmpl, master_data_id
 ) VALUES (
   $1, $2, sqlc.narg('manufacturer'), sqlc.narg('vehicle_type'), sqlc.narg('box_type'),
   sqlc.narg('unit_year'), sqlc.narg('hull_no'), sqlc.narg('fleet_group_id'),
   COALESCE(sqlc.narg('status'), 'active'), sqlc.narg('garage'), sqlc.narg('odometer'),
   sqlc.narg('hourmeter'), sqlc.narg('tracker_id'), sqlc.narg('current_driver_id'), sqlc.narg('notes'),
-  sqlc.narg('fuel_tank_liters'), sqlc.narg('fuel_ratio_kmpl')
+  sqlc.narg('fuel_tank_liters'), sqlc.narg('fuel_ratio_kmpl'), sqlc.narg('master_data_id')
 )
 RETURNING *;
+
+-- name: GetVehicleRow :one
+-- The bare row, without GetVehicle's joins. Used where only the vehicle's own
+-- columns matter — notably master_data_id, read inside the same transaction as
+-- a write so the upstream mirror targets the record this row is paired with.
+SELECT * FROM vehicles WHERE id = $1;
+
+-- name: PairVehicle :one
+-- Attach an existing local vehicle to its master-data record, for rows created
+-- before write-through existed. Fills a NULL only: re-pointing a paired vehicle
+-- would move its alerts, telemetry and history onto a different truck.
+UPDATE vehicles SET master_data_id = $2, updated_at = now()
+ WHERE id = $1 AND master_data_id IS NULL
+RETURNING *;
+
+-- name: ListUnpairedVehicles :many
+-- Vehicles this company holds that master data has never seen: created in FMS
+-- after the cutover, when writes still stopped at fms_app. Invisible to TMS
+-- until the backfill pushes them upstream.
+SELECT * FROM vehicles
+ WHERE tenant_id = $1 AND master_data_id IS NULL AND status <> 'archive'
+ ORDER BY id;
 
 -- name: GetVehicle :one
 SELECT

@@ -40,6 +40,7 @@ import (
 	"github.com/karlo/fms-backend/internal/document"
 	"github.com/karlo/fms-backend/internal/driver"
 	"github.com/karlo/fms-backend/internal/driverscore"
+	"github.com/karlo/fms-backend/internal/driversync"
 	"github.com/karlo/fms-backend/internal/features"
 	"github.com/karlo/fms-backend/internal/fleetgroup"
 	"github.com/karlo/fms-backend/internal/fuel"
@@ -58,6 +59,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 	"github.com/karlo/fms-backend/internal/platform/iamclient"
 	"github.com/karlo/fms-backend/internal/platform/mdclient"
+	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 	"github.com/karlo/fms-backend/internal/platform/tenantdir"
 	"github.com/karlo/fms-backend/internal/platformadmin"
 	"github.com/karlo/fms-backend/internal/prefs"
@@ -160,6 +162,15 @@ func main() {
 					go vs.Run(ctx, 5*time.Minute)
 					log.Printf("vehiclesync: projecting the fleet from %s", cfg.MDGRPCTarget)
 				}
+				// Drivers need the same projection as vehicles, and for a
+				// sharper reason: without a local employees row a driver has no
+				// bigint, and vehicles.current_driver_id cannot reference them
+				// at all. A company onboarded after the migration could not
+				// assign ANY driver until this ran.
+				if ds := driversync.New(pool, dir, mdConn); ds != nil {
+					go ds.Run(ctx, 5*time.Minute)
+					log.Printf("driversync: projecting drivers from %s", cfg.MDGRPCTarget)
+				}
 			}
 		}
 	}
@@ -168,9 +179,25 @@ func main() {
 		authH = authH.WithUpstream(up, sso)
 		log.Printf("auth: login and refresh delegate to %s", cfg.AuthServiceURL)
 	}
-	vehicleH := vehicle.NewHandler(vehicle.NewService(pool))
+	// WRITE-THROUGH to master data, as the signed-in user.
+	//
+	// Separate from mdConn above and deliberately so: that one is the background
+	// projection and carries a SERVICE token; this carries the CALLER'S bearer,
+	// forwarded per request. Using a service token for writes would authorise
+	// fms-the-service rather than the person, so an FMS user without
+	// vehicles.edit upstream would succeed where master data means to refuse
+	// them.
+	//
+	// Unset MD_SERVICE_URL leaves both nil and writes stay local — the state
+	// before cutover, and what produced vehicles TMS could not see.
+	mdWriter := mdwrite.New(cfg.MDServiceURL, 10*time.Second)
+	if mdWriter != nil {
+		log.Printf("mdwrite: vehicle and driver writes also go to %s as the calling user", cfg.MDServiceURL)
+	}
+
+	vehicleH := vehicle.NewHandler(vehicle.NewService(pool).WithMasterData(mdWriter))
 	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool))
-	driverH := driver.NewHandler(pool)
+	driverH := driver.NewHandler(pool).WithMasterData(mdWriter)
 	trackerH := tracker.NewHandler(pool)
 	tel := telemetry.NewClient(cfg.TelemetryBaseURL, cfg.TelemetryAPIKey, cfg.TelemetryTimeout)
 	liveSvc := liveview.NewService(pool, tel)
@@ -214,7 +241,7 @@ func main() {
 	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion)
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
-	platformH := platformadmin.NewHandler(pool, liveSvc)
+	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter)
 	apiTokenH := apitoken.NewHandler(pool).WithIAM(iamConn)
 	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)

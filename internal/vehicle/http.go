@@ -8,6 +8,7 @@ import (
 
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 )
 
 // Handler exposes vehicle CRUD endpoints.
@@ -136,7 +137,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	// Platform admin may create the vehicle in a chosen customer account via
 	// ?account_id (EffectiveTenant); everyone else creates in their own tenant.
-	dto, err := h.svc.Create(r.Context(), auth.EffectiveTenant(r), req)
+	dto, err := h.svc.Create(r.Context(), auth.EffectiveTenant(r), mdwrite.CallerFrom(r), req)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
@@ -166,7 +167,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	dto, err := h.svc.Update(r.Context(), auth.EffectiveTenant(r), id, req)
+	dto, err := h.svc.Update(r.Context(), auth.EffectiveTenant(r), id, mdwrite.CallerFrom(r), req)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
@@ -188,7 +189,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.svc.Archive(r.Context(), auth.EffectiveTenant(r), id); err != nil {
+	if err := h.svc.Archive(r.Context(), auth.EffectiveTenant(r), id, mdwrite.CallerFrom(r)); err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}

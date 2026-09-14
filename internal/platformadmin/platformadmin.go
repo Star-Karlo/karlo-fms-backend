@@ -26,16 +26,22 @@ import (
 	"github.com/karlo/fms-backend/internal/liveview"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 )
 
 type Handler struct {
 	pool *db.Pool
 	live *liveview.Service
+	md   *mdwrite.Client // nil before cutover; the backfill needs it
 }
 
 func NewHandler(pool *db.Pool, live *liveview.Service) *Handler {
 	return &Handler{pool: pool, live: live}
 }
+
+// WithMasterData enables the backfill, which pushes FMS-only rows upstream as
+// the operator who triggers it.
+func (h *Handler) WithMasterData(md *mdwrite.Client) *Handler { h.md = md; return h }
 
 // Routes mounts the platform console — every endpoint requires platform_admin.
 func (h *Handler) Routes(r chi.Router) {
@@ -46,6 +52,7 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Get("/v1/platform/users", h.users)
 		ar.Put("/v1/platform/users/{id}/password", h.resetPassword)
 		ar.Put("/v1/platform/tenants/{id}/name", h.renameTenant)
+		h.backfillRoutes(ar)
 	})
 }
 
