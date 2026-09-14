@@ -76,7 +76,8 @@ func iface(s *string) interface{} {
 // Handler exposes driver endpoints.
 type Handler struct {
 	pool *db.Pool
-	md   *mdwrite.Client // nil before cutover: writes stay local
+	md   *mdwrite.Client         // nil before cutover: writes stay local
+	dir  mdwrite.CompanyResolver // tenant id -> company, for staff acting via ?account_id
 }
 
 // NewHandler builds the driver handler.
@@ -90,6 +91,18 @@ func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
 // attached to a vehicle. For a company onboarded after the migration that meant
 // every driver was unassignable.
 func (h *Handler) WithMasterData(md *mdwrite.Client) *Handler { h.md = md; return h }
+
+// WithResolver — see vehicle.Handler.WithResolver.
+func (h *Handler) WithResolver(dir mdwrite.CompanyResolver) *Handler { h.dir = dir; return h }
+
+func (h *Handler) caller(w http.ResponseWriter, r *http.Request) (mdwrite.Caller, bool) {
+	c, err := mdwrite.CallerFor(r, auth.TenantID(r.Context()), auth.EffectiveTenant(r), h.dir)
+	if err != nil {
+		httpx.Error(w, http.StatusConflict, err.Error())
+		return c, false
+	}
+	return c, true
+}
 
 // mdDriver maps an FMS create/update onto master data's vocabulary. Only the
 // fields master data OWNS travel: role and the FMS bigint are ours.
@@ -258,8 +271,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// That one is recoverable — the backfill pairs it — and it is visible in
 	// both products, so it is the better direction to fail in.
 	var mdID *string
+	var caller mdwrite.Caller
 	if h.md != nil {
-		caller := mdwrite.CallerFrom(r)
+		var ok bool
+		if caller, ok = h.caller(w, r); !ok {
+			return
+		}
 		id, err := h.md.CreateDriver(r.Context(), caller, mdDriver(
 			req.EmployeeNo, &req.FullName, req.Phone,
 			req.LicenseNo, req.LicenseClass, req.LicenseExpiry, req.Status,
@@ -297,7 +314,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// request here would report an error for a create that succeeded. The
 	// backfill re-stamps anything that misses.
 	if h.md != nil && mdID != nil {
-		if err := h.md.StampDriverFMSID(r.Context(), mdwrite.CallerFrom(r), *mdID, dto.ID); err != nil {
+		if err := h.md.StampDriverFMSID(r.Context(), caller, *mdID, dto.ID); err != nil {
 			log.Printf("driver: created %d / master data %s but could not stamp fmsEmployeeId: %v", dto.ID, *mdID, err)
 		}
 	}
@@ -367,7 +384,11 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	if h.md != nil && mdID != nil {
 		d := mdDriver(req.EmployeeNo, req.FullName, req.Phone,
 			req.LicenseNo, req.LicenseClass, req.LicenseExpiry, req.Status)
-		if err := h.md.UpdateDriver(r.Context(), mdwrite.CallerFrom(r), *mdID, d); err != nil {
+		caller, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		if err := h.md.UpdateDriver(r.Context(), caller, *mdID, d); err != nil {
 			code, msg := mdStatus(err)
 			// The local write has already committed, so this cannot be undone by
 			// returning an error — but the caller must still be told the change
@@ -409,7 +430,11 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 	// Remove upstream too, or the driver reappears: they remain in master data,
 	// and a later driversync pass would project them straight back into FMS.
 	if h.md != nil && mdID != nil {
-		if err := h.md.DeleteDriver(r.Context(), mdwrite.CallerFrom(r), *mdID); err != nil {
+		caller, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		if err := h.md.DeleteDriver(r.Context(), caller, *mdID); err != nil {
 			code, msg := mdStatus(err)
 			log.Printf("driver %d: deleted locally, master data %s still holds it: %v", id, *mdID, err)
 			httpx.Error(w, code, "removed from FMS, but master data refused the delete: "+msg)

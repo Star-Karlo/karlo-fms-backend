@@ -12,10 +12,29 @@ import (
 )
 
 // Handler exposes vehicle CRUD endpoints.
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc *Service
+	dir mdwrite.CompanyResolver // tenant id -> master-data company, for staff acting via ?account_id
+}
 
 // NewHandler builds the vehicle HTTP handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithResolver lets staff writes made with ?account_id reach master data under
+// the customer's company rather than the staff member's own.
+func (h *Handler) WithResolver(dir mdwrite.CompanyResolver) *Handler { h.dir = dir; return h }
+
+// caller builds the identity to forward upstream, or writes a 409 and returns
+// false when a staff member is acting for a tenant whose company is unknown —
+// refusing beats filing the record under the wrong customer.
+func (h *Handler) caller(w http.ResponseWriter, r *http.Request) (mdwrite.Caller, bool) {
+	c, err := mdwrite.CallerFor(r, auth.TenantID(r.Context()), auth.EffectiveTenant(r), h.dir)
+	if err != nil {
+		httpx.Error(w, http.StatusConflict, err.Error())
+		return c, false
+	}
+	return c, true
+}
 
 // Routes mounts vehicle endpoints. Reads require any authenticated user;
 // mutations require manager+.
@@ -137,7 +156,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	// Platform admin may create the vehicle in a chosen customer account via
 	// ?account_id (EffectiveTenant); everyone else creates in their own tenant.
-	dto, err := h.svc.Create(r.Context(), auth.EffectiveTenant(r), mdwrite.CallerFrom(r), req)
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	dto, err := h.svc.Create(r.Context(), auth.EffectiveTenant(r), caller, req)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
@@ -167,7 +190,11 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	dto, err := h.svc.Update(r.Context(), auth.EffectiveTenant(r), id, mdwrite.CallerFrom(r), req)
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	dto, err := h.svc.Update(r.Context(), auth.EffectiveTenant(r), id, caller, req)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
@@ -189,7 +216,11 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.svc.Archive(r.Context(), auth.EffectiveTenant(r), id, mdwrite.CallerFrom(r)); err != nil {
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.Archive(r.Context(), auth.EffectiveTenant(r), id, caller); err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}

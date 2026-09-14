@@ -139,10 +139,15 @@ func main() {
 	// give a non-nil interface holding a nil pointer, and the nil check in
 	// actingFor would pass straight through to a method call on nil.
 	var tenantDir auth.TenantResolver
+	// The concrete directory, for the write-through's tenant -> company lookup.
+	// Nil when there is no directory; mdwrite.CallerFor then refuses any staff
+	// write made via ?account_id rather than misfiling it upstream.
+	var companyDir mdwrite.CompanyResolver
 	if iamConn != nil {
 		defer iamConn.Close()
 		if dir := tenantdir.New(iamConn, time.Minute); dir != nil {
 			tenantDir = dir
+			companyDir = dir
 			if sync := tenantsync.New(pool, dir); sync != nil {
 				go sync.Run(ctx, 5*time.Minute)
 				log.Printf("tenantsync: projecting companies from %s", cfg.AuthGRPCTarget)
@@ -195,9 +200,9 @@ func main() {
 		log.Printf("mdwrite: vehicle and driver writes also go to %s as the calling user", cfg.MDServiceURL)
 	}
 
-	vehicleH := vehicle.NewHandler(vehicle.NewService(pool).WithMasterData(mdWriter))
+	vehicleH := vehicle.NewHandler(vehicle.NewService(pool).WithMasterData(mdWriter)).WithResolver(companyDir)
 	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool))
-	driverH := driver.NewHandler(pool).WithMasterData(mdWriter)
+	driverH := driver.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
 	trackerH := tracker.NewHandler(pool)
 	tel := telemetry.NewClient(cfg.TelemetryBaseURL, cfg.TelemetryAPIKey, cfg.TelemetryTimeout)
 	liveSvc := liveview.NewService(pool, tel)
@@ -241,7 +246,7 @@ func main() {
 	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion)
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
-	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter)
+	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir)
 	apiTokenH := apitoken.NewHandler(pool).WithIAM(iamConn)
 	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)
