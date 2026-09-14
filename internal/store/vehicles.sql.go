@@ -130,13 +130,13 @@ const createVehicle = `-- name: CreateVehicle :one
 INSERT INTO vehicles (
   tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no,
   fleet_group_id, status, garage, odometer, hourmeter, tracker_id, current_driver_id, notes,
-  fuel_tank_liters, fuel_ratio_kmpl
+  fuel_tank_liters, fuel_ratio_kmpl, master_data_id
 ) VALUES (
   $1, $2, $3, $4, $5,
   $6, $7, $8,
   COALESCE($9, 'active'), $10, $11,
   $12, $13, $14, $15,
-  $16, $17
+  $16, $17, $18
 )
 RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
@@ -159,6 +159,7 @@ type CreateVehicleParams struct {
 	Notes           *string        `json:"notes"`
 	FuelTankLiters  *float64       `json:"fuel_tank_liters"`
 	FuelRatioKmpl   *float64       `json:"fuel_ratio_kmpl"`
+	MasterDataID    *string        `json:"master_data_id"`
 }
 
 func (q *Queries) CreateVehicle(ctx context.Context, arg CreateVehicleParams) (Vehicle, error) {
@@ -180,6 +181,7 @@ func (q *Queries) CreateVehicle(ctx context.Context, arg CreateVehicleParams) (V
 		arg.Notes,
 		arg.FuelTankLiters,
 		arg.FuelRatioKmpl,
+		arg.MasterDataID,
 	)
 	var i Vehicle
 	err := row.Scan(
@@ -357,6 +359,46 @@ func (q *Queries) GetVehicle(ctx context.Context, id int64) (GetVehicleRow, erro
 	return i, err
 }
 
+const getVehicleRow = `-- name: GetVehicleRow :one
+SELECT id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at FROM vehicles WHERE id = $1
+`
+
+// The bare row, without GetVehicle's joins. Used where only the vehicle's own
+// columns matter — notably master_data_id, read inside the same transaction as
+// a write so the upstream mirror targets the record this row is paired with.
+func (q *Queries) GetVehicleRow(ctx context.Context, id int64) (Vehicle, error) {
+	row := q.db.QueryRow(ctx, getVehicleRow, id)
+	var i Vehicle
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.LicensePlate,
+		&i.Manufacturer,
+		&i.VehicleType,
+		&i.BoxType,
+		&i.UnitYear,
+		&i.HullNo,
+		&i.FleetGroupID,
+		&i.Status,
+		&i.Garage,
+		&i.Odometer,
+		&i.Hourmeter,
+		&i.FuelTankLiters,
+		&i.FuelRatioKmpl,
+		&i.TrackerID,
+		&i.CurrentDriverID,
+		&i.Notes,
+		&i.Documents,
+		&i.ExternalRef,
+		&i.Color,
+		&i.Attributes,
+		&i.MasterDataID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listLiveViewVehicles = `-- name: ListLiveViewVehicles :many
 SELECT
   v.id            AS vehicle_id,
@@ -427,6 +469,61 @@ func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64)
 			&i.TrackerID,
 			&i.TrackerImei,
 			&i.CameraDeviceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnpairedVehicles = `-- name: ListUnpairedVehicles :many
+SELECT id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at FROM vehicles
+ WHERE tenant_id = $1 AND master_data_id IS NULL AND status <> 'archive'
+ ORDER BY id
+`
+
+// Vehicles this company holds that master data has never seen: created in FMS
+// after the cutover, when writes still stopped at fms_app. Invisible to TMS
+// until the backfill pushes them upstream.
+func (q *Queries) ListUnpairedVehicles(ctx context.Context, tenantID int64) ([]Vehicle, error) {
+	rows, err := q.db.Query(ctx, listUnpairedVehicles, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Vehicle{}
+	for rows.Next() {
+		var i Vehicle
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.LicensePlate,
+			&i.Manufacturer,
+			&i.VehicleType,
+			&i.BoxType,
+			&i.UnitYear,
+			&i.HullNo,
+			&i.FleetGroupID,
+			&i.Status,
+			&i.Garage,
+			&i.Odometer,
+			&i.Hourmeter,
+			&i.FuelTankLiters,
+			&i.FuelRatioKmpl,
+			&i.TrackerID,
+			&i.CurrentDriverID,
+			&i.Notes,
+			&i.Documents,
+			&i.ExternalRef,
+			&i.Color,
+			&i.Attributes,
+			&i.MasterDataID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -549,6 +646,53 @@ func (q *Queries) ListVehicles(ctx context.Context, arg ListVehiclesParams) ([]L
 		return nil, err
 	}
 	return items, nil
+}
+
+const pairVehicle = `-- name: PairVehicle :one
+UPDATE vehicles SET master_data_id = $2, updated_at = now()
+ WHERE id = $1 AND master_data_id IS NULL
+RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
+`
+
+type PairVehicleParams struct {
+	ID           int64   `json:"id"`
+	MasterDataID *string `json:"master_data_id"`
+}
+
+// Attach an existing local vehicle to its master-data record, for rows created
+// before write-through existed. Fills a NULL only: re-pointing a paired vehicle
+// would move its alerts, telemetry and history onto a different truck.
+func (q *Queries) PairVehicle(ctx context.Context, arg PairVehicleParams) (Vehicle, error) {
+	row := q.db.QueryRow(ctx, pairVehicle, arg.ID, arg.MasterDataID)
+	var i Vehicle
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.LicensePlate,
+		&i.Manufacturer,
+		&i.VehicleType,
+		&i.BoxType,
+		&i.UnitYear,
+		&i.HullNo,
+		&i.FleetGroupID,
+		&i.Status,
+		&i.Garage,
+		&i.Odometer,
+		&i.Hourmeter,
+		&i.FuelTankLiters,
+		&i.FuelRatioKmpl,
+		&i.TrackerID,
+		&i.CurrentDriverID,
+		&i.Notes,
+		&i.Documents,
+		&i.ExternalRef,
+		&i.Color,
+		&i.Attributes,
+		&i.MasterDataID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateVehicle = `-- name: UpdateVehicle :one

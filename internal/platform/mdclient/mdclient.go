@@ -13,6 +13,7 @@ package mdclient
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -108,6 +109,72 @@ func (c *Client) ListVehicles(ctx context.Context, companyID string) ([]Vehicle,
 		// full page.
 		info := resp.GetPageInfo()
 		if len(trucks) < pageSize || (info != nil && int64(len(out)) >= info.GetTotalRows()) {
+			return out, nil
+		}
+	}
+}
+
+// Driver is the subset of a master-data driver that FMS projects.
+type Driver struct {
+	ID            string // master data's ObjectId — the stable key
+	CompanyID     string
+	FullName      string
+	Phone         string
+	EmployeeNo    string
+	LicenseNo     string
+	LicenseClass  string
+	LicenseExpiry *time.Time
+	Status        string
+	// FMSEmployeeID is the bigint master data believes this driver has in FMS,
+	// 0 when it has never been told one. It is a hint for adoption, not an
+	// authority: the local master_data_id is what the projection matches on.
+	FMSEmployeeID int64
+	Deleted       bool
+}
+
+// ListDrivers returns every driver a company has, paged to exhaustion.
+//
+// The same exhaustion argument as ListVehicles, and the same reason for
+// including deleted rows: the projection has to learn that someone has left,
+// or their local record stays active and assignable forever. Siba Surya alone
+// has 1,385 drivers — seven pages.
+func (c *Client) ListDrivers(ctx context.Context, companyID string) ([]Driver, error) {
+	var out []Driver
+
+	for page := int32(0); ; page++ {
+		resp, err := c.client.ListDrivers(ctx, &mdv1.ListDriversRequest{
+			CompanyId: companyID,
+			Page:      page,
+			PageSize:  pageSize,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("mdclient: list drivers for %s: %w", companyID, err)
+		}
+		drivers := resp.GetDrivers()
+		for _, d := range drivers {
+			dr := Driver{
+				ID:            d.GetId(),
+				CompanyID:     d.GetCompanyId(),
+				FullName:      d.GetFullName(),
+				Phone:         d.GetPhone(),
+				EmployeeNo:    d.GetEmployeeNo(),
+				LicenseNo:     d.GetLicenseNo(),
+				LicenseClass:  d.GetLicenseClass(),
+				Status:        d.GetStatus(),
+				FMSEmployeeID: d.GetFmsEmployeeId(),
+				Deleted:       d.GetDeleted(),
+			}
+			if ts := d.GetLicenseExpiry(); ts != nil {
+				t := ts.AsTime()
+				dr.LicenseExpiry = &t
+			}
+			out = append(out, dr)
+		}
+
+		// Both conditions, for the reason spelled out in ListVehicles: a page
+		// that exactly fills defeats the short-page test, and a lagging total
+		// defeats the count test.
+		if len(drivers) < pageSize || int64(len(out)) >= resp.GetTotal() {
 			return out, nil
 		}
 	}

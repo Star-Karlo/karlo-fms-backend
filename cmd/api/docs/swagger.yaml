@@ -2282,6 +2282,27 @@ definitions:
       window_minutes:
         type: integer
     type: object
+  platformadmin.BackfillResult:
+    properties:
+      dry_run:
+        type: boolean
+      errors:
+        items:
+          type: string
+        type: array
+      examined:
+        type: integer
+      failed:
+        type: integer
+      plates:
+        items:
+          type: string
+        type: array
+      pushed:
+        type: integer
+      tenant_id:
+        type: integer
+    type: object
   platformadmin.Overview:
     properties:
       online:
@@ -5153,6 +5174,32 @@ paths:
       summary: Mark all unchecked alerts as checked (mark all read)
       tags:
       - alerts
+  /v1/platform/backfill-vehicles:
+    post:
+      description: Vehicles created in FMS before write-through existed have no master_data_id
+        and are invisible to TMS. This creates them upstream and records the pairing.
+        Idempotent. Pass ?dry_run=true to list what would be pushed without writing.
+      parameters:
+      - description: the account to backfill (defaults to the caller's)
+        in: query
+        name: account_id
+        type: integer
+      - description: report without writing
+        in: query
+        name: dry_run
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/platformadmin.BackfillResult'
+      security:
+      - BearerAuth: []
+      summary: Push FMS-only vehicles up into master data
+      tags:
+      - platform
   /v1/platform/overview:
     get:
       description: 'Totals across every account: accounts, vehicles, online, and a

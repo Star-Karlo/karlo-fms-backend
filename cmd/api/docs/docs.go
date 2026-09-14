@@ -3452,6 +3452,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/platform/backfill-vehicles": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Vehicles created in FMS before write-through existed have no master_data_id and are invisible to TMS. This creates them upstream and records the pairing. Idempotent. Pass ?dry_run=true to list what would be pushed without writing.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Push FMS-only vehicles up into master data",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "the account to backfill (defaults to the caller's)",
+                        "name": "account_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "report without writing",
+                        "name": "dry_run",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/platformadmin.BackfillResult"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/platform/overview": {
             "get": {
                 "security": [
@@ -8873,6 +8912,38 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "window_minutes": {
+                    "type": "integer"
+                }
+            }
+        },
+        "platformadmin.BackfillResult": {
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "examined": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "plates": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "pushed": {
+                    "type": "integer"
+                },
+                "tenant_id": {
                     "type": "integer"
                 }
             }

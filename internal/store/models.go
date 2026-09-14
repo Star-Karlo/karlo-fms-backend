@@ -106,6 +106,7 @@ type Employee struct {
 	LicenseExpiry pgtype.Date        `json:"license_expiry"`
 	Status        string             `json:"status"`
 	ExternalRef   *string            `json:"external_ref"`
+	MasterDataID  *string            `json:"master_data_id"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }

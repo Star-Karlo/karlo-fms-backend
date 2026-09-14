@@ -69,6 +69,26 @@ type Config struct {
 	// state of a deployment that has not cut over.
 	MDGRPCTarget string
 
+	// MDServiceURL is master data's HTTP address, used for WRITES — creating and
+	// updating a vehicle or a driver as the signed-in user.
+	//
+	// Separate from MDGRPCTarget above, and not merely because of the protocol:
+	// the two carry different credentials on purpose. The gRPC path is the
+	// background projection and presents a SERVICE token; this path presents the
+	// CALLER'S OWN bearer, forwarded verbatim.
+	//
+	// That distinction is the whole security model of the write-through. A
+	// service token here would let fms-backend write anything on anyone's
+	// behalf, and master data would be authorising fms-the-service rather than
+	// the person — so an FMS user without vehicles.edit upstream would succeed
+	// where they should be refused, and FMS would quietly have become a way
+	// around master data's permissions. Forwarding the caller also puts a real
+	// name in master data's audit trail instead of "fms-backend".
+	//
+	// Unset, write-through does not run and FMS writes stay local — the state of
+	// a deployment that has not cut over.
+	MDServiceURL string
+
 	// MDServiceToken is the credential presented to MASTER DATA, which is not
 	// necessarily the one the authentication service accepts.
 	//
@@ -202,6 +222,7 @@ func Load() Config {
 		ServiceToken:   Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", "")),
 		AuthGRPCTarget: Env("AUTH_GRPC_TARGET", ""),
 		MDGRPCTarget:   Env("MD_GRPC_TARGET", ""),
+		MDServiceURL:   Env("MD_SERVICE_URL", ""),
 		MDServiceToken: Env("MD_SERVICE_TOKEN", Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", ""))),
 
 		TelemetryBaseURL: Env("TELEMETRY_BASE_URL", "http://localhost:8082"),

@@ -57,6 +57,10 @@ CREATE TABLE employees (
   license_expiry date,
   status         text NOT NULL DEFAULT 'active',
   external_ref   text,
+  -- karlo_masterdata drivers._id. See migration 0043. Keep this file in step
+  -- with db/migrations by hand — sqlc reads only this one, and 0042 forgetting
+  -- to do so meant codegen failed on a column live in production.
+  master_data_id text,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now()
 );
