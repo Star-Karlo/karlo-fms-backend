@@ -36,6 +36,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -74,11 +75,59 @@ type Caller struct {
 }
 
 // CallerFrom extracts the identity to forward from an incoming request.
+//
+// Prefer CallerFor. This reads only the X-Acting-For HEADER, and FMS's own
+// screens do not send one — they scope a staff member's action with
+// ?account_id=N instead. See CallerFor for why that matters.
 func CallerFrom(r *http.Request) Caller {
 	return Caller{
 		Bearer:    r.Header.Get("Authorization"),
 		ActingFor: r.Header.Get("X-Acting-For"),
 	}
+}
+
+// CompanyResolver maps a local tenant id to its master-data company.
+type CompanyResolver interface {
+	CompanyForTenant(ctx context.Context, tenantID int64) (string, bool)
+}
+
+// ErrUnresolvedActingFor means a staff member is acting for a tenant whose
+// company could not be determined, so the upstream write would be misfiled.
+var ErrUnresolvedActingFor = errors.New("acting for a tenant with no known master-data company; refusing to write upstream under the wrong company")
+
+// CallerFor builds the identity to forward, TRANSLATING ?account_id INTO
+// X-Acting-For when a staff member is acting for another customer.
+//
+// The two systems scope a staff action differently. FMS uses ?account_id=N,
+// a local bigint, and its handlers resolve that through EffectiveTenant. Master
+// data uses the X-Acting-For header carrying the company UUID. A write that
+// forwards only what the request already carried therefore reaches master data
+// with no acting-for at all whenever the operator came through FMS's own UI —
+// and master data does the natural thing with a bare staff token: it files the
+// record under the STAFF MEMBER'S OWN company. The vehicle shows up in FMS
+// under Raja Besi and in TMS under Karlo Platform, and nothing reports the
+// split.
+//
+// own is the caller's own tenant; effective is the one the request operates
+// on. They differ only for staff using ?account_id. When they do, and no
+// header was sent, the effective tenant's company is looked up and forwarded.
+// If it cannot be resolved the write is REFUSED rather than sent: a missing
+// acting-for does not fail upstream, it succeeds against the wrong company,
+// which is the worse outcome by far.
+func CallerFor(r *http.Request, own, effective int64, res CompanyResolver) (Caller, error) {
+	c := CallerFrom(r)
+	if c.ActingFor != "" || effective == own {
+		return c, nil
+	}
+	if res == nil {
+		return c, ErrUnresolvedActingFor
+	}
+	cid, ok := res.CompanyForTenant(r.Context(), effective)
+	if !ok {
+		return c, ErrUnresolvedActingFor
+	}
+	c.ActingFor = cid
+	return c, nil
 }
 
 // Error is a non-2xx from master data, kept structured so handlers can pass the

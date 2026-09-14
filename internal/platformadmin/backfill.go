@@ -68,7 +68,14 @@ func (h *Handler) backfillVehicles(w http.ResponseWriter, r *http.Request) {
 	}
 	tid := auth.EffectiveTenant(r)
 	dry := r.URL.Query().Get("dry_run") == "true"
-	caller := mdwrite.CallerFrom(r)
+	// The operator is staff acting for a customer via ?account_id, so the
+	// acting-for MUST be translated or every vehicle is pushed under Karlo
+	// Platform instead of the customer. Refused outright if it cannot be.
+	caller, err := mdwrite.CallerFor(r, auth.TenantID(r.Context()), tid, h.dir)
+	if err != nil {
+		httpx.Error(w, http.StatusConflict, err.Error())
+		return
+	}
 
 	var rows []store.Vehicle
 	if err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {

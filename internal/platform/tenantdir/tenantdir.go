@@ -153,6 +153,32 @@ func (d *Directory) TenantForCompany(ctx context.Context, companyID string) (int
 	return 0, false
 }
 
+// CompanyForTenant is the reverse of TenantForCompany: the master-data company
+// a local tenant id belongs to.
+//
+// Needed by the write-through. FMS's own screens scope a staff member's action
+// with ?account_id=N — a LOCAL bigint — while master data scopes with
+// X-Acting-For carrying the company UUID. A write that forwards the header
+// alone therefore arrives upstream with no acting-for at all when the operator
+// used the query form, and master data files the record under the STAFF
+// MEMBER'S OWN company. The vehicle appears in FMS under the customer and in
+// TMS under Karlo Platform, and nothing reports the split.
+func (d *Directory) CompanyForTenant(ctx context.Context, tenantID int64) (string, bool) {
+	if tenantID == 0 {
+		return "", false
+	}
+	ts, err := d.List(ctx)
+	if err != nil {
+		return "", false
+	}
+	for _, t := range ts {
+		if t.ID == tenantID && t.CompanyID != "" {
+			return t.CompanyID, true
+		}
+	}
+	return "", false
+}
+
 // fetch asks the authentication service for every FMS company.
 //
 // Paging lives in the client, which walks to exhaustion. Reading a single page

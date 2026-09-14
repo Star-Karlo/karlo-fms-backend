@@ -32,7 +32,8 @@ import (
 type Handler struct {
 	pool *db.Pool
 	live *liveview.Service
-	md   *mdwrite.Client // nil before cutover; the backfill needs it
+	md   *mdwrite.Client         // nil before cutover; the backfill needs it
+	dir  mdwrite.CompanyResolver // tenant id -> company, for the backfill's acting-for
 }
 
 func NewHandler(pool *db.Pool, live *liveview.Service) *Handler {
@@ -42,6 +43,9 @@ func NewHandler(pool *db.Pool, live *liveview.Service) *Handler {
 // WithMasterData enables the backfill, which pushes FMS-only rows upstream as
 // the operator who triggers it.
 func (h *Handler) WithMasterData(md *mdwrite.Client) *Handler { h.md = md; return h }
+
+// WithResolver supplies the tenant -> company lookup the backfill needs.
+func (h *Handler) WithResolver(dir mdwrite.CompanyResolver) *Handler { h.dir = dir; return h }
 
 // Routes mounts the platform console — every endpoint requires platform_admin.
 func (h *Handler) Routes(r chi.Router) {
