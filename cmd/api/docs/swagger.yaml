@@ -1962,6 +1962,11 @@ definitions:
         description: OverLimit is true when Speed exceeds the requested limit at this
           point.
         type: boolean
+      source:
+        description: |-
+          Source is "tracker" or "camera". Always set; matters when a caller asks
+          for both and gets one interleaved track to draw as two.
+        type: string
       speed:
         type: number
       time:
@@ -6257,6 +6262,10 @@ paths:
         in: query
         name: limit
         type: number
+      - description: 'tracker | camera | both (default: tracker if fitted, else camera)'
+        in: query
+        name: source
+        type: string
       produces:
       - application/json
       responses:
