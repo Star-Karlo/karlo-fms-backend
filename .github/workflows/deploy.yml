@@ -119,7 +119,13 @@ jobs:
           docker build --platform linux/amd64 --build-arg SERVICE=api \
             -t "$REGISTRY/$REPO:$TAG" -t "$REGISTRY/$REPO:latest" .
           docker push "$REGISTRY/$REPO:$TAG"
-          docker push "$REGISTRY/$REPO:latest"
+          # The platform's repositories have IMMUTABLE tags: :latest is
+          # whatever was pushed first and can never move. Jakarta deploys
+          # therefore pin every task definition to the commit's tag below
+          # and never push :latest; Singapore keeps its moving tag.
+          if [ "${{ inputs.target }}" != "jakarta" ]; then
+            docker push "$REGISTRY/$REPO:latest"
+          fi
 
       # Jakarta: migrations run INSIDE the VPC as a one-off task from the image
       # just pushed. It carries cmd/migrate-schema and db/migrations, and
@@ -133,11 +139,13 @@ jobs:
           TASKDEF: ${{ vars.JAKARTA_MIGRATE_TASKDEF }}
           NETWORK: ${{ vars.JAKARTA_TASK_NETWORK }}
         run: |
-          # The task definition references :latest, which the previous step
-          # just pushed. Deploys are manual and serialised (workflow_dispatch),
-          # so nothing else can move :latest between the push and this run —
-          # the same assumption the api roll below has always made.
-          ARN="$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASKDEF" \
+          # Register a revision of the migrate task pinned to the image just
+          # pushed (tags are immutable there; :latest never moves), so the SQL
+          # that runs is exactly the SQL this commit shipped.
+          IMAGE="${{ steps.ecr.outputs.registry }}/karlo/fms-api:${{ github.sha }}"
+          REV="$(bash scripts/register-revision.sh "$TASKDEF" "$IMAGE")"
+          echo "migrate task definition: $TASKDEF:$REV"
+          ARN="$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASKDEF:$REV" \
             --launch-type FARGATE --network-configuration "$NETWORK" \
             --query 'tasks[0].taskArn' --output text)"
           echo "migrate task: $ARN"
@@ -154,5 +162,14 @@ jobs:
           CLUSTER: ${{ inputs.target == 'jakarta' && vars.JAKARTA_ECS_CLUSTER || vars.ECS_CLUSTER }}
           SERVICE: ${{ inputs.target == 'jakarta' && 'karlo-prod-fms-api' || vars.ECS_SERVICE }}
         run: |
-          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment >/dev/null
+          if [ "${{ inputs.target }}" = "jakarta" ]; then
+            # Pin the api to this commit's image via a new revision; the
+            # service's task_definition is ignored by Terraform for exactly
+            # this reason.
+            IMAGE="${{ steps.ecr.outputs.registry }}/karlo/fms-api:${{ github.sha }}"
+            REV="$(bash scripts/register-revision.sh "$SERVICE" "$IMAGE")"
+            aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --task-definition "$SERVICE:$REV" >/dev/null
+          else
+            aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment >/dev/null
+          fi
           aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
