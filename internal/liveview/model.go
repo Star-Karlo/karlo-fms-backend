@@ -50,6 +50,17 @@ type Position struct {
 	Kota      string    `json:"kota"`
 	Provinsi  string    `json:"provinsi"`
 	Jalan     string    `json:"jalan"`
+	// Address is the most specific place name available, ready to display —
+	// street when there is one, otherwise district and city.
+	//
+	// A third of the fleet's fixes carry no street: yards, ports and
+	// plantation roads have no name, and Semarang alone accounts for 250 of
+	// them at any moment. A consumer that shows `jalan` and falls back to
+	// "unknown" therefore labels ~600 trucks unknown while knowing their
+	// district and city perfectly well — which is what TMS's Control Tower
+	// did. Composing it here means every consumer gets the same answer and
+	// none has to know the five fields' precedence.
+	Address string `json:"address"`
 	// Metadata is the raw per-device sensor blob (fuel, voltages, GSM/GNSS, etc.).
 	// Only populated on the single-vehicle detail path; the bulk list trims it.
 	Metadata json.RawMessage `json:"metadata,omitempty"`
@@ -104,6 +115,7 @@ func enrich(v *VehicleLive, p *telemetry.Position, now time.Time) {
 		Lat:    p.Lat, Lon: p.Lon, Speed: p.Speed, Bearing: p.Bearing, Ignition: p.Ignition,
 		Time: p.Time, Kecamatan: p.Kecamatan, Kabupaten: p.Kabupaten, Kota: p.Kota,
 		Provinsi: p.Provinsi, Jalan: p.Jalan, Metadata: p.Metadata,
+		Address: composeAddress(p.Jalan, p.Kecamatan, p.Kota, p.Kabupaten, p.Provinsi),
 	}
 	v.Position = pos
 	stale := now.Sub(p.Time).Minutes()
@@ -139,4 +151,25 @@ func enrichCamera(v *VehicleLive, lat, lon *float64, online bool, now time.Time)
 	} else {
 		v.DriveState = StateOffline
 	}
+}
+
+// composeAddress joins the place parts that exist, most specific first. Kota
+// and kabupaten are alternatives (city vs regency), so only the one present
+// is used; the result is never empty when any part is known.
+func composeAddress(jalan, kecamatan, kota, kabupaten, provinsi string) string {
+	city := kota
+	if city == "" {
+		city = kabupaten
+	}
+	out := ""
+	for _, part := range []string{jalan, kecamatan, city, provinsi} {
+		if part == "" {
+			continue
+		}
+		if out != "" {
+			out += ", "
+		}
+		out += part
+	}
+	return out
 }

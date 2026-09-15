@@ -8274,6 +8274,10 @@
         "liveview.Position": {
             "type": "object",
             "properties": {
+                "address": {
+                    "description": "Address is the most specific place name available, ready to display —\nstreet when there is one, otherwise district and city.\n\nA third of the fleet's fixes carry no street: yards, ports and\nplantation roads have no name, and Semarang alone accounts for 250 of\nthem at any moment. A consumer that shows `jalan` and falls back to\n\"unknown\" therefore labels ~600 trucks unknown while knowing their\ndistrict and city perfectly well — which is what TMS's Control Tower\ndid. Composing it here means every consumer gets the same answer and\nnone has to know the five fields' precedence.",
+                    "type": "string"
+                },
                 "bearing": {
                     "type": "number"
                 },
