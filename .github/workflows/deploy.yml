@@ -8,6 +8,16 @@
 #   Secret: AWS_ROLE_ARN
 #   Vars:   AWS_REGION=ap-southeast-1, ECS_CLUSTER=karlo-fms, ECS_SERVICE=api,
 #           ECR_REPO=karlo-fms/api
+#   Vars (jakarta): JAKARTA_ECS_CLUSTER, JAKARTA_MIGRATE_TASKDEF,
+#           JAKARTA_TASK_NETWORK — the last is the JSON from
+#           `terraform output -raw migrate_network` in infra/jakarta.
+#
+# TWO TARGETS during the Jakarta relocation. `singapore` is the running stack
+# above. `jakarta` is FMS inside the platform VPC (karlo-fms-infra/infra/
+# jakarta): different region, the platform's ECR repo and cluster, and — the
+# part that is not a rename — migrations run as a one-off task INSIDE the VPC,
+# because the Jakarta RDS has no public address for a runner to reach. After
+# Singapore is torn down the default flips and the singapore steps go.
 name: deploy-api
 
 on:
@@ -25,6 +35,11 @@ on:
         description: 'Change has been built and verified'
         type: boolean
         default: false
+      target:
+        description: 'Which stack to deploy'
+        type: choice
+        options: [singapore, jakarta]
+        default: singapore
 
 permissions:
   id-token: write # for AWS OIDC
@@ -46,6 +61,7 @@ jobs:
             echo "|---|---|"
             echo "| triggered by | ${{ github.actor }} |"
             echo "| ref / commit | ${{ github.ref_name }} @ ${{ github.sha }} |"
+            echo "| target | ${{ inputs.target }} |"
             echo "| migrations applied | ${{ inputs.migrations_applied }} |"
             echo "| verified | ${{ inputs.verified }} |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -59,14 +75,15 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ inputs.target == 'jakarta' && 'ap-southeast-3' || vars.AWS_REGION }}
 
       # Apply pending DB migrations BEFORE rolling the service, so new code never
       # runs against an old schema (the failure mode that bit us before this
       # existed). Opens the RDS security group to this runner just for the
       # migration and revokes it on exit; connects as the DB master. Only
       # migrations not yet in schema_migrations are applied.
-      - name: Apply DB migrations
+      - name: Apply DB migrations (singapore — psql from the runner)
+        if: inputs.target == 'singapore'
         env:
           REGION: ${{ vars.AWS_REGION }}
           INSTANCE: karlo-fms-app
@@ -94,7 +111,9 @@ jobs:
       - name: Build & push image
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          REPO: ${{ vars.ECR_REPO }}
+          # Singapore: FMS's own repo. Jakarta: the platform's, created by
+          # platform-terraform when FMS was added to its service list.
+          REPO: ${{ inputs.target == 'jakarta' && 'karlo/fms-api' || vars.ECR_REPO }}
           TAG: ${{ github.sha }}
         run: |
           docker build --platform linux/amd64 --build-arg SERVICE=api \
@@ -102,9 +121,38 @@ jobs:
           docker push "$REGISTRY/$REPO:$TAG"
           docker push "$REGISTRY/$REPO:latest"
 
-      - name: Roll ECS service
+      # Jakarta: migrations run INSIDE the VPC as a one-off task from the image
+      # just pushed. It carries cmd/migrate-schema and db/migrations, and
+      # connects as the owner role via its own secret. The step waits for the
+      # task and fails the deploy on a non-zero exit, so new code never rolls
+      # onto an old schema — the same guarantee the psql step gives Singapore.
+      - name: Apply DB migrations (jakarta — one-off task in the VPC)
+        if: inputs.target == 'jakarta'
+        env:
+          CLUSTER: ${{ vars.JAKARTA_ECS_CLUSTER }}
+          TASKDEF: ${{ vars.JAKARTA_MIGRATE_TASKDEF }}
+          NETWORK: ${{ vars.JAKARTA_TASK_NETWORK }}
         run: |
-          aws ecs update-service --cluster "${{ vars.ECS_CLUSTER }}" \
-            --service "${{ vars.ECS_SERVICE }}" --force-new-deployment >/dev/null
-          aws ecs wait services-stable --cluster "${{ vars.ECS_CLUSTER }}" \
-            --services "${{ vars.ECS_SERVICE }}"
+          # The task definition references :latest, which the previous step
+          # just pushed. Deploys are manual and serialised (workflow_dispatch),
+          # so nothing else can move :latest between the push and this run —
+          # the same assumption the api roll below has always made.
+          ARN="$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASKDEF" \
+            --launch-type FARGATE --network-configuration "$NETWORK" \
+            --query 'tasks[0].taskArn' --output text)"
+          echo "migrate task: $ARN"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$ARN"
+          CODE="$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)"
+          REASON="$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$ARN" \
+            --query 'tasks[0].stoppedReason' --output text)"
+          echo "exit=$CODE reason=$REASON"
+          [ "$CODE" = "0" ] || { echo "::error::migrations failed (exit $CODE) — see /ecs/karlo-prod-fms-migrate"; exit 1; }
+
+      - name: Roll ECS service
+        env:
+          CLUSTER: ${{ inputs.target == 'jakarta' && vars.JAKARTA_ECS_CLUSTER || vars.ECS_CLUSTER }}
+          SERVICE: ${{ inputs.target == 'jakarta' && 'karlo-prod-fms-api' || vars.ECS_SERVICE }}
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment >/dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
