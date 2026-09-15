@@ -1821,6 +1821,19 @@ definitions:
     type: object
   liveview.Position:
     properties:
+      address:
+        description: |-
+          Address is the most specific place name available, ready to display —
+          street when there is one, otherwise district and city.
+
+          A third of the fleet's fixes carry no street: yards, ports and
+          plantation roads have no name, and Semarang alone accounts for 250 of
+          them at any moment. A consumer that shows `jalan` and falls back to
+          "unknown" therefore labels ~600 trucks unknown while knowing their
+          district and city perfectly well — which is what TMS's Control Tower
+          did. Composing it here means every consumer gets the same answer and
+          none has to know the five fields' precedence.
+        type: string
       bearing:
         type: number
       ignition:
