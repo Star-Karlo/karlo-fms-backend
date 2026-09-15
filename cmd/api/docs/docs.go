@@ -5186,6 +5186,12 @@ const docTemplate = `{
                         "description": "overspeed limit km/h for the over_limit flag (default 60)",
                         "name": "limit",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "tracker | camera | both (default: tracker if fitted, else camera)",
+                        "name": "source",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -8461,6 +8467,10 @@ const docTemplate = `{
                 "over_limit": {
                     "description": "OverLimit is true when Speed exceeds the requested limit at this point.",
                     "type": "boolean"
+                },
+                "source": {
+                    "description": "Source is \"tracker\" or \"camera\". Always set; matters when a caller asks\nfor both and gets one interleaved track to draw as two.",
+                    "type": "string"
                 },
                 "speed": {
                     "type": "number"

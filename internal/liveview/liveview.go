@@ -712,6 +712,9 @@ func (s *Service) Behavior(ctx context.Context, tenantID, vehicleID int64, from,
 
 // TripPoint is one point of a vehicle's historical track.
 type TripPoint struct {
+	// Source is "tracker" or "camera". Always set; matters when a caller asks
+	// for both and gets one interleaved track to draw as two.
+	Source   string    `json:"source"`
 	Lat      *float64  `json:"lat"`
 	Lon      *float64  `json:"lon"`
 	Speed    *float64  `json:"speed"`
@@ -725,8 +728,29 @@ type TripPoint struct {
 	IdleMin float64 `json:"idle_min"`
 }
 
+// TrackSource selects which GPS a history is built from.
+//
+// A truck can carry two: the tracker (by IMEI) and the dashcam (by VSS device
+// id). They are independent receivers on the same vehicle, so they should
+// agree — and when they consistently do not, one of them is faulty or is
+// physically on a different truck than FMS believes. Letting an operator
+// look at either, or both overlaid, is how that gets noticed.
+type TrackSource string
+
+const (
+	SourceAuto    TrackSource = ""        // tracker if fitted, else camera — the long-standing rule
+	SourceTracker TrackSource = "tracker" // the tracker only; empty if none fitted
+	SourceCamera  TrackSource = "camera"  // the dashcam only; empty if none linked
+	SourceBoth    TrackSource = "both"    // both, interleaved by time, each point tagged
+)
+
 // History returns a vehicle's track over a time range (proxied from telemetry).
 func (s *Service) History(ctx context.Context, tenantID, vehicleID int64, from, to time.Time, maxPoints int) ([]TripPoint, error) {
+	return s.HistoryFrom(ctx, tenantID, vehicleID, from, to, maxPoints, SourceAuto)
+}
+
+// HistoryFrom is History with an explicit source.
+func (s *Service) HistoryFrom(ctx context.Context, tenantID, vehicleID int64, from, to time.Time, maxPoints int, src TrackSource) ([]TripPoint, error) {
 	var imei, camera string
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row, err := store.New(tx).GetLiveViewVehicle(ctx, vehicleID)
@@ -742,15 +766,54 @@ func (s *Service) History(ctx context.Context, tenantID, vehicleID int64, from, 
 	if err != nil {
 		return nil, err
 	}
-	// Source rule: a tracker's GPS wins; a vehicle with only a camera falls back
-	// to the dashcam's own GPS; a vehicle with neither has no track (empty, not a
-	// 404 from an empty-IMEI proxy call).
+	switch src {
+	case SourceCamera:
+		if camera == "" {
+			return []TripPoint{}, nil
+		}
+		return s.cameraHistory(ctx, camera, from, to, maxPoints)
+	case SourceBoth:
+		// Each half is fetched on its own so a failure in one (VSS throttling
+		// the camera track is the usual one) does not blank the other; the
+		// caller gets whatever came back, tagged.
+		var out []TripPoint
+		if imei != "" {
+			if t, err := s.trackerHistory(ctx, imei, from, to, maxPoints); err == nil {
+				out = append(out, t...)
+			} else {
+				log.Printf("liveview: tracker history for %s: %v", imei, err)
+			}
+		}
+		if camera != "" {
+			if c, err := s.cameraHistory(ctx, camera, from, to, maxPoints); err == nil {
+				out = append(out, c...)
+			} else {
+				log.Printf("liveview: camera history for %s: %v", camera, err)
+			}
+		}
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
+		return out, nil
+	case SourceTracker:
+		if imei == "" {
+			return []TripPoint{}, nil
+		}
+		return s.trackerHistory(ctx, imei, from, to, maxPoints)
+	}
+	// SourceAuto — the long-standing rule: a tracker's GPS wins; a vehicle with
+	// only a camera falls back to the dashcam's own GPS; a vehicle with neither
+	// has no track (empty, not a 404 from an empty-IMEI proxy call).
 	if imei == "" {
 		if camera == "" {
 			return []TripPoint{}, nil
 		}
 		return s.cameraHistory(ctx, camera, from, to, maxPoints)
 	}
+	return s.trackerHistory(ctx, imei, from, to, maxPoints)
+}
+
+// trackerHistory is the tracker half of History, so "both" can call it beside
+// cameraHistory.
+func (s *Service) trackerHistory(ctx context.Context, imei string, from, to time.Time, maxPoints int) ([]TripPoint, error) {
 	ps, err := s.tel.History(ctx, imei, from, to, historyFields, maxPoints)
 	if err != nil {
 		return nil, err
@@ -768,7 +831,7 @@ func (s *Service) History(ctx context.Context, tenantID, vehicleID int64, from, 
 				addr += part
 			}
 		}
-		out = append(out, TripPoint{Lat: p.Lat, Lon: p.Lon, Speed: p.Speed, Bearing: p.Bearing, Ignition: p.Ignition, Time: p.Time, Address: addr})
+		out = append(out, TripPoint{Source: "tracker", Lat: p.Lat, Lon: p.Lon, Speed: p.Speed, Bearing: p.Bearing, Ignition: p.Ignition, Time: p.Time, Address: addr})
 	}
 	return out, nil
 }
@@ -790,7 +853,7 @@ func (s *Service) cameraHistory(ctx context.Context, deviceID string, from, to t
 	out := make([]TripPoint, 0, len(pts)/stride+1)
 	for i := 0; i < len(pts); i += stride {
 		lat, lon := pts[i].Lat, pts[i].Lon
-		out = append(out, TripPoint{Lat: &lat, Lon: &lon, Time: pts[i].Time})
+		out = append(out, TripPoint{Source: "camera", Lat: &lat, Lon: &lon, Time: pts[i].Time})
 	}
 	return out, nil
 }
@@ -806,6 +869,7 @@ func (s *Service) cameraHistory(ctx context.Context, deviceID string, from, to t
 //	@Param		to			query		string	true	"RFC3339"
 //	@Param		max_points	query		int		false	"cap on returned points"
 //	@Param		limit		query		number	false	"overspeed limit km/h for the over_limit flag (default 60)"
+//	@Param		source		query		string	false	"tracker | camera | both (default: tracker if fitted, else camera)"
 //	@Success	200	{object}	httpx.List[liveview.TripPoint]
 //	@Router		/v1/vehicles/{vehicle_id}/history [get]
 func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
@@ -831,17 +895,39 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 			limit = f
 		}
 	}
-	points, err := h.svc.History(r.Context(), auth.EffectiveTenant(r), id, from, to, maxPoints)
+	src := TrackSource(q.Get("source"))
+	switch src {
+	case SourceAuto, SourceTracker, SourceCamera, SourceBoth:
+	default:
+		httpx.Error(w, http.StatusBadRequest, "source must be tracker, camera or both")
+		return
+	}
+	points, err := h.svc.HistoryFrom(r.Context(), auth.EffectiveTenant(r), id, from, to, maxPoints, src)
 	if err != nil {
 		httpx.Error(w, http.StatusBadGateway, "history unavailable: "+err.Error())
 		return
 	}
 	// Annotate each point with an overspeed flag and its stop dwell.
-	for _, c := range stopClusters(points) {
-		if c.EndIdx > c.StartIdx && c.DwellMin > 0 {
-			d := math.Round(c.DwellMin*10) / 10
-			for k := c.StartIdx; k <= c.EndIdx; k++ {
-				points[k].IdleMin = d
+	//
+	// Dwell is computed PER SOURCE. A "both" response interleaves two
+	// receivers' fixes by time, and the few metres they disagree by would read
+	// to the clusterer as the truck jittering — no stop ever settles, and the
+	// dwell that should show on a thirty-minute halt vanishes.
+	bySource := map[string][]int{}
+	for i, p := range points {
+		bySource[p.Source] = append(bySource[p.Source], i)
+	}
+	for _, idx := range bySource {
+		sub := make([]TripPoint, len(idx))
+		for k, i := range idx {
+			sub[k] = points[i]
+		}
+		for _, c := range stopClusters(sub) {
+			if c.EndIdx > c.StartIdx && c.DwellMin > 0 {
+				d := math.Round(c.DwellMin*10) / 10
+				for k := c.StartIdx; k <= c.EndIdx; k++ {
+					points[idx[k]].IdleMin = d
+				}
 			}
 		}
 	}

@@ -59,9 +59,9 @@ type Position struct {
 type VehicleLive struct {
 	// Owning account — populated ONLY in the platform-admin cross-tenant list, so
 	// the operator (and the detail panel) knows which account a vehicle is in.
-	TenantID       *int64    `json:"tenant_id,omitempty"`
-	TenantName     *string   `json:"tenant_name,omitempty"`
-	VehicleID      int64     `json:"vehicle_id"`
+	TenantID   *int64  `json:"tenant_id,omitempty"`
+	TenantName *string `json:"tenant_name,omitempty"`
+	VehicleID  int64   `json:"vehicle_id"`
 	// MasterDataID is the vehicle's id in karlo_masterdata — the identity the
 	// rest of the platform keys on. VehicleID above is FMS-local and means
 	// nothing to TMS, so a caller correlating a truck across products joins on
