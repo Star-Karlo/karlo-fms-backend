@@ -82,6 +82,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/dashcams/{id}/evidence", h.evidence)
 	r.Get("/v1/dashcams/{id}/live", h.live)
 	r.Post("/v1/dashcams/{id}/download", h.download)
+	r.Get("/v1/dashcams/{id}/clip", h.findClip)
 	r.Get("/v1/dashcams/downloads/{jobId}", h.downloadStatus)
 	r.Get("/v1/video-clips", h.listClips)
 	r.Get("/v1/video-clips/{id}/url", h.clipURL)
@@ -502,6 +503,16 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "start and stop are required")
 		return
 	}
+	// Idempotent: the same window on the same camera is one clip. A second
+	// Save — a re-click, a refreshed page, another operator — returns the
+	// clip already pending or ready instead of pulling the footage again.
+	// Only a FAILED clip is retried.
+	if existing, err := h.lookupClip(r.Context(), auth.EffectiveTenant(r), dc.deviceID, req.Channel, req.Start); err != nil {
+		log.Printf("dashcam: lookup clip before download: %v", err)
+	} else if existing != nil && existing.Status != "failed" {
+		httpx.JSON(w, http.StatusOK, map[string]any{"job_id": existing.JobID, "clip_id": existing.ID, "status": existing.Status, "existing": true})
+		return
+	}
 	jobID, err := h.tel.StartDashcamDownload(r.Context(), dc.deviceID, telemetry.DashcamDownloadReq{
 		Channel: req.Channel, Path: req.Path, Start: req.Start, Stop: req.Stop,
 	})
@@ -523,7 +534,43 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "could not start the save")
 		return
 	}
-	httpx.JSON(w, http.StatusAccepted, map[string]any{"job_id": jobID, "clip_id": clipID})
+	httpx.JSON(w, http.StatusAccepted, map[string]any{"job_id": jobID, "clip_id": clipID, "status": "pending", "existing": false})
+}
+
+// findClip godoc
+//
+//	@Summary		The saved clip for a camera + window, if any
+//	@Description	Lets a client that lost its state (a refreshed page) find the clip a previous Save produced — pending, ready or failed — instead of saving again. Same start string as the download request.
+//	@Tags			dashcams
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			id		path	int		true	"dashcam id"
+//	@Param			channel	query	int		true	"camera channel"
+//	@Param			start	query	string	true	"clip start, YYYY-MM-DD HH:MM:SS (camera-local, as sent to download)"
+//	@Success		200		{object}	dashcam.ClipDTO
+//	@Failure		404		{object}	httpx.ErrorBody
+//	@Router			/v1/dashcams/{id}/clip [get]
+func (h *Handler) findClip(w http.ResponseWriter, r *http.Request) {
+	dc, ok := h.resolve(w, r)
+	if !ok {
+		return
+	}
+	ch, _ := strconv.Atoi(r.URL.Query().Get("channel"))
+	start := r.URL.Query().Get("start")
+	if start == "" {
+		httpx.Error(w, http.StatusBadRequest, "start is required")
+		return
+	}
+	c, err := h.lookupClip(r.Context(), auth.EffectiveTenant(r), dc.deviceID, ch, start)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	if c == nil {
+		httpx.Error(w, http.StatusNotFound, "no saved clip for this window")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, c)
 }
 
 // downloadStatus godoc
@@ -620,6 +667,8 @@ type ClipDTO struct {
 	Reason    string   `json:"reason"`
 	Note      *string  `json:"note"`
 	CreatedAt string   `json:"created_at"`
+	// JobID of the telemetry download, for polling live stage while pending. Empty on list.
+	JobID string `json:"job_id,omitempty"`
 }
 
 // resolved is the tenant-scoped device behind a dashcam id.

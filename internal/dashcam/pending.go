@@ -29,10 +29,9 @@ type pendingClip struct {
 // insertPendingClip records a clip as 'pending' the moment Save is clicked, so
 // it shows in Saved Evidence immediately. The reconciler finishes it.
 func (h *Handler) insertPendingClip(ctx context.Context, pc pendingClip, jobID string) (int64, error) {
-	const layout = "2006-01-02 15:04:05"
-	start, _ := time.Parse(layout, pc.start)
+	start, _ := time.Parse(clipStartLayout, pc.start)
 	var stop *time.Time
-	if t, err := time.Parse(layout, pc.stop); err == nil {
+	if t, err := time.Parse(clipStartLayout, pc.stop); err == nil {
 		stop = &t
 	}
 	var id int64
@@ -46,6 +45,48 @@ RETURNING id`,
 			jobID, pc.lat, pc.lon, pc.note, nullableUser(pc.userID)).Scan(&id)
 	})
 	return id, err
+}
+
+// clipStartLayout is the clock string the download request carries (camera-
+// local, no zone). Parsed the same way here and in insertPendingClip so a
+// lookup matches what a save stored.
+const clipStartLayout = "2006-01-02 15:04:05"
+
+// lookupClip finds the most recent clip saved for this camera + channel +
+// start — the identity of a clip, whatever reason or note it was saved with.
+// nil when none.
+func (h *Handler) lookupClip(ctx context.Context, tenantID int64, deviceID string, channel int, startStr string) (*ClipDTO, error) {
+	start, err := time.Parse(clipStartLayout, startStr)
+	if err != nil {
+		return nil, nil
+	}
+	var c ClipDTO
+	found := false
+	err = db.Tx(ctx, h.pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+SELECT c.id, c.vehicle_id, v.license_plate, c.vss_device_id, c.channel,
+       to_char(c.clip_start, 'YYYY-MM-DD"T"HH24:MI:SSOF:00'),
+       c.status, c.error, c.s3_bucket, c.s3_key, c.size_bytes, c.lat, c.lon, c.reason, c.note,
+       to_char(c.created_at, 'YYYY-MM-DD"T"HH24:MI:SSOF:00'), COALESCE(c.job_id, '')
+FROM video_clips c LEFT JOIN vehicles v ON v.id = c.vehicle_id
+WHERE c.vss_device_id = $1 AND c.channel = $2 AND c.clip_start = $3
+ORDER BY (c.status = 'ready') DESC, (c.status = 'pending') DESC, c.created_at DESC
+LIMIT 1`, deviceID, channel, start)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		if rows.Next() {
+			found = true
+			return rows.Scan(&c.ID, &c.VehicleID, &c.LicensePlate, &c.VSSDeviceID, &c.Channel,
+				&c.ClipStart, &c.Status, &c.Error, &c.S3Bucket, &c.S3Key, &c.SizeBytes, &c.Lat, &c.Lon, &c.Reason, &c.Note, &c.CreatedAt, &c.JobID)
+		}
+		return rows.Err()
+	})
+	if err != nil || !found {
+		return nil, err
+	}
+	return &c, nil
 }
 
 // nullableUser maps a zero user id (unauthenticated/system) to NULL so the FK
