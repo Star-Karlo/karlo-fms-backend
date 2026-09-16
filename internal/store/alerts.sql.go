@@ -312,7 +312,7 @@ func (q *Queries) AlertsInWindow(ctx context.Context, arg AlertsInWindowParams) 
 const checkAllAlerts = `-- name: CheckAllAlerts :execrows
 UPDATE alerts
 SET check_status = 'checked', checked_at = now()
-WHERE check_status = 'unchecked'
+WHERE check_status IN ('unchecked', 'followed_up')
 `
 
 // Mark every currently-unchecked alert as checked (tenant-scoped via RLS).
@@ -328,7 +328,9 @@ const countAlerts = `-- name: CountAlerts :one
 SELECT count(*) FROM alerts a
 LEFT JOIN vehicles v ON v.id = a.vehicle_id
 WHERE ($1::text IS NULL OR a.alert_name ILIKE '%' || $1 || '%' OR v.license_plate ILIKE '%' || $1 || '%')
-  AND ($2::text IS NULL OR a.check_status = $2)
+  AND ($2::text IS NULL
+       OR a.check_status = $2
+       OR ($2 = 'open' AND a.check_status IN ('unchecked', 'followed_up')))
   AND ($3::text IS NULL OR a.device_source = $3)
   AND ($4::text IS NULL OR a.severity = $4)
   AND ($5::text IS NULL OR a.alert_code = $5)
@@ -438,7 +440,7 @@ func (q *Queries) CreateAlert(ctx context.Context, arg CreateAlertParams) (int64
 }
 
 const getAlert = `-- name: GetAlert :one
-SELECT a.id, a.tenant_id, a.vehicle_id, a.tracker_id, a.driver_id, a.source, a.device_source, a.alert_code, a.alert_name, a.severity, a.occurred_at, a.actual_value, a.limit_value, a.lat, a.lon, a.media_url, a.address, a.check_status, a.note, a.read_at, a.checked_at, a.payload, a.created_at, v.license_plate, e.full_name AS driver_name
+SELECT a.id, a.tenant_id, a.vehicle_id, a.tracker_id, a.driver_id, a.source, a.device_source, a.alert_code, a.alert_name, a.severity, a.occurred_at, a.actual_value, a.limit_value, a.lat, a.lon, a.media_url, a.address, a.check_status, a.note, a.read_at, a.checked_at, a.checked_by, a.payload, a.created_at, v.license_plate, e.full_name AS driver_name
 FROM alerts a
 LEFT JOIN vehicles v  ON v.id = a.vehicle_id
 LEFT JOIN employees e ON e.id = a.driver_id
@@ -467,6 +469,7 @@ type GetAlertRow struct {
 	Note         *string            `json:"note"`
 	ReadAt       pgtype.Timestamptz `json:"read_at"`
 	CheckedAt    pgtype.Timestamptz `json:"checked_at"`
+	CheckedBy    *int64             `json:"checked_by"`
 	Payload      []byte             `json:"payload"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	LicensePlate *string            `json:"license_plate"`
@@ -498,6 +501,7 @@ func (q *Queries) GetAlert(ctx context.Context, id int64) (GetAlertRow, error) {
 		&i.Note,
 		&i.ReadAt,
 		&i.CheckedAt,
+		&i.CheckedBy,
 		&i.Payload,
 		&i.CreatedAt,
 		&i.LicensePlate,
@@ -508,14 +512,16 @@ func (q *Queries) GetAlert(ctx context.Context, id int64) (GetAlertRow, error) {
 
 const listAlerts = `-- name: ListAlerts :many
 SELECT
-  a.id, a.tenant_id, a.vehicle_id, a.tracker_id, a.driver_id, a.source, a.device_source, a.alert_code, a.alert_name, a.severity, a.occurred_at, a.actual_value, a.limit_value, a.lat, a.lon, a.media_url, a.address, a.check_status, a.note, a.read_at, a.checked_at, a.payload, a.created_at,
+  a.id, a.tenant_id, a.vehicle_id, a.tracker_id, a.driver_id, a.source, a.device_source, a.alert_code, a.alert_name, a.severity, a.occurred_at, a.actual_value, a.limit_value, a.lat, a.lon, a.media_url, a.address, a.check_status, a.note, a.read_at, a.checked_at, a.checked_by, a.payload, a.created_at,
   v.license_plate,
   e.full_name AS driver_name
 FROM alerts a
 LEFT JOIN vehicles v  ON v.id = a.vehicle_id
 LEFT JOIN employees e ON e.id = a.driver_id
 WHERE ($1::text IS NULL OR a.alert_name ILIKE '%' || $1 || '%' OR v.license_plate ILIKE '%' || $1 || '%')
-  AND ($2::text IS NULL OR a.check_status = $2)
+  AND ($2::text IS NULL
+       OR a.check_status = $2
+       OR ($2 = 'open' AND a.check_status IN ('unchecked', 'followed_up')))
   AND ($3::text IS NULL OR a.device_source = $3)
   AND ($4::text IS NULL OR a.severity = $4)
   AND ($5::text IS NULL OR a.alert_code = $5)
@@ -561,6 +567,7 @@ type ListAlertsRow struct {
 	Note         *string            `json:"note"`
 	ReadAt       pgtype.Timestamptz `json:"read_at"`
 	CheckedAt    pgtype.Timestamptz `json:"checked_at"`
+	CheckedBy    *int64             `json:"checked_by"`
 	Payload      []byte             `json:"payload"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	LicensePlate *string            `json:"license_plate"`
@@ -609,6 +616,7 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListA
 			&i.Note,
 			&i.ReadAt,
 			&i.CheckedAt,
+			&i.CheckedBy,
 			&i.Payload,
 			&i.CreatedAt,
 			&i.LicensePlate,
@@ -628,19 +636,26 @@ const updateAlertCheck = `-- name: UpdateAlertCheck :one
 UPDATE alerts
 SET check_status = $2,
     note         = COALESCE($3, note),
-    checked_at   = CASE WHEN $2 = 'unchecked' THEN NULL ELSE now() END
+    checked_at   = CASE WHEN $2 = 'unchecked' THEN NULL ELSE now() END,
+    checked_by   = CASE WHEN $2 = 'unchecked' THEN NULL ELSE $4 END
 WHERE id = $1
-RETURNING id, tenant_id, vehicle_id, tracker_id, driver_id, source, device_source, alert_code, alert_name, severity, occurred_at, actual_value, limit_value, lat, lon, media_url, address, check_status, note, read_at, checked_at, payload, created_at
+RETURNING id, tenant_id, vehicle_id, tracker_id, driver_id, source, device_source, alert_code, alert_name, severity, occurred_at, actual_value, limit_value, lat, lon, media_url, address, check_status, note, read_at, checked_at, checked_by, payload, created_at
 `
 
 type UpdateAlertCheckParams struct {
 	ID          int64   `json:"id"`
 	CheckStatus string  `json:"check_status"`
 	Note        *string `json:"note"`
+	CheckedBy   *int64  `json:"checked_by"`
 }
 
 func (q *Queries) UpdateAlertCheck(ctx context.Context, arg UpdateAlertCheckParams) (Alert, error) {
-	row := q.db.QueryRow(ctx, updateAlertCheck, arg.ID, arg.CheckStatus, arg.Note)
+	row := q.db.QueryRow(ctx, updateAlertCheck,
+		arg.ID,
+		arg.CheckStatus,
+		arg.Note,
+		arg.CheckedBy,
+	)
 	var i Alert
 	err := row.Scan(
 		&i.ID,
@@ -664,6 +679,7 @@ func (q *Queries) UpdateAlertCheck(ctx context.Context, arg UpdateAlertCheckPara
 		&i.Note,
 		&i.ReadAt,
 		&i.CheckedAt,
+		&i.CheckedBy,
 		&i.Payload,
 		&i.CreatedAt,
 	)

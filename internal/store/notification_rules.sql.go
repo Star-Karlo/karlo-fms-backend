@@ -202,6 +202,54 @@ func (q *Queries) ListNotificationRules(ctx context.Context, arg ListNotificatio
 	return items, nil
 }
 
+const listRulesByCode = `-- name: ListRulesByCode :many
+SELECT id, tenant_id, rule_name, alert_code, notification_name, urgency, status, applies_to, target, threshold, window_minutes, sent_to_self, geofence_scoped, time_scoped, auto_popup, delivery, created_at, updated_at FROM notification_rules WHERE tenant_id = $1 AND alert_code = $2
+`
+
+type ListRulesByCodeParams struct {
+	TenantID  int64  `json:"tenant_id"`
+	AlertCode string `json:"alert_code"`
+}
+
+func (q *Queries) ListRulesByCode(ctx context.Context, arg ListRulesByCodeParams) ([]NotificationRule, error) {
+	rows, err := q.db.Query(ctx, listRulesByCode, arg.TenantID, arg.AlertCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationRule{}
+	for rows.Next() {
+		var i NotificationRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.RuleName,
+			&i.AlertCode,
+			&i.NotificationName,
+			&i.Urgency,
+			&i.Status,
+			&i.AppliesTo,
+			&i.Target,
+			&i.Threshold,
+			&i.WindowMinutes,
+			&i.SentToSelf,
+			&i.GeofenceScoped,
+			&i.TimeScoped,
+			&i.AutoPopup,
+			&i.Delivery,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateNotificationRule = `-- name: UpdateNotificationRule :one
 UPDATE notification_rules
 SET rule_name         = COALESCE($2, rule_name),

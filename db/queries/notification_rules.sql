@@ -47,3 +47,6 @@ RETURNING *;
 
 -- name: DeleteNotificationRule :exec
 DELETE FROM notification_rules WHERE id = $1;
+
+-- name: ListRulesByCode :many
+SELECT * FROM notification_rules WHERE tenant_id = @tenant_id AND alert_code = @alert_code;

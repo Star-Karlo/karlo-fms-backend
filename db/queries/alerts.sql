@@ -7,7 +7,9 @@ FROM alerts a
 LEFT JOIN vehicles v  ON v.id = a.vehicle_id
 LEFT JOIN employees e ON e.id = a.driver_id
 WHERE (sqlc.narg('q')::text IS NULL OR a.alert_name ILIKE '%' || sqlc.narg('q') || '%' OR v.license_plate ILIKE '%' || sqlc.narg('q') || '%')
-  AND (sqlc.narg('check_status')::text IS NULL OR a.check_status = sqlc.narg('check_status'))
+  AND (sqlc.narg('check_status')::text IS NULL
+       OR a.check_status = sqlc.narg('check_status')
+       OR (sqlc.narg('check_status') = 'open' AND a.check_status IN ('unchecked', 'followed_up')))
   AND (sqlc.narg('device_source')::text IS NULL OR a.device_source = sqlc.narg('device_source'))
   AND (sqlc.narg('severity')::text IS NULL OR a.severity = sqlc.narg('severity'))
   AND (sqlc.narg('alert_code')::text IS NULL OR a.alert_code = sqlc.narg('alert_code'))
@@ -21,7 +23,9 @@ LIMIT sqlc.arg('lim') OFFSET sqlc.arg('off');
 SELECT count(*) FROM alerts a
 LEFT JOIN vehicles v ON v.id = a.vehicle_id
 WHERE (sqlc.narg('q')::text IS NULL OR a.alert_name ILIKE '%' || sqlc.narg('q') || '%' OR v.license_plate ILIKE '%' || sqlc.narg('q') || '%')
-  AND (sqlc.narg('check_status')::text IS NULL OR a.check_status = sqlc.narg('check_status'))
+  AND (sqlc.narg('check_status')::text IS NULL
+       OR a.check_status = sqlc.narg('check_status')
+       OR (sqlc.narg('check_status') = 'open' AND a.check_status IN ('unchecked', 'followed_up')))
   AND (sqlc.narg('device_source')::text IS NULL OR a.device_source = sqlc.narg('device_source'))
   AND (sqlc.narg('severity')::text IS NULL OR a.severity = sqlc.narg('severity'))
   AND (sqlc.narg('alert_code')::text IS NULL OR a.alert_code = sqlc.narg('alert_code'))
@@ -40,7 +44,8 @@ WHERE a.id = $1;
 UPDATE alerts
 SET check_status = $2,
     note         = COALESCE(sqlc.narg('note'), note),
-    checked_at   = CASE WHEN $2 = 'unchecked' THEN NULL ELSE now() END
+    checked_at   = CASE WHEN $2 = 'unchecked' THEN NULL ELSE now() END,
+    checked_by   = CASE WHEN $2 = 'unchecked' THEN NULL ELSE sqlc.narg('checked_by') END
 WHERE id = $1
 RETURNING *;
 
@@ -48,7 +53,7 @@ RETURNING *;
 -- Mark every currently-unchecked alert as checked (tenant-scoped via RLS).
 UPDATE alerts
 SET check_status = 'checked', checked_at = now()
-WHERE check_status = 'unchecked';
+WHERE check_status IN ('unchecked', 'followed_up');
 
 -- name: AlertsInWindow :many
 -- All alerts in a time window (bounded), for Control Tower aggregation in Go.

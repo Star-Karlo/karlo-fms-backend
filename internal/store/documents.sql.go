@@ -39,6 +39,34 @@ func (q *Queries) CountDocuments(ctx context.Context, arg CountDocumentsParams) 
 	return count, err
 }
 
+const countRecentDocumentAlert = `-- name: CountRecentDocumentAlert :one
+SELECT count(*) FROM alerts
+WHERE tenant_id = $1 AND alert_code = $2
+  AND limit_value = $3::numeric
+  AND occurred_at > now() - make_interval(days => $4::int)
+`
+
+type CountRecentDocumentAlertParams struct {
+	TenantID     int64          `json:"tenant_id"`
+	AlertCode    *string        `json:"alert_code"`
+	DocumentID   pgtype.Numeric `json:"document_id"`
+	CooldownDays int32          `json:"cooldown_days"`
+}
+
+// Dedupe for document alerts, keyed on the document (in limit_value) rather
+// than the vehicle: two documents on one truck are two reminders.
+func (q *Queries) CountRecentDocumentAlert(ctx context.Context, arg CountRecentDocumentAlertParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRecentDocumentAlert,
+		arg.TenantID,
+		arg.AlertCode,
+		arg.DocumentID,
+		arg.CooldownDays,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const documentStatusCounts = `-- name: DocumentStatusCounts :one
 SELECT
   count(*) FILTER (WHERE expiry < current_date) AS expired,
@@ -151,6 +179,79 @@ func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([
 			&i.VehiclePlate,
 			&i.DriverName,
 			&i.DocStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExpiringDocuments = `-- name: ListExpiringDocuments :many
+SELECT d.id, d.owner_type, d.owner_id, d.kind, d.title, d.number, d.expiry,
+       COALESCE(v.id, dv.id, 0)::bigint                     AS vehicle_id,     -- 0 = no vehicle to file against
+       COALESCE(v.license_plate, dv.license_plate, '')::text AS license_plate,
+       e.full_name                                 AS driver_name,
+       (d.expiry - CURRENT_DATE)::int              AS days_left
+FROM documents d
+LEFT JOIN vehicles v   ON d.owner_type = 'vehicle' AND v.id = d.owner_id AND v.tenant_id = d.tenant_id
+LEFT JOIN employees e  ON d.owner_type = 'driver'  AND e.id = d.owner_id AND e.tenant_id = d.tenant_id
+LEFT JOIN vehicles dv  ON d.owner_type = 'driver'  AND dv.current_driver_id = e.id AND dv.tenant_id = d.tenant_id
+WHERE d.tenant_id = $1
+  AND d.expiry IS NOT NULL
+  AND d.expiry <= CURRENT_DATE + $2::int
+  AND d.expiry >= CURRENT_DATE - 30
+ORDER BY d.expiry
+`
+
+type ListExpiringDocumentsParams struct {
+	TenantID   int64 `json:"tenant_id"`
+	WithinDays int32 `json:"within_days"`
+}
+
+type ListExpiringDocumentsRow struct {
+	ID           int64       `json:"id"`
+	OwnerType    string      `json:"owner_type"`
+	OwnerID      int64       `json:"owner_id"`
+	Kind         *string     `json:"kind"`
+	Title        *string     `json:"title"`
+	Number       *string     `json:"number"`
+	Expiry       pgtype.Date `json:"expiry"`
+	VehicleID    int64       `json:"vehicle_id"`
+	LicensePlate string      `json:"license_plate"`
+	DriverName   *string     `json:"driver_name"`
+	DaysLeft     int32       `json:"days_left"`
+}
+
+// Documents whose expiry falls within the next @within_days days (or has
+// already passed but not by more than 30 days — an expired STNK still needs
+// chasing), with the vehicle to file the alert against: the document's own
+// vehicle, or for a driver's document, the vehicle that driver currently
+// drives. Feeds the daily document-expiry pass of the notification engine.
+func (q *Queries) ListExpiringDocuments(ctx context.Context, arg ListExpiringDocumentsParams) ([]ListExpiringDocumentsRow, error) {
+	rows, err := q.db.Query(ctx, listExpiringDocuments, arg.TenantID, arg.WithinDays)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListExpiringDocumentsRow{}
+	for rows.Next() {
+		var i ListExpiringDocumentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerType,
+			&i.OwnerID,
+			&i.Kind,
+			&i.Title,
+			&i.Number,
+			&i.Expiry,
+			&i.VehicleID,
+			&i.LicensePlate,
+			&i.DriverName,
+			&i.DaysLeft,
 		); err != nil {
 			return nil, err
 		}

@@ -97,11 +97,13 @@ type Engine struct {
 	pool     *db.Pool
 	tel      *telemetry.Client
 	interval time.Duration
+	// docLast: when the daily document-expiry pass last ran, per tenant.
+	docLast map[int64]time.Time
 }
 
 // New builds the engine. interval ~= the live poll cadence.
 func New(pool *db.Pool, tel *telemetry.Client, interval time.Duration) *Engine {
-	return &Engine{pool: pool, tel: tel, interval: interval}
+	return &Engine{pool: pool, tel: tel, interval: interval, docLast: map[int64]time.Time{}}
 }
 
 // Run ticks until ctx is cancelled. Evaluates once immediately, then on interval.
@@ -150,6 +152,11 @@ func (e *Engine) tick(ctx context.Context) error {
 			continue
 		}
 		created += n
+		if dn, err := e.evalDocuments(ctx, tid); err != nil {
+			log.Printf("notifengine: tenant %d documents: %v", tid, err)
+		} else {
+			created += dn
+		}
 	}
 	if created > 0 {
 		log.Printf("notifengine: created %d alert(s)", created)

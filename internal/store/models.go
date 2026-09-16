@@ -30,6 +30,7 @@ type Alert struct {
 	Note         *string            `json:"note"`
 	ReadAt       pgtype.Timestamptz `json:"read_at"`
 	CheckedAt    pgtype.Timestamptz `json:"checked_at"`
+	CheckedBy    *int64             `json:"checked_by"`
 	Payload      []byte             `json:"payload"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }

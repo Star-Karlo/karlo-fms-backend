@@ -40,6 +40,8 @@ type DTO struct {
 	CheckStatus  string     `json:"check_status"`
 	Note         *string    `json:"note"`
 	CheckedAt    *time.Time `json:"checked_at"`
+	// Who last changed check_status (a user id; the client resolves the name).
+	CheckedBy *int64 `json:"checked_by"`
 }
 
 // HistoryItem is a compact alert entry for the detail timeline.
@@ -62,7 +64,7 @@ type Detail struct {
 
 // CheckRequest updates an alert's check status.
 type CheckRequest struct {
-	CheckStatus string  `json:"check_status"` // unchecked | checked | false_alert
+	CheckStatus string  `json:"check_status"` // unchecked (open) | followed_up | checked (resolved) | false_alert
 	Note        *string `json:"note"`
 }
 
@@ -83,7 +85,7 @@ func fromList(a store.ListAlertsRow) DTO {
 		AlertCode: a.AlertCode, AlertName: a.AlertName, NameEN: nameEN(a.AlertCode), Severity: a.Severity,
 		OccurredAt: conv.Time(a.OccurredAt), ActualValue: conv.NumF(a.ActualValue), LimitValue: conv.NumF(a.LimitValue),
 		Lat: a.Lat, Lon: a.Lon, MediaURL: a.MediaUrl, Address: a.Address,
-		CheckStatus: a.CheckStatus, Note: a.Note, CheckedAt: conv.Time(a.CheckedAt),
+		CheckStatus: a.CheckStatus, Note: a.Note, CheckedAt: conv.Time(a.CheckedAt), CheckedBy: a.CheckedBy,
 	}
 }
 
@@ -94,7 +96,7 @@ func fromGet(a store.GetAlertRow) DTO {
 		AlertCode: a.AlertCode, AlertName: a.AlertName, NameEN: nameEN(a.AlertCode), Severity: a.Severity,
 		OccurredAt: conv.Time(a.OccurredAt), ActualValue: conv.NumF(a.ActualValue), LimitValue: conv.NumF(a.LimitValue),
 		Lat: a.Lat, Lon: a.Lon, MediaURL: a.MediaUrl, Address: a.Address,
-		CheckStatus: a.CheckStatus, Note: a.Note, CheckedAt: conv.Time(a.CheckedAt),
+		CheckStatus: a.CheckStatus, Note: a.Note, CheckedAt: conv.Time(a.CheckedAt), CheckedBy: a.CheckedBy,
 	}
 }
 
@@ -285,7 +287,7 @@ func deref(s *string) string {
 //	@Security	BearerAuth
 //	@Produce	json
 //	@Param		q				query		string	false	"search"
-//	@Param		check_status	query		string	false	"unchecked|checked|false_alert"
+//	@Param		check_status	query		string	false	"unchecked|followed_up|checked|false_alert (or 'open' = unchecked+followed_up)"
 //	@Param		device_source	query		string	false	"gps|camera"
 //	@Param		severity		query		string	false	"urgent|important|info"
 //	@Param		alert_code		query		string	false	"taxonomy code"
@@ -493,7 +495,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 
 // check godoc
 //
-//	@Summary	Set an alert's check status (checked / false_alert / unchecked)
+//	@Summary	Set an alert's lifecycle status (unchecked=open / followed_up / checked=resolved / false_alert)
 //	@Tags		alerts
 //	@Security	BearerAuth
 //	@Accept		json
@@ -514,22 +516,26 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.CheckStatus {
-	case "unchecked", "checked", "false_alert":
+	case "unchecked", "followed_up", "checked", "false_alert":
 	default:
 		httpx.Error(w, http.StatusBadRequest, "invalid check_status")
 		return
 	}
 	tid := auth.TenantID(r.Context())
+	var by *int64
+	if uid := auth.UserID(r.Context()); uid != 0 {
+		by = &uid
+	}
 	var dto DTO
 	err = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
-		a, err := store.New(tx).UpdateAlertCheck(r.Context(), store.UpdateAlertCheckParams{ID: id, CheckStatus: req.CheckStatus, Note: req.Note})
+		a, err := store.New(tx).UpdateAlertCheck(r.Context(), store.UpdateAlertCheckParams{ID: id, CheckStatus: req.CheckStatus, Note: req.Note, CheckedBy: by})
 		if err != nil {
 			return err
 		}
 		dto = DTO{
 			ID: a.ID, VehicleID: a.VehicleID, AlertCode: a.AlertCode, AlertName: a.AlertName,
 			NameEN: nameEN(a.AlertCode), Severity: a.Severity, CheckStatus: a.CheckStatus, Note: a.Note,
-			OccurredAt: conv.Time(a.OccurredAt), CheckedAt: conv.Time(a.CheckedAt),
+			OccurredAt: conv.Time(a.OccurredAt), CheckedAt: conv.Time(a.CheckedAt), CheckedBy: a.CheckedBy,
 		}
 		return nil
 	})

@@ -130,6 +130,7 @@ CREATE TABLE alerts (
   note         text,
   read_at      timestamptz,
   checked_at   timestamptz,
+  checked_by   bigint,
   payload      jsonb NOT NULL DEFAULT '{}',
   created_at   timestamptz NOT NULL DEFAULT now()
 );
