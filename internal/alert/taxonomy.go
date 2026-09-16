@@ -69,6 +69,11 @@ func LabelFor(code string) string {
 // and the driver scorecard surface. Customers can override per rule.
 var Taxonomy = []AlertType{
 	{"DOCUMENT_EXPIRING", "Dokumen Akan Kedaluwarsa", "Document Expiring", SourceSystem, SevImportant, false},
+	// SOP (procedure) checks — thresholds are the company's, see internal/sop.
+	{"SOP_OVERSPEED", "Melebihi Batas Kecepatan SOP", "Sustained Overspeed (SOP)", SourceSystem, SevUrgent, true},
+	{"SOP_LONG_STOP", "Berhenti Melebihi Batas SOP", "Stopped Too Long (SOP)", SourceSystem, SevImportant, false},
+	{"SOP_OFFLINE", "Kendaraan Offline Melebihi Batas SOP", "Offline Too Long (SOP)", SourceSystem, SevImportant, false},
+	{"SOP_SENSOR", "Sensor Tidak Terbaca", "Sensor Not Reporting (SOP)", SourceSystem, SevImportant, false},
 	{"FUEL_GAIN", "Penambahan Bahan Bakar", "Fuel Gain", SourceGPS, SevInfo, false},
 	{"GEOFENCE_ENTER", "Masuk Geolokasi", "Entering Geofence", SourceGPS, SevInfo, false},
 	{"GEOFENCE_EXIT", "Keluar Geolokasi", "Exiting Geofence", SourceGPS, SevImportant, false},

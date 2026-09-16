@@ -308,3 +308,18 @@ CREATE TABLE tracker_assignments (
   unfitted_at timestamptz,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE company_sop_settings (
+  tenant_id            bigint PRIMARY KEY REFERENCES tenants(id),
+  sop_enabled          boolean NOT NULL DEFAULT false,
+  speed_limit_kmh      numeric NOT NULL DEFAULT 80,
+  overspeed_min        int     NOT NULL DEFAULT 30,
+  stop_max_min         int     NOT NULL DEFAULT 300,
+  offline_min          int     NOT NULL DEFAULT 30,
+  sensor_timeout_min   int     NOT NULL DEFAULT 60,
+  idle_min             int     NOT NULL DEFAULT 15,
+  fuel_price_per_litre numeric NOT NULL DEFAULT 6800,
+  idle_lph             numeric NOT NULL DEFAULT 2.5,
+  updated_by           bigint,
+  updated_at           timestamptz NOT NULL DEFAULT now()
+);

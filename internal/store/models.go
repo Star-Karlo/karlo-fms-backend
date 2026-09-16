@@ -47,6 +47,21 @@ type ApiToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type CompanySopSetting struct {
+	TenantID          int64              `json:"tenant_id"`
+	SopEnabled        bool               `json:"sop_enabled"`
+	SpeedLimitKmh     pgtype.Numeric     `json:"speed_limit_kmh"`
+	OverspeedMin      int32              `json:"overspeed_min"`
+	StopMaxMin        int32              `json:"stop_max_min"`
+	OfflineMin        int32              `json:"offline_min"`
+	SensorTimeoutMin  int32              `json:"sensor_timeout_min"`
+	IdleMin           int32              `json:"idle_min"`
+	FuelPricePerLitre pgtype.Numeric     `json:"fuel_price_per_litre"`
+	IdleLph           pgtype.Numeric     `json:"idle_lph"`
+	UpdatedBy         *int64             `json:"updated_by"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type DashboardLayout struct {
 	ID        int64              `json:"id"`
 	TenantID  int64              `json:"tenant_id"`

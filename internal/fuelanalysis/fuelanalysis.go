@@ -25,6 +25,7 @@ import (
 	"github.com/karlo/fms-backend/internal/liveview"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/sop"
 )
 
 // Defaults for the Indonesian market. Solar/Biosolar (subsidised diesel) is the
@@ -103,8 +104,22 @@ type Response struct {
 func (h *Handler) analysis(w http.ResponseWriter, r *http.Request) {
 	tenantID := auth.EffectiveTenant(r)
 	days := clampInt(qInt(r, "days", defaultDays), 1, maxDays)
-	price := qFloat(r, "price", defaultPricePerLitre)
-	idleLph := qFloat(r, "idle_lph", defaultIdleLph)
+	// The company's own price and idle burn (Settings → SOP) are the defaults;
+	// an explicit query value still wins for what-if runs on the Fuel page.
+	defPrice, defIdle := defaultPricePerLitre, defaultIdleLph
+	_ = db.Tx(r.Context(), h.pool, tenantID, func(tx pgx.Tx) error {
+		if st, err := sop.Load(r.Context(), tx, tenantID); err == nil {
+			if st.FuelPricePerLitre > 0 {
+				defPrice = st.FuelPricePerLitre
+			}
+			if st.IdleLph > 0 {
+				defIdle = st.IdleLph
+			}
+		}
+		return nil
+	})
+	price := qFloat(r, "price", defPrice)
+	idleLph := qFloat(r, "idle_lph", defIdle)
 	// Optional: scope to one vehicle (the per-vehicle telemetry panel). 0 = fleet.
 	onlyVehicle := int64(qInt(r, "vehicle_id", 0))
 

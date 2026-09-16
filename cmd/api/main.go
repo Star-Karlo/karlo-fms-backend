@@ -68,6 +68,7 @@ import (
 	"github.com/karlo/fms-backend/internal/roles"
 	"github.com/karlo/fms-backend/internal/routing"
 	"github.com/karlo/fms-backend/internal/scorecard"
+	"github.com/karlo/fms-backend/internal/sop"
 	"github.com/karlo/fms-backend/internal/telemetry"
 	"github.com/karlo/fms-backend/internal/telemetrysync"
 	"github.com/karlo/fms-backend/internal/tenantsync"
@@ -365,6 +366,7 @@ func main() {
 		telemetrySyncH.Routes(pr)
 		gated(pr, chain(featureH.RequireFeature("ai_dashboard"), rolesH.Require("dashboard.ai")), aiDashH.Routes)
 		companyH.Routes(pr)
+		sop.NewHandler(pool).Routes(pr)
 		prefsH.Routes(pr)
 		retentionH.Routes(pr)
 		platformH.Routes(pr)

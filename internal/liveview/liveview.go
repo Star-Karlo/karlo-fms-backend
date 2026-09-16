@@ -500,6 +500,10 @@ type BehaviorSummary struct {
 	IdleCount      int     `json:"idle_count"`       // stops over the idle threshold
 	TotalIdleMin   float64 `json:"total_idle_min"`   // summed dwell of those stops
 	LongestStopMin float64 `json:"longest_stop_min"` // longest single stop
+	// IdleByReason splits TotalIdleMin by why the truck stood still (see
+	// classifyStop). "loading" and "traffic" are the job; "rest" and "unknown"
+	// are what a fleet manager can actually act on.
+	IdleByReason map[string]float64 `json:"idle_by_reason"`
 }
 
 // IdleStop is a place the vehicle sat longer than the idle threshold.
@@ -509,6 +513,59 @@ type IdleStop struct {
 	Start    time.Time `json:"start_time"`
 	End      time.Time `json:"end_time"`
 	DwellMin float64   `json:"dwell_min"`
+	// Reason: loading | traffic | rest | unknown — why the truck stood still,
+	// so idle time is not judged subjectively (feedback epic 2.2). Place names
+	// the geofence for a loading stop.
+	Reason string `json:"reason"`
+	Place  string `json:"place,omitempty"`
+}
+
+// classifyStop decides why a stop happened, from what the data can say:
+//   - inside one of the company's geofences (a warehouse, depot, customer
+//     site)                                       -> loading   (place = its name)
+//   - short, engine running, on a named road      -> traffic
+//   - long, or engine off for most of the stop     -> rest
+//   - otherwise                                   -> unknown
+//
+// Deliberately simple and explainable; a reason a dispatcher cannot argue
+// with is worth more than a cleverer one they cannot check.
+func classifyStop(c stopCluster, pts []TripPoint, insideGeofence string) (string, string) {
+	if insideGeofence != "" {
+		return "loading", insideGeofence
+	}
+	ignOn, ignN, road := 0, 0, false
+	for i := c.StartIdx; i <= c.EndIdx && i < len(pts); i++ {
+		if pts[i].Ignition != nil {
+			ignN++
+			if *pts[i].Ignition {
+				ignOn++
+			}
+		}
+		if pts[i].Address != "" {
+			road = true
+		}
+	}
+	engineMostlyOn := ignN == 0 || float64(ignOn)/float64(ignN) >= 0.7
+	switch {
+	case c.DwellMin <= 20 && engineMostlyOn && road:
+		return "traffic", ""
+	case c.DwellMin >= 60 || !engineMostlyOn:
+		return "rest", ""
+	}
+	return "unknown", ""
+}
+
+// geofenceAt names the first company geofence containing the point, or "".
+func (s *Service) geofenceAt(ctx context.Context, tenantID int64, lat, lon float64) string {
+	var name string
+	_ = db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+SELECT name FROM geofences
+WHERE (geom IS NOT NULL AND ST_Covers(geom, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography))
+   OR (center IS NOT NULL AND radius_m IS NOT NULL AND ST_DWithin(center, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography, radius_m))
+ORDER BY id LIMIT 1`, lat, lon).Scan(&name)
+	})
+	return name
 }
 
 // BehaviorResult is the per-vehicle behavior analysis.
@@ -690,14 +747,17 @@ func (s *Service) Behavior(ctx context.Context, tenantID, vehicleID int64, from,
 	}
 	res.Summary.DistanceKm = math.Round(res.Summary.DistanceKm*10) / 10
 
-	// Idle stops: clusters that sat longer than the threshold.
+	// Idle stops: clusters that sat longer than the threshold, each with a reason.
+	res.Summary.IdleByReason = map[string]float64{}
 	for _, c := range stopClusters(pts) {
 		if c.EndIdx <= c.StartIdx || c.DwellMin < idleThreshold {
 			continue
 		}
 		dwell := math.Round(c.DwellMin*10) / 10
 		lat, lon := c.Lat, c.Lon
-		res.Stops = append(res.Stops, IdleStop{Lat: &lat, Lon: &lon, Start: c.Start, End: c.End, DwellMin: dwell})
+		reason, place := classifyStop(c, pts, s.geofenceAt(ctx, tenantID, lat, lon))
+		res.Stops = append(res.Stops, IdleStop{Lat: &lat, Lon: &lon, Start: c.Start, End: c.End, DwellMin: dwell, Reason: reason, Place: place})
+		res.Summary.IdleByReason[reason] = math.Round((res.Summary.IdleByReason[reason]+dwell)*10) / 10
 		res.Summary.IdleCount++
 		res.Summary.TotalIdleMin += dwell
 		if dwell > res.Summary.LongestStopMin {

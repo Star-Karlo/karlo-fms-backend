@@ -99,11 +99,13 @@ type Engine struct {
 	interval time.Duration
 	// docLast: when the daily document-expiry pass last ran, per tenant.
 	docLast map[int64]time.Time
+	// sopSince: when each SOP condition was first observed, per vehicle (sop.go).
+	sopSince map[sopKey]time.Time
 }
 
 // New builds the engine. interval ~= the live poll cadence.
 func New(pool *db.Pool, tel *telemetry.Client, interval time.Duration) *Engine {
-	return &Engine{pool: pool, tel: tel, interval: interval, docLast: map[int64]time.Time{}}
+	return &Engine{pool: pool, tel: tel, interval: interval, docLast: map[int64]time.Time{}, sopSince: map[sopKey]time.Time{}}
 }
 
 // Run ticks until ctx is cancelled. Evaluates once immediately, then on interval.
@@ -156,6 +158,25 @@ func (e *Engine) tick(ctx context.Context) error {
 			log.Printf("notifengine: tenant %d documents: %v", tid, err)
 		} else {
 			created += dn
+		}
+	}
+	// SOP pass, only for tenants that switched it on.
+	var sopTenants []store.CompanySopSetting
+	if err := db.SystemTx(ctx, e.pool, func(tx pgx.Tx) error {
+		var err error
+		sopTenants, err = store.New(tx).ListSopEnabledTenants(ctx)
+		return err
+	}); err != nil {
+		log.Printf("notifengine: sop tenants: %v", err)
+	}
+	for _, cfg := range sopTenants {
+		if e.tel == nil {
+			break
+		}
+		if n, err := e.evalSOP(ctx, cfg.TenantID, cfg); err != nil {
+			log.Printf("notifengine: tenant %d sop: %v", cfg.TenantID, err)
+		} else {
+			created += n
 		}
 	}
 	if created > 0 {
