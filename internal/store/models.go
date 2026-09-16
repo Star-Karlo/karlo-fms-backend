@@ -57,6 +57,7 @@ type CompanySopSetting struct {
 	SensorTimeoutMin  int32              `json:"sensor_timeout_min"`
 	IdleMin           int32              `json:"idle_min"`
 	FuelPricePerLitre pgtype.Numeric     `json:"fuel_price_per_litre"`
+	FuelType          string             `json:"fuel_type"`
 	IdleLph           pgtype.Numeric     `json:"idle_lph"`
 	UpdatedBy         *int64             `json:"updated_by"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
@@ -134,6 +135,17 @@ type FleetGroup struct {
 	Description *string            `json:"description"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FuelPrice struct {
+	ID            int64              `json:"id"`
+	FuelType      string             `json:"fuel_type"`
+	Price         pgtype.Numeric     `json:"price"`
+	EffectiveFrom pgtype.Date        `json:"effective_from"`
+	Source        *string            `json:"source"`
+	Note          *string            `json:"note"`
+	CreatedBy     *int64             `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type Hangar struct {

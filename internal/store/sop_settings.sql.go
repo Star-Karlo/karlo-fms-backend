@@ -14,7 +14,7 @@ import (
 const getSopSettings = `-- name: GetSopSettings :one
 INSERT INTO company_sop_settings (tenant_id) VALUES ($1)
 ON CONFLICT (tenant_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id
-RETURNING tenant_id, sop_enabled, speed_limit_kmh, overspeed_min, stop_max_min, offline_min, sensor_timeout_min, idle_min, fuel_price_per_litre, idle_lph, updated_by, updated_at
+RETURNING tenant_id, sop_enabled, speed_limit_kmh, overspeed_min, stop_max_min, offline_min, sensor_timeout_min, idle_min, fuel_price_per_litre, fuel_type, idle_lph, updated_by, updated_at
 `
 
 // Always answers: the row is created with the defaults on first read.
@@ -31,6 +31,7 @@ func (q *Queries) GetSopSettings(ctx context.Context, tenantID int64) (CompanySo
 		&i.SensorTimeoutMin,
 		&i.IdleMin,
 		&i.FuelPricePerLitre,
+		&i.FuelType,
 		&i.IdleLph,
 		&i.UpdatedBy,
 		&i.UpdatedAt,
@@ -38,8 +39,102 @@ func (q *Queries) GetSopSettings(ctx context.Context, tenantID int64) (CompanySo
 	return i, err
 }
 
+const insertFuelPrice = `-- name: InsertFuelPrice :one
+INSERT INTO fuel_prices (fuel_type, price, effective_from, source, note, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (fuel_type, effective_from) DO UPDATE SET price = EXCLUDED.price, source = EXCLUDED.source, note = EXCLUDED.note
+RETURNING id, fuel_type, price, effective_from, source, note, created_by, created_at
+`
+
+type InsertFuelPriceParams struct {
+	FuelType      string         `json:"fuel_type"`
+	Price         pgtype.Numeric `json:"price"`
+	EffectiveFrom pgtype.Date    `json:"effective_from"`
+	Source        *string        `json:"source"`
+	Note          *string        `json:"note"`
+	CreatedBy     *int64         `json:"created_by"`
+}
+
+func (q *Queries) InsertFuelPrice(ctx context.Context, arg InsertFuelPriceParams) (FuelPrice, error) {
+	row := q.db.QueryRow(ctx, insertFuelPrice,
+		arg.FuelType,
+		arg.Price,
+		arg.EffectiveFrom,
+		arg.Source,
+		arg.Note,
+		arg.CreatedBy,
+	)
+	var i FuelPrice
+	err := row.Scan(
+		&i.ID,
+		&i.FuelType,
+		&i.Price,
+		&i.EffectiveFrom,
+		&i.Source,
+		&i.Note,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const latestFuelPrice = `-- name: LatestFuelPrice :one
+SELECT id, fuel_type, price, effective_from, source, note, created_by, created_at FROM fuel_prices WHERE fuel_type = $1 AND effective_from <= CURRENT_DATE
+ORDER BY effective_from DESC LIMIT 1
+`
+
+// The national price in force today for a fuel type.
+func (q *Queries) LatestFuelPrice(ctx context.Context, fuelType string) (FuelPrice, error) {
+	row := q.db.QueryRow(ctx, latestFuelPrice, fuelType)
+	var i FuelPrice
+	err := row.Scan(
+		&i.ID,
+		&i.FuelType,
+		&i.Price,
+		&i.EffectiveFrom,
+		&i.Source,
+		&i.Note,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listFuelPrices = `-- name: ListFuelPrices :many
+SELECT id, fuel_type, price, effective_from, source, note, created_by, created_at FROM fuel_prices ORDER BY fuel_type, effective_from DESC
+`
+
+func (q *Queries) ListFuelPrices(ctx context.Context) ([]FuelPrice, error) {
+	rows, err := q.db.Query(ctx, listFuelPrices)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FuelPrice{}
+	for rows.Next() {
+		var i FuelPrice
+		if err := rows.Scan(
+			&i.ID,
+			&i.FuelType,
+			&i.Price,
+			&i.EffectiveFrom,
+			&i.Source,
+			&i.Note,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSopEnabledTenants = `-- name: ListSopEnabledTenants :many
-SELECT tenant_id, sop_enabled, speed_limit_kmh, overspeed_min, stop_max_min, offline_min, sensor_timeout_min, idle_min, fuel_price_per_litre, idle_lph, updated_by, updated_at FROM company_sop_settings WHERE sop_enabled
+SELECT tenant_id, sop_enabled, speed_limit_kmh, overspeed_min, stop_max_min, offline_min, sensor_timeout_min, idle_min, fuel_price_per_litre, fuel_type, idle_lph, updated_by, updated_at FROM company_sop_settings WHERE sop_enabled
 `
 
 func (q *Queries) ListSopEnabledTenants(ctx context.Context) ([]CompanySopSetting, error) {
@@ -61,6 +156,7 @@ func (q *Queries) ListSopEnabledTenants(ctx context.Context) ([]CompanySopSettin
 			&i.SensorTimeoutMin,
 			&i.IdleMin,
 			&i.FuelPricePerLitre,
+			&i.FuelType,
 			&i.IdleLph,
 			&i.UpdatedBy,
 			&i.UpdatedAt,
@@ -116,15 +212,15 @@ func (q *Queries) ListTenantVehiclesWithTracker(ctx context.Context, tenantID in
 
 const updateSopSettings = `-- name: UpdateSopSettings :one
 INSERT INTO company_sop_settings (tenant_id, sop_enabled, speed_limit_kmh, overspeed_min, stop_max_min, offline_min,
-                                  sensor_timeout_min, idle_min, fuel_price_per_litre, idle_lph, updated_by, updated_at)
+                                  sensor_timeout_min, idle_min, fuel_price_per_litre, fuel_type, idle_lph, updated_by, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6,
-        $7, $8, $9, $10, $11, now())
+        $7, $8, $9, $10, $11, $12, now())
 ON CONFLICT (tenant_id) DO UPDATE SET
   sop_enabled = EXCLUDED.sop_enabled, speed_limit_kmh = EXCLUDED.speed_limit_kmh, overspeed_min = EXCLUDED.overspeed_min,
   stop_max_min = EXCLUDED.stop_max_min, offline_min = EXCLUDED.offline_min, sensor_timeout_min = EXCLUDED.sensor_timeout_min,
-  idle_min = EXCLUDED.idle_min, fuel_price_per_litre = EXCLUDED.fuel_price_per_litre, idle_lph = EXCLUDED.idle_lph,
+  idle_min = EXCLUDED.idle_min, fuel_price_per_litre = EXCLUDED.fuel_price_per_litre, fuel_type = EXCLUDED.fuel_type, idle_lph = EXCLUDED.idle_lph,
   updated_by = EXCLUDED.updated_by, updated_at = now()
-RETURNING tenant_id, sop_enabled, speed_limit_kmh, overspeed_min, stop_max_min, offline_min, sensor_timeout_min, idle_min, fuel_price_per_litre, idle_lph, updated_by, updated_at
+RETURNING tenant_id, sop_enabled, speed_limit_kmh, overspeed_min, stop_max_min, offline_min, sensor_timeout_min, idle_min, fuel_price_per_litre, fuel_type, idle_lph, updated_by, updated_at
 `
 
 type UpdateSopSettingsParams struct {
@@ -137,6 +233,7 @@ type UpdateSopSettingsParams struct {
 	SensorTimeoutMin  int32          `json:"sensor_timeout_min"`
 	IdleMin           int32          `json:"idle_min"`
 	FuelPricePerLitre pgtype.Numeric `json:"fuel_price_per_litre"`
+	FuelType          string         `json:"fuel_type"`
 	IdleLph           pgtype.Numeric `json:"idle_lph"`
 	UpdatedBy         *int64         `json:"updated_by"`
 }
@@ -152,6 +249,7 @@ func (q *Queries) UpdateSopSettings(ctx context.Context, arg UpdateSopSettingsPa
 		arg.SensorTimeoutMin,
 		arg.IdleMin,
 		arg.FuelPricePerLitre,
+		arg.FuelType,
 		arg.IdleLph,
 		arg.UpdatedBy,
 	)
@@ -166,6 +264,7 @@ func (q *Queries) UpdateSopSettings(ctx context.Context, arg UpdateSopSettingsPa
 		&i.SensorTimeoutMin,
 		&i.IdleMin,
 		&i.FuelPricePerLitre,
+		&i.FuelType,
 		&i.IdleLph,
 		&i.UpdatedBy,
 		&i.UpdatedAt,

@@ -318,8 +318,20 @@ CREATE TABLE company_sop_settings (
   offline_min          int     NOT NULL DEFAULT 30,
   sensor_timeout_min   int     NOT NULL DEFAULT 60,
   idle_min             int     NOT NULL DEFAULT 15,
-  fuel_price_per_litre numeric NOT NULL DEFAULT 6800,
+  fuel_price_per_litre numeric,
+  fuel_type            text NOT NULL DEFAULT 'biosolar',
   idle_lph             numeric NOT NULL DEFAULT 2.5,
   updated_by           bigint,
   updated_at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE fuel_prices (
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  fuel_type      text    NOT NULL,
+  price          numeric NOT NULL,
+  effective_from date    NOT NULL,
+  source         text,
+  note           text,
+  created_by     bigint,
+  created_at     timestamptz NOT NULL DEFAULT now()
 );
