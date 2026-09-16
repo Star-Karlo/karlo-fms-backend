@@ -127,28 +127,3 @@ var tmsCatalog = Catalog{
 	"telemetry.read":   {Key: "telemetry.read", Feature: "telemetry", Group: "Telemetry", Label: "View vehicle positions"},
 	"telemetry.export": {Key: "telemetry.export", Feature: "telemetry", Group: "Telemetry", Label: "Export telemetry"},
 }
-
-// DefaultTMSFeatures is what a new company gets on TMS.
-//
-// Excludes accounting and telemetry: those are the separately sold ones, and a
-// company gets them when someone decides they should.
-func DefaultTMSFeatures() []string {
-	return []string{
-		"order", "agreement", "invoice", "shipment",
-		"truck", "warehouse", "customer", "dashboard", "notification",
-		// Dispatch and form configuration are part of the base product. They
-		// are listed here because a feature absent from this list is a feature
-		// no new company is granted, and every permission gating on it then
-		// denies for everyone — silently, since a denied permission looks
-		// exactly like one nobody was given.
-		//
-		// routing.advanced is deliberately NOT here: it is the sold one.
-		"dispatch", "configuration",
-		// Administration and reference data. Granted by default so gating the
-		// keys that depend on them changes nothing for an existing company,
-		// and so no company can lose the ability to administer itself by
-		// accident. Migration 000002's backfill already granted both; they
-		// were simply never declared as features.
-		"collaboration", "masterData",
-	}
-}

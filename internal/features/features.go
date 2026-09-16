@@ -11,7 +11,6 @@ package features
 import (
 	"context"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -127,12 +126,8 @@ func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
 
 // Routes mounts the entitlement endpoints inside the authenticated group.
 func (h *Handler) Routes(r chi.Router) {
-	// Managing another tenant's entitlements is platform-admin only.
-	r.Group(func(ar chi.Router) {
-		ar.Use(auth.RequireRole(auth.RolePlatformAdmin))
-		ar.Get("/v1/tenants/{id}/features", h.getForTenant)
-		ar.Put("/v1/tenants/{id}/features", h.setForTenant)
-	})
+	// Per-tenant entitlements are managed in the shared IAM (Accounts page),
+	// not here — the old /v1/tenants/{id}/features pair is gone with it.
 	// Any authenticated user may read their OWN tenant's effective features, so
 	// the app can hide disabled modules.
 	r.Get("/v1/me/features", h.getMine)
@@ -218,75 +213,6 @@ func (h *Handler) RequireFeature(key string) func(http.Handler) http.Handler {
 type featureState struct {
 	Def
 	Enabled bool `json:"enabled"`
-}
-
-// getForTenant: the full registry with each feature's effective state for {id}.
-func (h *Handler) getForTenant(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid tenant id")
-		return
-	}
-	ov, err := h.overrides(r.Context(), id)
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "read features failed")
-		return
-	}
-	eff := effective(ov)
-	out := make([]featureState, 0, len(Registry))
-	for _, d := range Registry {
-		out = append(out, featureState{Def: d, Enabled: eff[d.Key]})
-	}
-	httpx.JSON(w, http.StatusOK, out)
-}
-
-// setForTenant replaces the tenant's entitlements from a {key: bool} map. Only
-// known keys are stored; a key set to its default (true) is removed to keep the
-// table sparse (absence = enabled).
-func (h *Handler) setForTenant(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid tenant id")
-		return
-	}
-	var req map[string]bool
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid body")
-		return
-	}
-	ctx := r.Context()
-	tx, err := h.pool.Begin(ctx)
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "save failed")
-		return
-	}
-	defer tx.Rollback(ctx)
-	for _, d := range Registry {
-		enabled, present := req[d.Key]
-		if !present {
-			continue
-		}
-		if enabled {
-			// default state → drop any override
-			if _, err := tx.Exec(ctx, `DELETE FROM tenant_features WHERE tenant_id = $1 AND feature_key = $2`, id, d.Key); err != nil {
-				httpx.Error(w, http.StatusInternalServerError, "save failed")
-				return
-			}
-		} else {
-			if _, err := tx.Exec(ctx, `
-INSERT INTO tenant_features (tenant_id, feature_key, enabled, updated_at)
-VALUES ($1, $2, false, now())
-ON CONFLICT (tenant_id, feature_key) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`, id, d.Key); err != nil {
-				httpx.Error(w, http.StatusInternalServerError, "save failed")
-				return
-			}
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "save failed")
-		return
-	}
-	h.getForTenant(w, r)
 }
 
 // getMine: the caller's own tenant effective features as {key: bool} — the app

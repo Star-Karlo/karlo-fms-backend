@@ -11,30 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const vehicleAtTime = `-- name: VehicleAtTime :one
-SELECT vehicle_id
-FROM tracker_assignments
-WHERE imei = $1
-  AND fitted_at <= $2
-  AND (unfitted_at IS NULL OR unfitted_at > $2)
-ORDER BY fitted_at DESC
-LIMIT 1
-`
-
-type VehicleAtTimeParams struct {
-	Imei string             `json:"imei"`
-	At   pgtype.Timestamptz `json:"at"`
-}
-
-// The vehicle that carried this IMEI at instant `at` (newest assignment covering
-// it). For attributing a single telemetry/event row to the right vehicle.
-func (q *Queries) VehicleAtTime(ctx context.Context, arg VehicleAtTimeParams) (int64, error) {
-	row := q.db.QueryRow(ctx, vehicleAtTime, arg.Imei, arg.At)
-	var vehicle_id int64
-	err := row.Scan(&vehicle_id)
-	return vehicle_id, err
-}
-
 const vehicleTrackerPeriods = `-- name: VehicleTrackerPeriods :many
 
 SELECT imei, fitted_at, unfitted_at

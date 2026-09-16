@@ -3,16 +3,11 @@ package liveview
 import (
 	"context"
 	"math"
-	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/platform/db"
-	"github.com/karlo/fms-backend/internal/platform/httpx"
 )
 
 // VehicleState is the accumulated (not window-scoped) state of a vehicle:
@@ -81,51 +76,6 @@ func (s *Service) VehicleState(ctx context.Context, tenantID, vehicleID int64) (
 		return nil, err
 	}
 	return &st, nil
-}
-
-// analytics godoc
-//
-//	@Summary		Consolidated vehicle analytics (history + calculations)
-//	@Description	Everything derived for one vehicle over [from,to] in a single call: fuel (litres/cost/km-L/Rp-km/Rp-hour/refuels/engine-idle-moving hours), GPS behaviour (overspeed, harsh accel/brake, idle stops), accelerometer harsh events by axis, and accumulated state (lifetime engine hours, odometer, km since service). Any section that can't be computed is null (with a note in `errors`), never failing the whole response.
-//	@Tags			analytics
-//	@Security		BearerAuth
-//	@Produce		json
-//	@Param			vehicle_id		path	int		true	"vehicle id"
-//	@Param			from			query	string	true	"RFC3339"
-//	@Param			to				query	string	true	"RFC3339"
-//	@Param			limit			query	number	false	"overspeed limit km/h (default 60)"
-//	@Param			idle_threshold	query	number	false	"minutes a stop must exceed to count as idle (default 120)"
-//	@Success		200	{object}	liveview.VehicleAnalytics
-//	@Router			/v1/vehicles/{vehicle_id}/analytics [get]
-func (h *Handler) analytics(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "vehicle_id"), 10, 64)
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid vehicle_id")
-		return
-	}
-	q := r.URL.Query()
-	from, err1 := time.Parse(time.RFC3339, q.Get("from"))
-	to, err2 := time.Parse(time.RFC3339, q.Get("to"))
-	if err1 != nil || err2 != nil {
-		httpx.Error(w, http.StatusBadRequest, "from/to must be RFC3339")
-		return
-	}
-	limit := 60.0
-	if v := q.Get("limit"); v != "" {
-		if f, e := strconv.ParseFloat(v, 64); e == nil && f > 0 {
-			limit = f
-		}
-	}
-	idleThreshold := 120.0
-	if v := q.Get("idle_threshold"); v != "" {
-		if f, e := strconv.ParseFloat(v, 64); e == nil && f > 0 {
-			idleThreshold = f
-		}
-	}
-
-	ctx := r.Context()
-	out := h.svc.Analytics(ctx, auth.EffectiveTenant(r), id, from, to, limit, idleThreshold)
-	httpx.JSON(w, http.StatusOK, out)
 }
 
 // Analytics assembles the consolidated per-vehicle analytics for one window.

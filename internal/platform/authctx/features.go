@@ -136,13 +136,6 @@ type fmsDef struct {
 	Dev    bool   `json:"dev,omitempty"`
 }
 
-// FMSRegistry returns the mirrored FMS registry exactly as published, roadmap
-// stubs included. Use it to compare against upstream; use SellableFeatures for
-// what can actually be granted.
-func FMSRegistry() []Feature {
-	return decodeFMSRegistry(false)
-}
-
 func decodeFMSRegistry(liveOnly bool) []Feature {
 	var defs []fmsDef
 	if err := json.Unmarshal(fmsRegistryJSON, &defs); err != nil {
@@ -195,32 +188,3 @@ var featureRegistry = func() map[Product]map[string]Feature {
 	}
 	return out
 }()
-
-// IsSellableFeature reports whether a feature is one a company can be granted
-// in a product. Use it when validating an entitlement grant, so a typo is
-// refused where it is made rather than becoming a row that gates nothing.
-func IsSellableFeature(product Product, name string) bool {
-	_, ok := featureRegistry[product][name]
-	return ok
-}
-
-// SellableFeatures returns everything a Karlo admin can grant a company for a
-// product, shared entitlements included, for an administration screen.
-func SellableFeatures(product Product) []Feature {
-	out := make([]Feature, 0, len(featureRegistry[product]))
-	for _, f := range featureRegistry[product] {
-		out = append(out, f)
-	}
-	return out
-}
-
-// IsKnownProduct reports whether a string names a product.
-//
-// Used when a product arrives from a request body. An unrecognised product
-// would otherwise index an empty registry and every check against it would
-// quietly return false, which reads as "denied" rather than "you sent
-// nonsense".
-func IsKnownProduct(p Product) bool {
-	_, ok := featureRegistry[p]
-	return ok
-}

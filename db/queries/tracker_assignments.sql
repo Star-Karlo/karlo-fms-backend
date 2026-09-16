@@ -12,14 +12,3 @@ WHERE vehicle_id = sqlc.arg('vehicle_id')
   AND fitted_at < sqlc.arg('range_to')
   AND (unfitted_at IS NULL OR unfitted_at > sqlc.arg('range_from'))
 ORDER BY fitted_at;
-
--- name: VehicleAtTime :one
--- The vehicle that carried this IMEI at instant `at` (newest assignment covering
--- it). For attributing a single telemetry/event row to the right vehicle.
-SELECT vehicle_id
-FROM tracker_assignments
-WHERE imei = sqlc.arg('imei')
-  AND fitted_at <= sqlc.arg('at')
-  AND (unfitted_at IS NULL OR unfitted_at > sqlc.arg('at'))
-ORDER BY fitted_at DESC
-LIMIT 1;

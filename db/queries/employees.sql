@@ -13,21 +13,6 @@ INSERT INTO employees (
 )
 RETURNING *;
 
--- name: PairEmployee :one
--- Attach an existing local driver to its master-data record. Used by the
--- backfill for rows created before write-through existed. Only ever fills a
--- NULL: re-pointing a driver that is already paired would silently move every
--- vehicle assignment that references it onto a different person.
-UPDATE employees SET master_data_id = $2, updated_at = now()
- WHERE id = $1 AND master_data_id IS NULL
-RETURNING *;
-
--- name: ListUnpairedEmployees :many
--- Local drivers with no master-data counterpart, oldest first.
-SELECT * FROM employees
- WHERE tenant_id = $1 AND master_data_id IS NULL
- ORDER BY id;
-
 -- name: GetEmployee :one
 SELECT * FROM employees WHERE id = $1;
 

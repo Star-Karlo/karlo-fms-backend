@@ -76,10 +76,10 @@ type overpassResponse struct {
 }
 
 type element struct {
-	Type string            `json:"type"`
-	ID   int64             `json:"id"`
-	Lat  float64           `json:"lat"`
-	Lon  float64           `json:"lon"`
+	Type string  `json:"type"`
+	ID   int64   `json:"id"`
+	Lat  float64 `json:"lat"`
+	Lon  float64 `json:"lon"`
 	// Ways and relations have no lat/lon of their own; `out center` adds this.
 	Center *struct {
 		Lat float64 `json:"lat"`

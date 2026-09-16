@@ -25,12 +25,3 @@ SELECT event_type,
 FROM driver_score_events
 WHERE driver_id = $1 AND period = sqlc.arg('period')
 GROUP BY event_type;
-
--- name: DriverScoreEvents :many
--- Raw event log for a driver (the Alert List on the detail page).
-SELECT ev.event_type, ev.occurrences, ev.score, ev.created_at, v.license_plate
-FROM driver_score_events ev
-LEFT JOIN vehicles v ON v.id = ev.vehicle_id
-WHERE ev.driver_id = $1 AND ev.period = sqlc.arg('period') AND ev.event_type <> 'trip_km'
-ORDER BY ev.created_at DESC
-LIMIT sqlc.arg('lim');

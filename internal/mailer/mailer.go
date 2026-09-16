@@ -191,23 +191,3 @@ func quotedPrintable(s string) []byte {
 }
 
 // ---- recorder, for tests and for running without a transport ----------------
-
-// Recorder captures messages instead of sending them. Used in tests, and as the
-// sender when email is not configured — a scheduler that logs what it would
-// have sent is far easier to diagnose than one that silently does nothing.
-type Recorder struct {
-	FromAddr string
-	Sent     []Message
-}
-
-func (r *Recorder) Send(_ context.Context, m Message) error {
-	r.Sent = append(r.Sent, m)
-	return nil
-}
-
-func (r *Recorder) From() string {
-	if r.FromAddr == "" {
-		return "reports@example.invalid"
-	}
-	return r.FromAddr
-}

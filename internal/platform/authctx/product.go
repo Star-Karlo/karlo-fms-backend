@@ -1,11 +1,5 @@
 package authctx
 
-import (
-	"fmt"
-	"sort"
-	"strings"
-)
-
 // Product identifies which Karlo product a service belongs to.
 //
 // One identity and one company serve both products, but almost nothing else is
@@ -103,62 +97,4 @@ func FeaturesFor(product Product) []string {
 		out = append(out, spec.Feature)
 	}
 	return out
-}
-
-// IsKnownPermission reports whether a key exists in a product's catalogue.
-//
-// Used when validating a grant, so a typo is refused at the point it is made
-// rather than becoming a permission that silently never matches.
-func IsKnownPermission(product Product, key string) bool {
-	_, ok := catalogs[product][key]
-	return ok
-}
-
-// ValidateCatalogs checks that every declared permission is gated and that
-// every feature it names exists.
-//
-// Called at startup and failed on, deliberately.
-//
-// An empty Feature used to mean two different things — "deliberately not
-// gated" and "nobody filled it in" — and the check treated both as "skip
-// entitlement", so a forgotten one silently granted access nobody decided to
-// give. That is the wrong direction for a mistake to fail in, and it is
-// invisible: the permission simply works, for everyone, forever.
-//
-// Requiring a feature makes the author say which it is. Administration and
-// reference data are gated by features granted to every company by default, so
-// nothing is restricted that was not restricted before — but the check is now
-// uniform, and a new key cannot skip it by omission.
-func ValidateCatalogs() error {
-	known := map[string]bool{}
-	for _, product := range []Product{ProductTMS, ProductFMS, ProductShared} {
-		for _, f := range SellableFeatures(product) {
-			known[f.Name] = true
-		}
-	}
-
-	var problems []string
-	for product, catalog := range catalogs {
-		for key, spec := range catalog {
-			switch {
-			case spec.Feature == "":
-				problems = append(problems, fmt.Sprintf(
-					"%s/%s names no gating feature; every permission must be gated, "+
-						"because an ungated one skips the entitlement check entirely",
-					product, key))
-			case !known[spec.Feature]:
-				problems = append(problems, fmt.Sprintf(
-					"%s/%s is gated by %q, which is not a declared feature; "+
-						"a permission gated by something that does not exist can never be granted",
-					product, key, spec.Feature))
-			}
-		}
-	}
-
-	if len(problems) > 0 {
-		sort.Strings(problems)
-		return fmt.Errorf("permission catalogue is invalid:\n  - %s",
-			strings.Join(problems, "\n  - "))
-	}
-	return nil
 }

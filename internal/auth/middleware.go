@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 )
@@ -68,26 +67,6 @@ func EffectiveTenant(r *http.Request) int64 {
 		return aid
 	}
 	return tid
-}
-
-// Authenticator verifies the Bearer access token and injects claims into the
-// request context. Requests without a valid token are rejected with 401.
-func Authenticator(tm *TokenManager) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			h := r.Header.Get("Authorization")
-			if !strings.HasPrefix(h, "Bearer ") {
-				httpx.Error(w, http.StatusUnauthorized, "missing bearer token")
-				return
-			}
-			claims, err := tm.ParseAccess(strings.TrimPrefix(h, "Bearer "))
-			if err != nil {
-				httpx.Error(w, http.StatusUnauthorized, "invalid or expired token")
-				return
-			}
-			next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), claims)))
-		})
-	}
 }
 
 // RequireRole rejects requests whose user does not meet the minimum role.

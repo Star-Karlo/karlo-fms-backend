@@ -85,7 +85,6 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/hangars", h.list)
 	r.Get("/v1/hangars/{id}/vehicles", h.vehicles)
 	r.Get("/v1/hangars/{id}/route", h.routeToHangar)
-	r.Get("/v1/maintenance/in-progress", h.inProgress)
 	r.Group(func(ar chi.Router) {
 		ar.Use(auth.RequireRole(auth.RoleAdmin))
 		ar.Post("/v1/hangars", h.create)
@@ -302,73 +301,6 @@ ORDER BY s.next_due_at NULLS LAST`, id)
 					VehicleID: v.VehicleID, LicensePlate: v.LicensePlate,
 					Present: true, DistanceM: &m,
 				})
-			}
-		}
-	}
-	httpx.JSON(w, http.StatusOK, out)
-}
-
-// inProgress godoc
-//
-//	@Summary		Every vehicle currently in for maintenance, across all hangars
-//	@Description	A vehicle counts as in maintenance when it has an open service schedule. `present` says whether it has actually arrived at the hangar it was booked into.
-//	@Tags			hangars
-//	@Security		BearerAuth
-//	@Produce		json
-//	@Success		200	{array}	hangar.InMaintenance
-//	@Router			/v1/maintenance/in-progress [get]
-func (h *Handler) inProgress(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.TenantID(r.Context())
-	out := []InMaintenance{}
-	err := db.Tx(r.Context(), h.pool, tenantID, func(tx pgx.Tx) error {
-		rows, err := tx.Query(r.Context(), `
-SELECT s.vehicle_id, coalesce(v.license_plate,''), s.component,
-       to_char(s.next_due_at, 'YYYY-MM-DD'), coalesce(s.status,''),
-       s.hangar_id, coalesce(g.name,''), g.lat, g.lon, g.radius_m
-FROM service_schedules s
-LEFT JOIN vehicles v ON v.id = s.vehicle_id
-LEFT JOIN hangars  g ON g.id = s.hangar_id
-WHERE coalesce(s.status,'') <> 'done'
-  AND s.next_due_at IS NOT NULL AND s.next_due_at::date <= CURRENT_DATE + 7
-ORDER BY s.next_due_at`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var m InMaintenance
-			var lat, lon *float64
-			var radius *int
-			if err := rows.Scan(&m.VehicleID, &m.LicensePlate, &m.Component, &m.DueAt,
-				&m.Status, &m.HangarID, &m.HangarName, &lat, &lon, &radius); err != nil {
-				return err
-			}
-			m.hangarLat, m.hangarLon, m.hangarRadius = lat, lon, radius
-			out = append(out, m)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if h.live != nil {
-		if vs, e := h.live.List(r.Context(), tenantID, nil); e == nil {
-			pos := map[int64]*liveview.VehicleLive{}
-			for i := range vs {
-				pos[vs[i].VehicleID] = &vs[i]
-			}
-			for i := range out {
-				v := pos[out[i].VehicleID]
-				if v == nil || v.Position == nil || v.Position.Lat == nil ||
-					v.Position.Lon == nil || out[i].hangarLat == nil {
-					continue
-				}
-				d := metersBetween(*v.Position.Lat, *v.Position.Lon, *out[i].hangarLat, *out[i].hangarLon)
-				m := int(d)
-				out[i].DistanceM = &m
-				out[i].Present = d <= float64(*out[i].hangarRadius)
 			}
 		}
 	}

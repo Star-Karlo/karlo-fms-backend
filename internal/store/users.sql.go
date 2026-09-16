@@ -9,76 +9,6 @@ import (
 	"context"
 )
 
-const countUsers = `-- name: CountUsers :one
-SELECT count(*) FROM users
-WHERE ($1::text IS NULL
-       OR email ILIKE '%' || $1 || '%'
-       OR full_name ILIKE '%' || $1 || '%')
-  AND ($2::text IS NULL OR status = $2)
-`
-
-type CountUsersParams struct {
-	Q      *string `json:"q"`
-	Status *string `json:"status"`
-}
-
-func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countUsers, arg.Q, arg.Status)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const createUser = `-- name: CreateUser :one
-INSERT INTO users (tenant_id, email, password_hash, full_name, role, status)
-VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'active'))
-RETURNING id, tenant_id, email, password_hash, full_name, role, status, is_root, last_login_at, created_at, updated_at
-`
-
-type CreateUserParams struct {
-	TenantID     int64       `json:"tenant_id"`
-	Email        string      `json:"email"`
-	PasswordHash string      `json:"password_hash"`
-	FullName     *string     `json:"full_name"`
-	Role         string      `json:"role"`
-	Status       interface{} `json:"status"`
-}
-
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, createUser,
-		arg.TenantID,
-		arg.Email,
-		arg.PasswordHash,
-		arg.FullName,
-		arg.Role,
-		arg.Status,
-	)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.TenantID,
-		&i.Email,
-		&i.PasswordHash,
-		&i.FullName,
-		&i.Role,
-		&i.Status,
-		&i.IsRoot,
-		&i.LastLoginAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const deleteUser = `-- name: DeleteUser :exec
-DELETE FROM users WHERE id = $1
-`
-
-func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, deleteUser, id)
-	return err
-}
-
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, tenant_id, email, password_hash, full_name, role, status, is_root, last_login_at, created_at, updated_at FROM users WHERE email = $1
 `
@@ -126,60 +56,6 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 	return i, err
 }
 
-const listUsers = `-- name: ListUsers :many
-SELECT id, tenant_id, email, password_hash, full_name, role, status, is_root, last_login_at, created_at, updated_at FROM users
-WHERE ($1::text IS NULL
-       OR email ILIKE '%' || $1 || '%'
-       OR full_name ILIKE '%' || $1 || '%')
-  AND ($2::text IS NULL OR status = $2)
-ORDER BY created_at DESC
-LIMIT $4 OFFSET $3
-`
-
-type ListUsersParams struct {
-	Q      *string `json:"q"`
-	Status *string `json:"status"`
-	Off    int32   `json:"off"`
-	Lim    int32   `json:"lim"`
-}
-
-func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error) {
-	rows, err := q.db.Query(ctx, listUsers,
-		arg.Q,
-		arg.Status,
-		arg.Off,
-		arg.Lim,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []User{}
-	for rows.Next() {
-		var i User
-		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.Email,
-			&i.PasswordHash,
-			&i.FullName,
-			&i.Role,
-			&i.Status,
-			&i.IsRoot,
-			&i.LastLoginAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const touchUserLogin = `-- name: TouchUserLogin :exec
 UPDATE users SET last_login_at = now() WHERE id = $1
 `
@@ -187,46 +63,6 @@ UPDATE users SET last_login_at = now() WHERE id = $1
 func (q *Queries) TouchUserLogin(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, touchUserLogin, id)
 	return err
-}
-
-const updateUser = `-- name: UpdateUser :one
-UPDATE users
-SET full_name = COALESCE($2, full_name),
-    role      = COALESCE($3, role),
-    status    = COALESCE($4, status)
-WHERE id = $1
-RETURNING id, tenant_id, email, password_hash, full_name, role, status, is_root, last_login_at, created_at, updated_at
-`
-
-type UpdateUserParams struct {
-	ID       int64   `json:"id"`
-	FullName *string `json:"full_name"`
-	Role     *string `json:"role"`
-	Status   *string `json:"status"`
-}
-
-func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, updateUser,
-		arg.ID,
-		arg.FullName,
-		arg.Role,
-		arg.Status,
-	)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.TenantID,
-		&i.Email,
-		&i.PasswordHash,
-		&i.FullName,
-		&i.Role,
-		&i.Status,
-		&i.IsRoot,
-		&i.LastLoginAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const updateUserPassword = `-- name: UpdateUserPassword :exec

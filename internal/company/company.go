@@ -20,10 +20,10 @@ package company
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"context"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -113,15 +113,13 @@ func NewHandler(ctx context.Context, pool *pgxpool.Pool, region, bucket string) 
 
 // Routes mounts the company endpoints.
 //
-// Reading is open to any authenticated user — the address and phone appear on
-// reports, so an operator needs them. Writing is admin-only: this is the
-// company's identity, not a personal preference.
+// The profile itself (name, address, tax id…) lives in the shared IAM since
+// the platform cutover and is read/written there by the Company Profile
+// page; this handler keeps only the logo, which is FMS-hosted in S3.
 func (h *Handler) Routes(r chi.Router) {
-	r.Get("/v1/company", h.get)
 	r.Get("/v1/company/logo", h.logoURL)
 	r.Group(func(ar chi.Router) {
 		ar.Use(auth.RequireRole(auth.RoleAdmin))
-		ar.Put("/v1/company", h.update)
 		ar.Post("/v1/company/logo", h.logoUpload)
 		ar.Delete("/v1/company/logo", h.logoDelete)
 	})
@@ -129,92 +127,6 @@ func (h *Handler) Routes(r chi.Router) {
 
 const selectCols = `id, name, slug, legal_name, tax_id, address, city, province,
 	postal_code, country, phone, email, website, (logo_key IS NOT NULL AND logo_key <> '')`
-
-func scan(row pgx.Row) (*Profile, error) {
-	var p Profile
-	err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.LegalName, &p.TaxID, &p.Address, &p.City,
-		&p.Province, &p.PostalCode, &p.Country, &p.Phone, &p.Email, &p.Website, &p.HasLogo)
-	if err != nil {
-		return nil, err
-	}
-	return &p, nil
-}
-
-// get godoc
-//
-//	@Summary	The signed-in user's company profile
-//	@Tags		company
-//	@Security	BearerAuth
-//	@Produce	json
-//	@Success	200	{object}	company.Profile
-//	@Router		/v1/company [get]
-func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID := auth.TenantID(r.Context())
-	var out *Profile
-	err := db.Tx(r.Context(), h.pool, tenantID, func(tx pgx.Tx) error {
-		var e error
-		// WHERE id = $1 with the CONTEXT tenant. See the package comment: there
-		// is no RLS on this table to fall back on.
-		out, e = scan(tx.QueryRow(r.Context(), `SELECT `+selectCols+` FROM tenants WHERE id = $1`, tenantID))
-		return e
-	})
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	httpx.JSON(w, http.StatusOK, out)
-}
-
-// update godoc
-//
-//	@Summary	Update the company profile (admin only)
-//	@Tags		company
-//	@Security	BearerAuth
-//	@Accept		json
-//	@Produce	json
-//	@Param		body	body		company.UpdateRequest	true	"company profile"
-//	@Success	200		{object}	company.Profile
-//	@Failure	400		{object}	map[string]string
-//	@Router		/v1/company [put]
-func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	var req UpdateRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	if strings.TrimSpace(req.Name) == "" {
-		httpx.Error(w, http.StatusBadRequest, "company name is required")
-		return
-	}
-	if req.Email != nil && *req.Email != "" && !strings.Contains(*req.Email, "@") {
-		httpx.Error(w, http.StatusBadRequest, "email is not a valid address")
-		return
-	}
-
-	tenantID := auth.TenantID(r.Context())
-	var out *Profile
-	err := db.Tx(r.Context(), h.pool, tenantID, func(tx pgx.Tx) error {
-		var e error
-		// Note the deliberate absence of `slug` — it is an identity key used in
-		// URLs and imports, not a display field, so it is not editable here.
-		out, e = scan(tx.QueryRow(r.Context(), `
-UPDATE tenants SET
-  name = $2, legal_name = $3, tax_id = $4, address = $5, city = $6, province = $7,
-  postal_code = $8, country = $9, phone = $10, email = $11, website = $12,
-  updated_at = now()
-WHERE id = $1
-RETURNING `+selectCols,
-			tenantID, strings.TrimSpace(req.Name), blank(req.LegalName), blank(req.TaxID),
-			blank(req.Address), blank(req.City), blank(req.Province), blank(req.PostalCode),
-			blank(req.Country), blank(req.Phone), blank(req.Email), blank(req.Website)))
-		return e
-	})
-	if err != nil {
-		httpx.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	httpx.JSON(w, http.StatusOK, out)
-}
 
 // LogoUploadRequest asks for a logo upload slot.
 type LogoUploadRequest struct {
@@ -352,17 +264,4 @@ func (h *Handler) logoDelete(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// blank normalises "" to NULL so a cleared field reads as absent rather than as
-// an empty string, which would print as a stray blank line on a report.
-func blank(s *string) *string {
-	if s == nil {
-		return nil
-	}
-	t := strings.TrimSpace(*s)
-	if t == "" {
-		return nil
-	}
-	return &t
 }

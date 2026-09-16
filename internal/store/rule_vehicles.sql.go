@@ -119,37 +119,3 @@ func (q *Queries) ListRuleIDsForVehicle(ctx context.Context, vehicleID int64) ([
 	}
 	return items, nil
 }
-
-const listRuleVehicles = `-- name: ListRuleVehicles :many
-SELECT rv.vehicle_id, v.license_plate
-FROM rule_vehicles rv
-JOIN vehicles v ON v.id = rv.vehicle_id
-WHERE rv.rule_id = $1
-ORDER BY v.license_plate
-`
-
-type ListRuleVehiclesRow struct {
-	VehicleID    int64  `json:"vehicle_id"`
-	LicensePlate string `json:"license_plate"`
-}
-
-// Vehicles attached to a rule (with plate for display).
-func (q *Queries) ListRuleVehicles(ctx context.Context, ruleID int64) ([]ListRuleVehiclesRow, error) {
-	rows, err := q.db.Query(ctx, listRuleVehicles, ruleID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListRuleVehiclesRow{}
-	for rows.Next() {
-		var i ListRuleVehiclesRow
-		if err := rows.Scan(&i.VehicleID, &i.LicensePlate); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}

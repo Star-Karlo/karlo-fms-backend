@@ -60,26 +60,3 @@ var Catalog = []Perm{
 	{Key: "users.manage", Label: "Manage users", Group: "Administration", Feature: ""},
 	{Key: "roles.manage", Label: "Manage roles", Group: "Administration", Feature: ""},
 }
-
-// Valid reports whether key is a known permission.
-func Valid(key string) bool {
-	for _, p := range Catalog {
-		if p.Key == key {
-			return true
-		}
-	}
-	return false
-}
-
-// Filter keeps only valid permission keys from an arbitrary input list.
-func Filter(keys []string) []string {
-	out := make([]string, 0, len(keys))
-	seen := map[string]bool{}
-	for _, k := range keys {
-		if Valid(k) && !seen[k] {
-			seen[k] = true
-			out = append(out, k)
-		}
-	}
-	return out
-}

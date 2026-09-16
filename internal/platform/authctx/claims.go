@@ -8,7 +8,6 @@
 package authctx
 
 import (
-	"context"
 	"errors"
 	"fmt"
 
@@ -79,13 +78,6 @@ type Claims struct {
 // would be noise that could be got wrong.
 var serviceProduct = ProductTMS
 
-// SetProduct declares which product this service belongs to. Call it once,
-// before serving.
-func SetProduct(p Product) { serviceProduct = p }
-
-// CurrentProduct returns the product this service belongs to.
-func CurrentProduct() Product { return serviceProduct }
-
 // HasModule reports whether the principal may perform module.action in this
 // service's product.
 //
@@ -126,29 +118,8 @@ func (p Principal) HasRole(roles ...string) bool {
 
 type principalKey struct{}
 
-// WithPrincipal returns a context carrying the authenticated caller.
-func WithPrincipal(ctx context.Context, p Principal) context.Context {
-	return context.WithValue(ctx, principalKey{}, p)
-}
-
-// FromContext returns the authenticated caller, if there is one.
-func FromContext(ctx context.Context) (Principal, bool) {
-	p, ok := ctx.Value(principalKey{}).(Principal)
-	return p, ok
-}
-
 // ErrNoPrincipal is returned when a context has no authenticated caller.
 var ErrNoPrincipal = errors.New("authctx: no principal in context")
-
-// MustFromContext returns the caller or an error, for code paths where the
-// absence of a principal is a programming mistake rather than a client error.
-func MustFromContext(ctx context.Context) (Principal, error) {
-	p, ok := FromContext(ctx)
-	if !ok {
-		return Principal{}, ErrNoPrincipal
-	}
-	return p, nil
-}
 
 // ParseClaims validates a token's structure and signature using key, and
 // returns the claims. It pins the signing algorithm: accepting whatever the

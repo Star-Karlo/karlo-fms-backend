@@ -62,56 +62,6 @@ func (q *Queries) DriverScoreDetail(ctx context.Context, arg DriverScoreDetailPa
 	return items, nil
 }
 
-const driverScoreEvents = `-- name: DriverScoreEvents :many
-SELECT ev.event_type, ev.occurrences, ev.score, ev.created_at, v.license_plate
-FROM driver_score_events ev
-LEFT JOIN vehicles v ON v.id = ev.vehicle_id
-WHERE ev.driver_id = $1 AND ev.period = $2 AND ev.event_type <> 'trip_km'
-ORDER BY ev.created_at DESC
-LIMIT $3
-`
-
-type DriverScoreEventsParams struct {
-	DriverID *int64      `json:"driver_id"`
-	Period   pgtype.Date `json:"period"`
-	Lim      int32       `json:"lim"`
-}
-
-type DriverScoreEventsRow struct {
-	EventType    *string            `json:"event_type"`
-	Occurrences  *int32             `json:"occurrences"`
-	Score        pgtype.Numeric     `json:"score"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	LicensePlate *string            `json:"license_plate"`
-}
-
-// Raw event log for a driver (the Alert List on the detail page).
-func (q *Queries) DriverScoreEvents(ctx context.Context, arg DriverScoreEventsParams) ([]DriverScoreEventsRow, error) {
-	rows, err := q.db.Query(ctx, driverScoreEvents, arg.DriverID, arg.Period, arg.Lim)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []DriverScoreEventsRow{}
-	for rows.Next() {
-		var i DriverScoreEventsRow
-		if err := rows.Scan(
-			&i.EventType,
-			&i.Occurrences,
-			&i.Score,
-			&i.CreatedAt,
-			&i.LicensePlate,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const driverScoreSummary = `-- name: DriverScoreSummary :many
 SELECT
   e.id            AS driver_id,

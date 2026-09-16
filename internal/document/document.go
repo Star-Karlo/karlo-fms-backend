@@ -130,7 +130,6 @@ func NewHandler(ctx context.Context, pool *pgxpool.Pool, region, bucket string) 
 // on a path another package already serves does not.
 func (h *Handler) Routes(r chi.Router) {
 	r.Post("/v1/documents", h.create)
-	r.Get("/v1/documents/kinds", h.kinds)
 	r.Get("/v1/documents/{id}/download", h.download)
 	r.Delete("/v1/documents/{id}", h.remove)
 	// Convenience listing for a single vehicle's document drawer, so the UI does
@@ -144,18 +143,6 @@ func (h *Handler) unavailable(w http.ResponseWriter) bool {
 		return true
 	}
 	return false
-}
-
-// kinds godoc
-//
-//	@Summary	Document kinds the UI should offer
-//	@Tags		documents
-//	@Security	BearerAuth
-//	@Produce	json
-//	@Success	200	{array}	string
-//	@Router		/v1/documents/kinds [get]
-func (h *Handler) kinds(w http.ResponseWriter, r *http.Request) {
-	httpx.JSON(w, http.StatusOK, Kinds)
 }
 
 // CreateRequest asks for an upload slot.

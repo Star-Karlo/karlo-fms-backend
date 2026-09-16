@@ -281,21 +281,6 @@ func (c *Client) DeleteDriver(ctx context.Context, caller Caller, id string) err
 	return c.do(ctx, caller, http.MethodDelete, "/api/v1/drivers/"+id, nil, nil)
 }
 
-// ListDrivers pages a company's drivers as the caller.
-//
-// The pairing backfill uses this rather than gRPC because it is triggered by an
-// operator, so there IS a bearer to forward. The ongoing projection
-// (driversync) cannot do that — it runs on a timer with no user — and reads
-// over gRPC with a service token instead, the way vehiclesync does.
-func (c *Client) ListDrivers(ctx context.Context, caller Caller, page, pageSize int) ([]Driver, error) {
-	var out []Driver
-	path := fmt.Sprintf("/api/v1/drivers?page=%d&pageSize=%d", page, pageSize)
-	if err := c.do(ctx, caller, http.MethodGet, path, nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // StampDriverFMSID records the FMS bigint on the master-data driver, so the
 // pairing resolves from either side. Attributes merge upstream, so this does
 // not disturb anything else on the record.

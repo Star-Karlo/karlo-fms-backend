@@ -427,33 +427,6 @@ VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 	})
 }
 
-// overspeedPenalty scales with the SHARE of driving days spent over the limit.
-// Every day over = the full weight; never over = zero.
-func (c *Collector) overspeedPenalty(pd *perDriver) float64 {
-	if pd.days == 0 {
-		return 0
-	}
-	return weightOverspeed * float64(pd.speedingDays) / float64(pd.days)
-}
-
-// idlePenalty scales with how far the month's idle share sits above target.
-func (c *Collector) idlePenalty(pd *perDriver) float64 {
-	on := pd.movingH + pd.idleH
-	if on <= 0 {
-		return 0
-	}
-	idlePct := 100 * pd.idleH / on
-	return weightIdle * severity(idlePct, c.policy.IdleTargetPct, c.policy.IdleFullPct)
-}
-
-// longShiftPenalty is the average per-day fatigue severity times the weight.
-func (c *Collector) longShiftPenalty(pd *perDriver) float64 {
-	if pd.days == 0 {
-		return 0
-	}
-	return weightLongShift * pd.longShiftLoad / float64(pd.days)
-}
-
 // harshPenalty scales a harsh pillar with the driver's own exposure: weighted
 // severity points per 100 km, saturating at HarshPer100kmFull. Rate-normalised
 // like every other penalty, so a long-haul driver is not punished for driving
