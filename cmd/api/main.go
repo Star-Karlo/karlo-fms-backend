@@ -181,7 +181,7 @@ func main() {
 			}
 		}
 	}
-	authH := auth.NewHandler(auth.NewService(pool, tm))
+	authH := auth.NewHandler(auth.NewService(pool, tm)).WithCookieDomain(cfg.AuthCookieDomain)
 	if up := auth.NewUpstream(cfg.AuthServiceURL, 10*time.Second); up != nil {
 		authH = authH.WithUpstream(up, sso)
 		log.Printf("auth: login and refresh delegate to %s", cfg.AuthServiceURL)

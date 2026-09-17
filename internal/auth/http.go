@@ -21,6 +21,13 @@ type Handler struct {
 	// sso verifies tokens from that service, and is used here to read the role
 	// out of a token just issued so the login response can report it.
 	sso *SSO
+	// cookieDomain, when set, switches the refresh token to an httpOnly
+	// cookie scoped to that domain (e.g. ".karlo.id" so fms.karlo.id and
+	// fms-api.karlo.id share it). The token then never reaches JavaScript —
+	// an XSS can still call the API while the tab is open, but cannot steal a
+	// session that outlives it. Empty = the token travels in the JSON body
+	// (local development, where there is no shared domain).
+	cookieDomain string
 }
 
 // NewHandler builds the auth HTTP handler.
@@ -28,6 +35,43 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // WithUpstream routes login and refresh to the shared authentication service.
 func (h *Handler) WithUpstream(up *Upstream, sso *SSO) *Handler { h.up, h.sso = up, sso; return h }
+
+// WithCookieDomain enables httpOnly refresh cookies for that domain.
+func (h *Handler) WithCookieDomain(d string) *Handler { h.cookieDomain = d; return h }
+
+const refreshCookie = "fms_refresh"
+
+// issue writes a token response, moving the refresh token into the cookie
+// when cookie mode is on so the body never carries it.
+func (h *Handler) issue(w http.ResponseWriter, resp *TokenResponse) {
+	if h.cookieDomain != "" && resp != nil && resp.RefreshToken != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name: refreshCookie, Value: resp.RefreshToken, Domain: h.cookieDomain, Path: "/v1/auth",
+			MaxAge: 30 * 24 * 3600, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+		})
+		resp.RefreshToken = ""
+	}
+	httpx.JSON(w, http.StatusOK, resp)
+}
+
+// refreshTokenFrom prefers the body (local mode, or an explicit token) and
+// falls back to the cookie.
+func (h *Handler) refreshTokenFrom(r *http.Request, body string) string {
+	if body != "" {
+		return body
+	}
+	if c, err := r.Cookie(refreshCookie); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+func (h *Handler) clearCookie(w http.ResponseWriter) {
+	if h.cookieDomain == "" {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: refreshCookie, Value: "", Domain: h.cookieDomain, Path: "/v1/auth", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+}
 
 // PublicRoutes mounts the unauthenticated auth endpoints.
 func (h *Handler) PublicRoutes(r chi.Router) {
@@ -67,7 +111,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		if err == nil && resp != nil && h.sso != nil && up != nil {
 			resp.User = h.sso.UserFromToken(resp.AccessToken, up.Email, up.FullName)
 		}
-		writeUpstream(w, resp, err)
+		h.writeUpstream(w, resp, err)
 		return
 	}
 	resp, err := h.svc.Login(r.Context(), req.Email, req.Password, r.UserAgent())
@@ -75,7 +119,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	httpx.JSON(w, http.StatusOK, resp)
+	h.issue(w, resp)
 }
 
 // refresh godoc
@@ -90,21 +134,27 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 //	@Router		/v1/auth/refresh [post]
 func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid body")
+	_ = httpx.DecodeJSON(r, &req) // body may be {} in cookie mode
+	token := h.refreshTokenFrom(r, req.RefreshToken)
+	if token == "" {
+		httpx.Error(w, http.StatusUnauthorized, "no refresh token")
 		return
 	}
 	if h.up != nil {
-		resp, err := h.up.Refresh(r.Context(), req.RefreshToken)
-		writeUpstream(w, resp, err)
+		resp, err := h.up.Refresh(r.Context(), token)
+		if err != nil {
+			h.clearCookie(w)
+		}
+		h.writeUpstream(w, resp, err)
 		return
 	}
-	resp, err := h.svc.Refresh(r.Context(), req.RefreshToken, r.UserAgent())
+	resp, err := h.svc.Refresh(r.Context(), token, r.UserAgent())
 	if err != nil {
+		h.clearCookie(w)
 		httpx.Error(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	httpx.JSON(w, http.StatusOK, resp)
+	h.issue(w, resp)
 }
 
 // logout godoc
@@ -120,17 +170,19 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
 	_ = httpx.DecodeJSON(r, &req)
+	token := h.refreshTokenFrom(r, req.RefreshToken)
+	h.clearCookie(w)
 	if h.up != nil {
 		// The session lives upstream now, so revoking it here would leave the
 		// token working: this service holds no record of it to revoke.
 		if _, _, err := h.up.Forward(r.Context(), http.MethodPost, "/api/v1/auth/logout",
-			bearerOf(r), map[string]string{"refreshToken": req.RefreshToken}); err != nil {
+			bearerOf(r), map[string]string{"refreshToken": token}); err != nil {
 			log.Printf("auth upstream logout: %v", err)
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := h.svc.Logout(r.Context(), req.RefreshToken); err != nil {
+	if err := h.svc.Logout(r.Context(), token); err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "logout failed")
 		return
 	}
@@ -254,10 +306,10 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 // something unparseable — is THIS deployment's problem and a 502. Collapsing
 // them into 401 would tell somebody their password is wrong during an outage,
 // and send them to reset a credential that was never at fault.
-func writeUpstream(w http.ResponseWriter, resp *TokenResponse, err error) {
+func (h *Handler) writeUpstream(w http.ResponseWriter, resp *TokenResponse, err error) {
 	switch {
 	case err == nil:
-		httpx.JSON(w, http.StatusOK, resp)
+		h.issue(w, resp)
 	case errors.Is(err, ErrUpstreamRejected):
 		httpx.Error(w, http.StatusUnauthorized, "invalid email or password")
 	case errors.Is(err, ErrUpstreamThrottled):

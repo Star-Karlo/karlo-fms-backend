@@ -154,6 +154,9 @@ type Config struct {
 	// CORSOrigins is the allowlist of browser origins (e.g. https://fms.karlo.id).
 	// Empty ⇒ reflect any origin (fine for local dev behind the Vite proxy).
 	CORSOrigins []string
+	// AuthCookieDomain switches refresh tokens to an httpOnly cookie on this
+	// domain (".karlo.id" in production). Empty keeps them in the JSON body.
+	AuthCookieDomain string
 }
 
 // RetentionConfig bounds how long append-only rows live in the hot DB. The app
@@ -230,6 +233,7 @@ func Load() Config {
 		TelemetryTimeout: time.Duration(EnvInt("TELEMETRY_TIMEOUT_MS", 15000)) * time.Millisecond,
 		LiveCacheTTL:     time.Duration(EnvInt("LIVE_CACHE_TTL_SEC", 8)) * time.Second,
 		CORSOrigins:      splitCSV(Env("CORS_ORIGINS", "")),
+		AuthCookieDomain: Env("AUTH_COOKIE_DOMAIN", ""),
 	}
 }
 
