@@ -38,7 +38,19 @@ import (
 // once.
 
 // SSO verifies tokens from the shared IAM and adapts them to this service.
-type SSO struct{ verifier *authctx.Verifier }
+type SSO struct {
+	verifier *authctx.Verifier
+	// revoked, when set, rejects tokens the platform has revoked since issue
+	// (logout in TMS, suspension, entitlement change). Nil = signature and
+	// expiry only.
+	revoked *authctx.Revocations
+}
+
+// WithRevocations attaches the platform revocation list.
+func (s *SSO) WithRevocations(r *authctx.Revocations) *SSO { s.revoked = r; return s }
+
+// ErrRevoked is a verified token the platform has since revoked.
+var ErrRevoked = errors.New("session revoked")
 
 // NewSSO returns nil, nil when no public key is configured, which is the
 // supported "not cut over yet" state rather than an error — a deployment that
@@ -62,9 +74,12 @@ var ErrNotFMS = errors.New("this account has no FMS access")
 
 // Claims translates a verified Principal into this service's claims.
 func (s *SSO) Claims(token string) (*Claims, error) {
-	p, err := s.verifier.Verify(token)
+	p, iat, err := s.verifier.VerifyWithIssuedAt(token)
 	if err != nil {
 		return nil, err
+	}
+	if s.revoked.Revoked(p, iat) {
+		return nil, ErrRevoked
 	}
 
 	// Platform staff administer across tenants and legitimately have no FMS
@@ -160,6 +175,9 @@ func AuthenticatorWith(tm *TokenManager, sso *SSO, dir TenantResolver) func(http
 						return
 					}
 					next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), claims)))
+					return
+				case errors.Is(err, ErrRevoked):
+					httpx.Error(w, http.StatusUnauthorized, "session revoked — sign in again")
 					return
 				case errors.Is(err, ErrNotFMS):
 					// The token verified. Falling through to the local parser

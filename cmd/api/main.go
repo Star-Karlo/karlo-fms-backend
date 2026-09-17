@@ -55,6 +55,7 @@ import (
 	"github.com/karlo/fms-backend/internal/maintenance"
 	"github.com/karlo/fms-backend/internal/notifengine"
 	"github.com/karlo/fms-backend/internal/notifrule"
+	"github.com/karlo/fms-backend/internal/platform/authctx"
 	"github.com/karlo/fms-backend/internal/platform/config"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
@@ -125,6 +126,14 @@ func main() {
 	}
 	if sso != nil {
 		log.Printf("sso: accepting access tokens from the shared authentication service")
+		// Platform revocations (a TMS logout, a suspension) bite on the next
+		// request. REDIS_ADDR is the platform's redis.karlo.internal in Jakarta;
+		// empty in local runs, where signature + expiry remain the only check.
+		if cfg.RedisAddr != "" {
+			rev := authctx.NewRevocations()
+			rev.Follow(ctx, cfg.RedisAddr)
+			sso.WithRevocations(rev)
+		}
 	}
 
 	// Which customers exist is decided by the authentication service now. The

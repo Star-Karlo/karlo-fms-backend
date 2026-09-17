@@ -39,15 +39,31 @@ func (h *Handler) WithUpstream(up *Upstream, sso *SSO) *Handler { h.up, h.sso = 
 // WithCookieDomain enables httpOnly refresh cookies for that domain.
 func (h *Handler) WithCookieDomain(d string) *Handler { h.cookieDomain = d; return h }
 
-const refreshCookie = "fms_refresh"
+// The SSO cookies, shared with TMS and the auth service (pinned 2026-09-18):
+// karlo_rt carries the refresh token, HttpOnly, Domain .karlo.id, Path /, so
+// whichever app logs in or refreshes, both read the same current token;
+// karlo_session is a JS-visible marker (value "1", no token) both SPAs poll
+// for the instant cross-app logout. fms_refresh is the pre-SSO name, still
+// read for one release so nobody is logged out by the rename.
+const (
+	refreshCookie  = "karlo_rt"
+	sessionCookie  = "karlo_session"
+	legacyCookie   = "fms_refresh"
+	cookieMaxAge   = 30 * 24 * 3600
+	cookieDomainRT = "/"
+)
 
 // issue writes a token response, moving the refresh token into the cookie
 // when cookie mode is on so the body never carries it.
 func (h *Handler) issue(w http.ResponseWriter, resp *TokenResponse) {
 	if h.cookieDomain != "" && resp != nil && resp.RefreshToken != "" {
 		http.SetCookie(w, &http.Cookie{
-			Name: refreshCookie, Value: resp.RefreshToken, Domain: h.cookieDomain, Path: "/v1/auth",
-			MaxAge: 30 * 24 * 3600, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+			Name: refreshCookie, Value: resp.RefreshToken, Domain: h.cookieDomain, Path: cookieDomainRT,
+			MaxAge: cookieMaxAge, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+		})
+		http.SetCookie(w, &http.Cookie{
+			Name: sessionCookie, Value: "1", Domain: h.cookieDomain, Path: cookieDomainRT,
+			MaxAge: cookieMaxAge, HttpOnly: false, Secure: true, SameSite: http.SameSiteLaxMode,
 		})
 		resp.RefreshToken = ""
 	}
@@ -60,8 +76,10 @@ func (h *Handler) refreshTokenFrom(r *http.Request, body string) string {
 	if body != "" {
 		return body
 	}
-	if c, err := r.Cookie(refreshCookie); err == nil {
-		return c.Value
+	for _, name := range []string{refreshCookie, legacyCookie} {
+		if c, err := r.Cookie(name); err == nil && c.Value != "" {
+			return c.Value
+		}
 	}
 	return ""
 }
@@ -70,7 +88,12 @@ func (h *Handler) clearCookie(w http.ResponseWriter) {
 	if h.cookieDomain == "" {
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: refreshCookie, Value: "", Domain: h.cookieDomain, Path: "/v1/auth", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+	for _, c := range []struct {
+		name, path string
+		httpOnly   bool
+	}{{refreshCookie, cookieDomainRT, true}, {sessionCookie, cookieDomainRT, false}, {legacyCookie, "/v1/auth", true}} {
+		http.SetCookie(w, &http.Cookie{Name: c.name, Value: "", Domain: h.cookieDomain, Path: c.path, MaxAge: -1, HttpOnly: c.httpOnly, Secure: true, SameSite: http.SameSiteLaxMode})
+	}
 }
 
 // PublicRoutes mounts the unauthenticated auth endpoints.
@@ -313,7 +336,10 @@ func (h *Handler) writeUpstream(w http.ResponseWriter, resp *TokenResponse, err 
 	case errors.Is(err, ErrUpstreamRejected):
 		httpx.Error(w, http.StatusUnauthorized, "invalid email or password")
 	case errors.Is(err, ErrUpstreamThrottled):
-		httpx.Error(w, http.StatusTooManyRequests, "too many attempts, try again shortly")
+		// The auth service locks an account after 5 failed logins for 15
+		// minutes and counts a request during the lockout as an attempt —
+		// so the honest advice is to stop, not retry.
+		httpx.Error(w, http.StatusTooManyRequests, "Too many attempts. The account is locked for 15 minutes after 5 wrong passwords — wait, don't retry (each retry restarts the count).")
 	default:
 		log.Printf("auth upstream: %v", err)
 		httpx.Error(w, http.StatusBadGateway, "the authentication service is unavailable")

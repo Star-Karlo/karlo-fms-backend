@@ -1,6 +1,7 @@
 package authctx
 
 import (
+	"time"
 	"crypto/rsa"
 	"errors"
 	"fmt"
@@ -38,4 +39,23 @@ func (v *Verifier) Verify(token string) (Principal, error) {
 		return Principal{}, errors.New("authctx: token has no subject")
 	}
 	return claims.Principal, nil
+}
+
+// VerifyWithIssuedAt is Verify plus the token's issue time, which the
+// revocation rule needs ("revoked at T" only covers tokens issued before T).
+func (v *Verifier) VerifyWithIssuedAt(token string) (Principal, time.Time, error) {
+	claims, err := ParseClaims(token, func(t *jwt.Token) (interface{}, error) {
+		return v.pub, nil
+	})
+	if err != nil {
+		return Principal{}, time.Time{}, err
+	}
+	if claims.Principal.UserID == "" {
+		return Principal{}, time.Time{}, errors.New("authctx: token has no subject")
+	}
+	var iat time.Time
+	if claims.IssuedAt != nil {
+		iat = claims.IssuedAt.Time
+	}
+	return claims.Principal, iat, nil
 }
