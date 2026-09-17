@@ -548,7 +548,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 //	@Param			channel	query	int		true	"camera channel"
 //	@Param			start	query	string	true	"clip start, YYYY-MM-DD HH:MM:SS (camera-local, as sent to download)"
 //	@Success		200		{object}	dashcam.ClipDTO
-//	@Failure		404		{object}	httpx.ErrorBody
+//	@Failure		404		{object}	map[string]string
 //	@Router			/v1/dashcams/{id}/clip [get]
 func (h *Handler) findClip(w http.ResponseWriter, r *http.Request) {
 	dc, ok := h.resolve(w, r)

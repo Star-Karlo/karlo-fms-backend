@@ -4,14 +4,10 @@ definitions:
     properties:
       catalog:
         description: built client-side from the metric registry
-        items:
-          type: integer
-        type: array
+        type: object
       current:
         description: existing tiles, so "add X" works
-        items:
-          type: integer
-        type: array
+        type: object
       locale:
         description: |-
           Locale is the user's UI language. Asking the model to "reply in the
@@ -29,9 +25,7 @@ definitions:
       notes:
         type: string
       tiles:
-        items:
-          type: integer
-        type: array
+        type: object
       usage:
         $ref: '#/definitions/aidash.usage'
     type: object
@@ -166,7 +160,7 @@ definitions:
   alert.CheckRequest:
     properties:
       check_status:
-        description: unchecked | checked | false_alert
+        description: unchecked (open) | followed_up | checked (resolved) | false_alert
         type: string
       note:
         type: string
@@ -185,6 +179,10 @@ definitions:
         type: string
       checked_at:
         type: string
+      checked_by:
+        description: Who last changed check_status (a user id; the client resolves
+          the name).
+        type: integer
       device_source:
         type: string
       driver_id:
@@ -344,65 +342,6 @@ definitions:
         type: string
       size:
         type: integer
-    type: object
-  company.Profile:
-    properties:
-      address:
-        type: string
-      city:
-        type: string
-      country:
-        type: string
-      email:
-        type: string
-      has_logo:
-        description: |-
-          HasLogo rather than the key: the key is an internal detail and the client
-          only needs to know whether to show the logo or the upload prompt.
-        type: boolean
-      id:
-        type: integer
-      legal_name:
-        type: string
-      name:
-        type: string
-      phone:
-        type: string
-      postal_code:
-        type: string
-      province:
-        type: string
-      slug:
-        type: string
-      tax_id:
-        type: string
-      website:
-        type: string
-    type: object
-  company.UpdateRequest:
-    properties:
-      address:
-        type: string
-      city:
-        type: string
-      country:
-        type: string
-      email:
-        type: string
-      legal_name:
-        type: string
-      name:
-        type: string
-      phone:
-        type: string
-      postal_code:
-        type: string
-      province:
-        type: string
-      tax_id:
-        type: string
-      website:
-        type: string
     type: object
   controltower.AlertLine:
     properties:
@@ -668,6 +607,10 @@ definitions:
         type: string
       id:
         type: integer
+      job_id:
+        description: JobID of the telemetry download, for polling live stage while
+          pending. Empty on list.
+        type: string
       lat:
         type: number
       license_plate:
@@ -1222,27 +1165,6 @@ definitions:
       radius_m:
         type: integer
     type: object
-  hangar.InMaintenance:
-    properties:
-      component:
-        type: string
-      distance_m:
-        type: integer
-      due_at:
-        type: string
-      hangar_id:
-        type: integer
-      hangar_name:
-        type: string
-      license_plate:
-        type: string
-      present:
-        type: boolean
-      status:
-        type: string
-      vehicle_id:
-        type: integer
-    type: object
   hangar.RouteToHangar:
     properties:
       already_there:
@@ -1583,6 +1505,15 @@ definitions:
         type: integer
       harsh_brake:
         type: integer
+      idle_by_reason:
+        additionalProperties:
+          format: float64
+          type: number
+        description: |-
+          IdleByReason splits TotalIdleMin by why the truck stood still (see
+          classifyStop). "loading" and "traffic" are the job; "rest" and "unknown"
+          are what a fleet manager can actually act on.
+        type: object
       idle_count:
         description: stops over the idle threshold
         type: integer
@@ -1816,6 +1747,14 @@ definitions:
         type: number
       lon:
         type: number
+      place:
+        type: string
+      reason:
+        description: |-
+          Reason: loading | traffic | rest | unknown — why the truck stood still,
+          so idle time is not judged subjectively (feedback epic 2.2). Place names
+          the geofence for a loading stop.
+        type: string
       start_time:
         type: string
     type: object
@@ -2634,6 +2573,59 @@ definitions:
       weight:
         type: integer
     type: object
+  sop.NationalPrice:
+    properties:
+      effective_from:
+        type: string
+      fuel_type:
+        type: string
+      note:
+        type: string
+      price:
+        type: number
+      source:
+        type: string
+    type: object
+  sop.Settings:
+    properties:
+      custom_fuel_price:
+        description: |-
+          CustomFuelPrice is the company's own price, or nil = follow the
+          national price. On PUT, send null to follow, a number to fix it.
+        type: number
+      fuel_price_per_litre:
+        description: |-
+          FuelPricePerLitre is the price in force for this company: its own
+          fixed price when set, otherwise the national price for FuelType.
+        type: number
+      fuel_price_ref:
+        type: string
+      fuel_price_since:
+        type: string
+      fuel_price_source:
+        description: FuelPriceSource explains where FuelPricePerLitre came from.
+        type: string
+      fuel_type:
+        type: string
+      idle_lph:
+        type: number
+      idle_min:
+        type: integer
+      offline_min:
+        type: integer
+      overspeed_min:
+        type: integer
+      sensor_timeout_min:
+        type: integer
+      sop_enabled:
+        type: boolean
+      speed_limit_kmh:
+        type: number
+      stop_max_min:
+        type: integer
+      updated_at:
+        type: string
+    type: object
   telemetry.DashcamClip:
     properties:
       channel:
@@ -3215,7 +3207,7 @@ paths:
         in: query
         name: q
         type: string
-      - description: unchecked|checked|false_alert
+      - description: unchecked|followed_up|checked|false_alert (or 'open' = unchecked+followed_up)
         in: query
         name: check_status
         type: string
@@ -3310,7 +3302,8 @@ paths:
             $ref: '#/definitions/alert.DTO'
       security:
       - BearerAuth: []
-      summary: Set an alert's check status (checked / false_alert / unchecked)
+      summary: Set an alert's lifecycle status (unchecked=open / followed_up / checked=resolved
+        / false_alert)
       tags:
       - alerts
   /v1/alerts/analytics:
@@ -3577,48 +3570,6 @@ paths:
       summary: Rotate a refresh token for a new token pair
       tags:
       - auth
-  /v1/company:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/company.Profile'
-      security:
-      - BearerAuth: []
-      summary: The signed-in user's company profile
-      tags:
-      - company
-    put:
-      consumes:
-      - application/json
-      parameters:
-      - description: company profile
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/company.UpdateRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/company.Profile'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Update the company profile (admin only)
-      tags:
-      - company
   /v1/company/logo:
     delete:
       responses:
@@ -3689,6 +3640,42 @@ paths:
       security:
       - BearerAuth: []
       summary: Presigned URL for uploading the company logo (admin only)
+      tags:
+      - company
+  /v1/company/sop:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sop.Settings'
+      security:
+      - BearerAuth: []
+      summary: The company's operating-procedure thresholds (SOP)
+      tags:
+      - company
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: settings
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/sop.Settings'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sop.Settings'
+      security:
+      - BearerAuth: []
+      summary: Set the company's SOP thresholds (admin)
       tags:
       - company
   /v1/control-tower:
@@ -3833,6 +3820,45 @@ paths:
       security:
       - BearerAuth: []
       summary: Unlink a dashcam
+      tags:
+      - dashcams
+  /v1/dashcams/{id}/clip:
+    get:
+      description: Lets a client that lost its state (a refreshed page) find the clip
+        a previous Save produced — pending, ready or failed — instead of saving again.
+        Same start string as the download request.
+      parameters:
+      - description: dashcam id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: camera channel
+        in: query
+        name: channel
+        required: true
+        type: integer
+      - description: clip start, YYYY-MM-DD HH:MM:SS (camera-local, as sent to download)
+        in: query
+        name: start
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dashcam.ClipDTO'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: The saved clip for a camera + window, if any
       tags:
       - dashcams
   /v1/dashcams/{id}/download:
@@ -4083,22 +4109,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Presigned download URL for a document
-      tags:
-      - documents
-  /v1/documents/kinds:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              type: string
-            type: array
-      security:
-      - BearerAuth: []
-      summary: Document kinds the UI should offer
       tags:
       - documents
   /v1/driver-scorecard:
@@ -4517,6 +4527,22 @@ paths:
       security:
       - BearerAuth: []
       summary: Fleet fuel analysis (estimated from telemetry distance)
+      tags:
+      - fuel
+  /v1/fuel/prices:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/sop.NationalPrice'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: National fuel-price catalogue (newest first per fuel type)
       tags:
       - fuel
   /v1/geofences:
@@ -5058,25 +5084,6 @@ paths:
       summary: Live detail for a single vehicle
       tags:
       - live-view
-  /v1/maintenance/in-progress:
-    get:
-      description: A vehicle counts as in maintenance when it has an open service
-        schedule. `present` says whether it has actually arrived at the hangar it
-        was booked into.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/hangar.InMaintenance'
-            type: array
-      security:
-      - BearerAuth: []
-      summary: Every vehicle currently in for maintenance, across all hangars
-      tags:
-      - hangars
   /v1/notification-rules:
     get:
       produces:
@@ -5218,6 +5225,29 @@ paths:
       summary: Push FMS-only vehicles up into master data
       tags:
       - platform
+  /v1/platform/fuel-prices:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: price
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/sop.NationalPrice'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sop.NationalPrice'
+      security:
+      - BearerAuth: []
+      summary: Record a national fuel price change (platform staff)
+      tags:
+      - fuel
   /v1/platform/overview:
     get:
       description: 'Totals across every account: accounts, vehicles, online, and a
@@ -6102,50 +6132,6 @@ paths:
       summary: Documents attached to one vehicle
       tags:
       - documents
-  /v1/vehicles/{vehicle_id}/analytics:
-    get:
-      description: 'Everything derived for one vehicle over [from,to] in a single
-        call: fuel (litres/cost/km-L/Rp-km/Rp-hour/refuels/engine-idle-moving hours),
-        GPS behaviour (overspeed, harsh accel/brake, idle stops), accelerometer harsh
-        events by axis, and accumulated state (lifetime engine hours, odometer, km
-        since service). Any section that can''t be computed is null (with a note in
-        `errors`), never failing the whole response.'
-      parameters:
-      - description: vehicle id
-        in: path
-        name: vehicle_id
-        required: true
-        type: integer
-      - description: RFC3339
-        in: query
-        name: from
-        required: true
-        type: string
-      - description: RFC3339
-        in: query
-        name: to
-        required: true
-        type: string
-      - description: overspeed limit km/h (default 60)
-        in: query
-        name: limit
-        type: number
-      - description: minutes a stop must exceed to count as idle (default 120)
-        in: query
-        name: idle_threshold
-        type: number
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/liveview.VehicleAnalytics'
-      security:
-      - BearerAuth: []
-      summary: Consolidated vehicle analytics (history + calculations)
-      tags:
-      - analytics
   /v1/vehicles/{vehicle_id}/behavior:
     get:
       parameters:

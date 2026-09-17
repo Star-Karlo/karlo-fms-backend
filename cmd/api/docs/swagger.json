@@ -361,7 +361,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "unchecked|checked|false_alert",
+                        "description": "unchecked|followed_up|checked|false_alert (or 'open' = unchecked+followed_up)",
                         "name": "check_status",
                         "in": "query"
                     },
@@ -514,7 +514,7 @@
                 "tags": [
                     "alerts"
                 ],
-                "summary": "Set an alert's check status (checked / false_alert / unchecked)",
+                "summary": "Set an alert's lifecycle status (unchecked=open / followed_up / checked=resolved / false_alert)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -923,75 +923,6 @@
                 }
             }
         },
-        "/v1/company": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "company"
-                ],
-                "summary": "The signed-in user's company profile",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/company.Profile"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "company"
-                ],
-                "summary": "Update the company profile (admin only)",
-                "parameters": [
-                    {
-                        "description": "company profile",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/company.UpdateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/company.Profile"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/v1/company/logo": {
             "get": {
                 "security": [
@@ -1097,6 +1028,66 @@
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/company/sop": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "company"
+                ],
+                "summary": "The company's operating-procedure thresholds (SOP)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sop.Settings"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "company"
+                ],
+                "summary": "Set the company's SOP thresholds (admin)",
+                "parameters": [
+                    {
+                        "description": "settings",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/sop.Settings"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sop.Settings"
+                        }
                     }
                 }
             }
@@ -1410,6 +1401,63 @@
                 }
             }
         },
+        "/v1/dashcams/{id}/clip": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lets a client that lost its state (a refreshed page) find the clip a previous Save produced — pending, ready or failed — instead of saving again. Same start string as the download request.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashcams"
+                ],
+                "summary": "The saved clip for a camera + window, if any",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "dashcam id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "camera channel",
+                        "name": "channel",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "clip start, YYYY-MM-DD HH:MM:SS (camera-local, as sent to download)",
+                        "name": "start",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dashcam.ClipDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/dashcams/{id}/download": {
             "post": {
                 "security": [
@@ -1630,33 +1678,6 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/documents/kinds": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "documents"
-                ],
-                "summary": "Document kinds the UI should offer",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
                                 "type": "string"
                             }
                         }
@@ -2406,6 +2427,33 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/fuelanalysis.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/fuel/prices": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "fuel"
+                ],
+                "summary": "National fuel-price catalogue (newest first per fuel type)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/sop.NationalPrice"
+                            }
                         }
                     }
                 }
@@ -3228,34 +3276,6 @@
                 }
             }
         },
-        "/v1/maintenance/in-progress": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "A vehicle counts as in maintenance when it has an open service schedule. `present` says whether it has actually arrived at the hangar it was booked into.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "hangars"
-                ],
-                "summary": "Every vehicle currently in for maintenance, across all hangars",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/hangar.InMaintenance"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/v1/notification-rules": {
             "get": {
                 "security": [
@@ -3479,6 +3499,44 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/platformadmin.BackfillResult"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/platform/fuel-prices": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "fuel"
+                ],
+                "summary": "Record a national fuel price change (platform staff)",
+                "parameters": [
+                    {
+                        "description": "price",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/sop.NationalPrice"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sop.NationalPrice"
                         }
                     }
                 }
@@ -4917,66 +4975,6 @@
                 }
             }
         },
-        "/v1/vehicles/{vehicle_id}/analytics": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Everything derived for one vehicle over [from,to] in a single call: fuel (litres/cost/km-L/Rp-km/Rp-hour/refuels/engine-idle-moving hours), GPS behaviour (overspeed, harsh accel/brake, idle stops), accelerometer harsh events by axis, and accumulated state (lifetime engine hours, odometer, km since service). Any section that can't be computed is null (with a note in `errors`), never failing the whole response.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "analytics"
-                ],
-                "summary": "Consolidated vehicle analytics (history + calculations)",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "vehicle id",
-                        "name": "vehicle_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "RFC3339",
-                        "name": "from",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "RFC3339",
-                        "name": "to",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "number",
-                        "description": "overspeed limit km/h (default 60)",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "number",
-                        "description": "minutes a stop must exceed to count as idle (default 120)",
-                        "name": "idle_threshold",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/liveview.VehicleAnalytics"
-                        }
-                    }
-                }
-            }
-        },
         "/v1/vehicles/{vehicle_id}/behavior": {
             "get": {
                 "security": [
@@ -5660,17 +5658,11 @@
             "properties": {
                 "catalog": {
                     "description": "built client-side from the metric registry",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object"
                 },
                 "current": {
                     "description": "existing tiles, so \"add X\" works",
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object"
                 },
                 "locale": {
                     "description": "Locale is the user's UI language. Asking the model to \"reply in the\nlanguage of the request\" was not enough on its own — an Indonesian\nrequest came back with English titles — so the expected language is\nstated outright rather than inferred.",
@@ -5691,10 +5683,7 @@
                     "type": "string"
                 },
                 "tiles": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object"
                 },
                 "usage": {
                     "$ref": "#/definitions/aidash.usage"
@@ -5893,7 +5882,7 @@
             "type": "object",
             "properties": {
                 "check_status": {
-                    "description": "unchecked | checked | false_alert",
+                    "description": "unchecked (open) | followed_up | checked (resolved) | false_alert",
                     "type": "string"
                 },
                 "note": {
@@ -5921,6 +5910,10 @@
                 },
                 "checked_at": {
                     "type": "string"
+                },
+                "checked_by": {
+                    "description": "Who last changed check_status (a user id; the client resolves the name).",
+                    "type": "integer"
                 },
                 "device_source": {
                     "type": "string"
@@ -6165,92 +6158,6 @@
                 },
                 "size": {
                     "type": "integer"
-                }
-            }
-        },
-        "company.Profile": {
-            "type": "object",
-            "properties": {
-                "address": {
-                    "type": "string"
-                },
-                "city": {
-                    "type": "string"
-                },
-                "country": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "has_logo": {
-                    "description": "HasLogo rather than the key: the key is an internal detail and the client\nonly needs to know whether to show the logo or the upload prompt.",
-                    "type": "boolean"
-                },
-                "id": {
-                    "type": "integer"
-                },
-                "legal_name": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "phone": {
-                    "type": "string"
-                },
-                "postal_code": {
-                    "type": "string"
-                },
-                "province": {
-                    "type": "string"
-                },
-                "slug": {
-                    "type": "string"
-                },
-                "tax_id": {
-                    "type": "string"
-                },
-                "website": {
-                    "type": "string"
-                }
-            }
-        },
-        "company.UpdateRequest": {
-            "type": "object",
-            "properties": {
-                "address": {
-                    "type": "string"
-                },
-                "city": {
-                    "type": "string"
-                },
-                "country": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "legal_name": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "phone": {
-                    "type": "string"
-                },
-                "postal_code": {
-                    "type": "string"
-                },
-                "province": {
-                    "type": "string"
-                },
-                "tax_id": {
-                    "type": "string"
-                },
-                "website": {
-                    "type": "string"
                 }
             }
         },
@@ -6614,6 +6521,10 @@
                 },
                 "id": {
                     "type": "integer"
+                },
+                "job_id": {
+                    "description": "JobID of the telemetry download, for polling live stage while pending. Empty on list.",
+                    "type": "string"
                 },
                 "lat": {
                     "type": "number"
@@ -7447,38 +7358,6 @@
                 }
             }
         },
-        "hangar.InMaintenance": {
-            "type": "object",
-            "properties": {
-                "component": {
-                    "type": "string"
-                },
-                "distance_m": {
-                    "type": "integer"
-                },
-                "due_at": {
-                    "type": "string"
-                },
-                "hangar_id": {
-                    "type": "integer"
-                },
-                "hangar_name": {
-                    "type": "string"
-                },
-                "license_plate": {
-                    "type": "string"
-                },
-                "present": {
-                    "type": "boolean"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "vehicle_id": {
-                    "type": "integer"
-                }
-            }
-        },
         "hangar.RouteToHangar": {
             "type": "object",
             "properties": {
@@ -7943,6 +7822,14 @@
                 "harsh_brake": {
                     "type": "integer"
                 },
+                "idle_by_reason": {
+                    "description": "IdleByReason splits TotalIdleMin by why the truck stood still (see\nclassifyStop). \"loading\" and \"traffic\" are the job; \"rest\" and \"unknown\"\nare what a fleet manager can actually act on.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
                 "idle_count": {
                     "description": "stops over the idle threshold",
                     "type": "integer"
@@ -8265,6 +8152,13 @@
                 },
                 "lon": {
                     "type": "number"
+                },
+                "place": {
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "Reason: loading | traffic | rest | unknown — why the truck stood still,\nso idle time is not judged subjectively (feedback epic 2.2). Place names\nthe geofence for a loading stop.",
+                    "type": "string"
                 },
                 "start_time": {
                     "type": "string"
@@ -9415,6 +9309,79 @@
                 },
                 "weight": {
                     "type": "integer"
+                }
+            }
+        },
+        "sop.NationalPrice": {
+            "type": "object",
+            "properties": {
+                "effective_from": {
+                    "type": "string"
+                },
+                "fuel_type": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "price": {
+                    "type": "number"
+                },
+                "source": {
+                    "type": "string"
+                }
+            }
+        },
+        "sop.Settings": {
+            "type": "object",
+            "properties": {
+                "custom_fuel_price": {
+                    "description": "CustomFuelPrice is the company's own price, or nil = follow the\nnational price. On PUT, send null to follow, a number to fix it.",
+                    "type": "number"
+                },
+                "fuel_price_per_litre": {
+                    "description": "FuelPricePerLitre is the price in force for this company: its own\nfixed price when set, otherwise the national price for FuelType.",
+                    "type": "number"
+                },
+                "fuel_price_ref": {
+                    "type": "string"
+                },
+                "fuel_price_since": {
+                    "type": "string"
+                },
+                "fuel_price_source": {
+                    "description": "FuelPriceSource explains where FuelPricePerLitre came from.",
+                    "type": "string"
+                },
+                "fuel_type": {
+                    "type": "string"
+                },
+                "idle_lph": {
+                    "type": "number"
+                },
+                "idle_min": {
+                    "type": "integer"
+                },
+                "offline_min": {
+                    "type": "integer"
+                },
+                "overspeed_min": {
+                    "type": "integer"
+                },
+                "sensor_timeout_min": {
+                    "type": "integer"
+                },
+                "sop_enabled": {
+                    "type": "boolean"
+                },
+                "speed_limit_kmh": {
+                    "type": "number"
+                },
+                "stop_max_min": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },

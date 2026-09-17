@@ -335,3 +335,11 @@ CREATE TABLE fuel_prices (
   created_by     bigint,
   created_at     timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE sop_runs (
+  tenant_id  bigint NOT NULL,
+  vehicle_id bigint NOT NULL,
+  code       text   NOT NULL,
+  since      timestamptz NOT NULL,
+  PRIMARY KEY (tenant_id, vehicle_id, code)
+);

@@ -68,8 +68,8 @@ func (h *Handler) Routes(r chi.Router) {
 
 type composeRequest struct {
 	Prompt  string          `json:"prompt"`
-	Catalog json.RawMessage `json:"catalog"` // built client-side from the metric registry
-	Current json.RawMessage `json:"current"` // existing tiles, so "add X" works
+	Catalog json.RawMessage `json:"catalog" swaggertype:"object"` // built client-side from the metric registry
+	Current json.RawMessage `json:"current" swaggertype:"object"` // existing tiles, so "add X" works
 	// Locale is the user's UI language. Asking the model to "reply in the
 	// language of the request" was not enough on its own — an Indonesian
 	// request came back with English titles — so the expected language is
@@ -78,7 +78,7 @@ type composeRequest struct {
 }
 
 type composeResponse struct {
-	Tiles    json.RawMessage `json:"tiles"`
+	Tiles    json.RawMessage `json:"tiles" swaggertype:"object"`
 	Notes    string          `json:"notes,omitempty"`
 	Attempts int             `json:"attempts"`
 	Usage    usage           `json:"usage"`

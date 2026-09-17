@@ -13,8 +13,9 @@ package notifengine
 // engine keeps the moment each condition was FIRST seen per vehicle and
 // raises the alert once the run is long enough; a raised alert resets the
 // run so the next one needs another full window (plus the usual cooldown).
-// State is in-process — a restart forgets a run in progress and starts
-// counting again, which is the conservative failure.
+// State lives in sop_runs and is loaded per tenant on the first tick after a
+// start, then written back after every tick, so a deploy no longer resets a
+// run in progress.
 //
 // Runs for every active vehicle of a tenant that switched sop_enabled on.
 // No rule attachment needed: an SOP is fleet-wide by definition. Alerts name
@@ -69,6 +70,8 @@ func (e *Engine) evalSOP(ctx context.Context, tenantID int64, cfg store.CompanyS
 	if len(vehicles) == 0 {
 		return 0, nil
 	}
+	e.loadSOP(ctx, tenantID)
+	defer e.saveSOP(ctx, tenantID)
 	imeis := make([]string, 0, len(vehicles))
 	for _, v := range vehicles {
 		imeis = append(imeis, v.Imei)
@@ -94,6 +97,9 @@ func (e *Engine) evalSOP(ctx context.Context, tenantID int64, cfg store.CompanyS
 			continue // never reported; nothing to measure a run against
 		}
 		age := now.Sub(pos.Time)
+		for _, c := range []string{codeSopOverspeed, codeSopLongStop, codeSopOffline, codeSopSensor} {
+			e.tagTenant(sopKey{v.VehicleID, c}, tenantID)
+		}
 		driver := drivers[v.VehicleID]
 		who := v.LicensePlate
 		if driver != "" {
@@ -160,6 +166,53 @@ func (e *Engine) evalSOP(ctx context.Context, tenantID int64, cfg store.CompanyS
 	return created, nil
 }
 
+// loadSOP pulls a tenant's persisted runs into memory once per process.
+func (e *Engine) loadSOP(ctx context.Context, tenantID int64) {
+	if e.sopLoaded[tenantID] {
+		return
+	}
+	_ = db.Tx(ctx, e.pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT vehicle_id, code, since FROM sop_runs WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var k sopKey
+			var since time.Time
+			if err := rows.Scan(&k.vehicle, &k.code, &since); err != nil {
+				return err
+			}
+			e.sopSince[k] = since
+			e.sopTenant[k] = tenantID
+		}
+		return rows.Err()
+	})
+	e.sopLoaded[tenantID] = true
+}
+
+// saveSOP rewrites the tenant's runs from memory (a few rows per vehicle at
+// most; a delete + insert is simpler than diffing and just as cheap).
+func (e *Engine) saveSOP(ctx context.Context, tenantID int64) {
+	err := db.Tx(ctx, e.pool, tenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM sop_runs WHERE tenant_id = $1`, tenantID); err != nil {
+			return err
+		}
+		for k, since := range e.sopSince {
+			if e.sopTenant[k] != tenantID || since.IsZero() {
+				continue
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO sop_runs (tenant_id, vehicle_id, code, since) VALUES ($1, $2, $3, $4)`, tenantID, k.vehicle, k.code, since); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("notifengine: save sop runs tenant %d: %v", tenantID, err)
+	}
+}
+
 // track records when `cond` was first seen true for key and returns how long
 // it has held; a false observation clears the run.
 func (e *Engine) track(k sopKey, cond bool, now time.Time) time.Duration {
@@ -174,6 +227,9 @@ func (e *Engine) track(k sopKey, cond bool, now time.Time) time.Duration {
 	}
 	return now.Sub(since)
 }
+
+// tagTenant remembers which tenant a key belongs to, for saveSOP.
+func (e *Engine) tagTenant(k sopKey, tenantID int64) { e.sopTenant[k] = tenantID }
 
 func (e *Engine) raise(ctx context.Context, tenantID, vehicleID int64, code, name, sev string, actual, limit float64, pos telemetry.Position) bool {
 	wrote := false

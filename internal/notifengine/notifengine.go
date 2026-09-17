@@ -99,13 +99,16 @@ type Engine struct {
 	interval time.Duration
 	// docLast: when the daily document-expiry pass last ran, per tenant.
 	docLast map[int64]time.Time
-	// sopSince: when each SOP condition was first observed, per vehicle (sop.go).
-	sopSince map[sopKey]time.Time
+	// sopSince: when each SOP condition was first observed, per vehicle (sop.go),
+	// mirrored to sop_runs; sopTenant maps a key to its tenant for the write-back.
+	sopSince  map[sopKey]time.Time
+	sopTenant map[sopKey]int64
+	sopLoaded map[int64]bool
 }
 
 // New builds the engine. interval ~= the live poll cadence.
 func New(pool *db.Pool, tel *telemetry.Client, interval time.Duration) *Engine {
-	return &Engine{pool: pool, tel: tel, interval: interval, docLast: map[int64]time.Time{}, sopSince: map[sopKey]time.Time{}}
+	return &Engine{pool: pool, tel: tel, interval: interval, docLast: map[int64]time.Time{}, sopSince: map[sopKey]time.Time{}, sopTenant: map[sopKey]int64{}, sopLoaded: map[int64]bool{}}
 }
 
 // Run ticks until ctx is cancelled. Evaluates once immediately, then on interval.

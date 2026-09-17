@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "github.com/karlo/fms-backend/cmd/api/docs"
@@ -328,9 +329,19 @@ func main() {
 	})
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 
-	// Public (pre-auth) endpoints.
-	authH.PublicRoutes(r)
-	trackingH.PublicRoutes(r)
+	// Public (pre-auth) endpoints, rate-limited per client IP. Login is also
+	// throttled by the auth service, but a brute-force or a scraper of public
+	// tracking links should be stopped here before it costs an upstream call.
+	// Keyed by RealIP, which chi's middleware set from X-Forwarded-For (the
+	// ALB) above.
+	r.Group(func(pub chi.Router) {
+		pub.Use(httprate.LimitByIP(30, time.Minute))
+		authH.PublicRoutes(pub)
+	})
+	r.Group(func(pub chi.Router) {
+		pub.Use(httprate.LimitByIP(60, time.Minute))
+		trackingH.PublicRoutes(pub)
+	})
 
 	// Authenticated endpoints.
 	r.Group(func(pr chi.Router) {
@@ -381,7 +392,20 @@ func main() {
 	})
 
 	log.Printf("fms-backend api on %s  (swagger: http://localhost%s/swagger/index.html)", cfg.Addr, cfg.Addr)
-	log.Fatal(http.ListenAndServe(cfg.Addr, r))
+	// Bounded server: a client that opens a connection and never finishes its
+	// headers, or trickles a body, must not hold a worker forever (slowloris).
+	// WriteTimeout is generous because history and report responses are big;
+	// long-running work (report render, clip download) is asynchronous anyway.
+	srv := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    64 << 10,
+	}
+	log.Fatal(srv.ListenAndServe())
 }
 
 // mustReadKey loads the auth service's public key, or returns nil when none is
