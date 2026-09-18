@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -61,10 +62,24 @@ func (h *Handler) issue(w http.ResponseWriter, resp *TokenResponse) {
 			Name: refreshCookie, Value: resp.RefreshToken, Domain: h.cookieDomain, Path: cookieDomainRT,
 			MaxAge: cookieMaxAge, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 		})
+		// The marker carries WHO is signed in (the platform user id), so a tab
+		// open as one person notices when another person signs in elsewhere
+		// on the same browser and re-adopts the session instead of keeping
+		// its stale identity. Falls back to the local id, then "1".
+		who := h.sso.PlatformUserID(resp.AccessToken)
+		if who == "" && resp.User.ID != 0 {
+			who = strconv.FormatInt(resp.User.ID, 10)
+		}
+		if who == "" {
+			who = "1"
+		}
 		http.SetCookie(w, &http.Cookie{
-			Name: sessionCookie, Value: "1", Domain: h.cookieDomain, Path: cookieDomainRT,
+			Name: sessionCookie, Value: who, Domain: h.cookieDomain, Path: cookieDomainRT,
 			MaxAge: cookieMaxAge, HttpOnly: false, Secure: true, SameSite: http.SameSiteLaxMode,
 		})
+		// The pre-SSO cookie must not linger: with karlo_rt present a stale
+		// fms_refresh from a previous user could otherwise win a refresh.
+		http.SetCookie(w, &http.Cookie{Name: legacyCookie, Value: "", Domain: h.cookieDomain, Path: "/v1/auth", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
 		resp.RefreshToken = ""
 	}
 	httpx.JSON(w, http.StatusOK, resp)

@@ -276,6 +276,20 @@ func actingFor(w http.ResponseWriter, r *http.Request, c *Claims, dir TenantReso
 // will enforce for the rest of the session, so what the browser shows and what
 // the API allows come from the same place — rather than the browser guessing
 // from a shape the auth service happens to return.
+// PlatformUserID is the shared IAM's user id (uuid) inside a token, or ""
+// for a token it cannot verify. It is the karlo_session marker value: stable
+// across refreshes for one person, different for anyone else.
+func (s *SSO) PlatformUserID(token string) string {
+	if s == nil {
+		return ""
+	}
+	p, err := s.verifier.Verify(token)
+	if err != nil {
+		return ""
+	}
+	return p.UserID
+}
+
 func (s *SSO) UserFromToken(token, email, fullName string) UserDTO {
 	c, err := s.Claims(token)
 	if err != nil {
