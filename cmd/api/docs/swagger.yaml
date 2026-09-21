@@ -1071,6 +1071,15 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_TrackerExport:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/platformadmin.TrackerExport'
+        type: array
+      total:
+        type: integer
+    type: object
   github_com_karlo_fms-backend_internal_platform_httpx.List-report_AlertRow:
     properties:
       items:
@@ -2348,6 +2357,45 @@ definitions:
         type: integer
       vehicles:
         type: integer
+    type: object
+  platformadmin.TrackerExport:
+    properties:
+      company_id:
+        description: CompanyID is the master-data company (UUID), when the directory
+          knows it.
+        type: string
+      created_at:
+        type: string
+      device_id:
+        description: DeviceID is the IMEI for a GPS unit, the VSS device id for a
+          dashcam.
+        type: string
+      device_name:
+        type: string
+      device_type:
+        type: string
+      external_ref:
+        type: string
+      fitted_at:
+        type: string
+      kind:
+        description: gps | dashcam
+        type: string
+      license_plate:
+        type: string
+      phone_no:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: integer
+      tenant_name:
+        type: string
+      vehicle_id:
+        description: 'Current fitting: nil when the device is in stock.'
+        type: integer
+      vehicle_master_data_id:
+        type: string
     type: object
   report.AlertRow:
     properties:
@@ -5339,6 +5387,33 @@ paths:
       security:
       - BearerAuth: []
       summary: Rename a customer account (platform admin)
+      tags:
+      - platform
+  /v1/platform/trackers/export:
+    get:
+      description: 'FMS''s own device registry as one list: GPS trackers (kind=gps,
+        device_id=IMEI, phone_no, status, external_ref) and dashcams (kind=dashcam,
+        device_id=VSS device id), each with its account, the account''s master-data
+        company id, and the current fitting (vehicle, its master-data id, plate, fitted_at
+        from the open tracker_assignments row, else the tracker''s created_at). For
+        the one-off reconcile that makes master data the owner of devices; restricted
+        to platform_admin.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-platformadmin_TrackerExport'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export the tracker and dashcam registry, every account (platform admin)
       tags:
       - platform
   /v1/platform/users:

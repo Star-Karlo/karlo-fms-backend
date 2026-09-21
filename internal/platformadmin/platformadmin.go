@@ -63,6 +63,7 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Put("/v1/platform/users/{id}/password", h.resetPassword)
 		ar.Put("/v1/platform/tenants/{id}/name", h.renameTenant)
 		ar.Post("/v1/platform/sync", h.sync)
+		ar.Get("/v1/platform/trackers/export", h.trackersExport)
 		h.backfillRoutes(ar)
 	})
 }
