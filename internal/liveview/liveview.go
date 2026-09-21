@@ -69,7 +69,7 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 			VehicleID: r.VehicleID, MasterDataID: r.MasterDataID,
 			LicensePlate: r.LicensePlate, VehicleType: r.VehicleType, RegistryStatus: r.Status,
 			FleetGroupName: r.FleetGroupName,
-			Driver:         Driver{ID: r.DriverID, Name: r.DriverName, Phone: r.DriverPhone},
+			Driver:         Driver{ID: r.DriverID, Name: r.DriverName, Phone: r.DriverPhone, MasterDataID: r.DriverMasterDataID},
 			Tracker:        Tracker{ID: tid, IMEI: imei},
 			CameraDeviceID: r.CameraDeviceID,
 			DriveState:     StateOffline,
@@ -159,6 +159,31 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 				if d := byDevice[out[i].CameraDeviceID]; d != nil {
 					enrichCamera(&out[i], d.Lat, d.Lon, d.Online, now)
 				}
+			}
+		}
+	}
+
+	// Still no fix but an assigned driver with a phone — the driver's K-Trip
+	// position stands in. One call, only for the drivers actually needed.
+	var drivers []string
+	for i := range out {
+		if out[i].Position == nil && out[i].Driver.MasterDataID != "" {
+			drivers = append(drivers, out[i].Driver.MasterDataID)
+		}
+	}
+	if len(drivers) > 0 {
+		if phones, err := s.tel.MobileLiveMany(ctx, drivers); err != nil {
+			log.Printf("liveview: phone positions unavailable: %v", err)
+		} else {
+			byDriver := make(map[string]*telemetry.MobilePosition, len(phones))
+			for i := range phones {
+				byDriver[phones[i].Driver] = &phones[i]
+			}
+			for i := range out {
+				if out[i].Position != nil || out[i].Driver.MasterDataID == "" {
+					continue
+				}
+				enrichPhone(&out[i], byDriver[out[i].Driver.MasterDataID], now)
 			}
 		}
 	}
@@ -254,7 +279,7 @@ func (s *Service) One(ctx context.Context, tenantID, vehicleID int64) (*VehicleL
 		VehicleID: row.VehicleID, MasterDataID: row.MasterDataID,
 		LicensePlate: row.LicensePlate, VehicleType: row.VehicleType, RegistryStatus: row.Status,
 		FleetGroupName: row.FleetGroupName,
-		Driver:         Driver{ID: row.DriverID, Name: row.DriverName, Phone: row.DriverPhone},
+		Driver:         Driver{ID: row.DriverID, Name: row.DriverName, Phone: row.DriverPhone, MasterDataID: row.DriverMasterDataID},
 		Tracker:        Tracker{ID: tid, IMEI: imei},
 		CameraDeviceID: row.CameraDeviceID,
 		DriveState:     StateOffline,
@@ -279,6 +304,14 @@ func (s *Service) One(ctx context.Context, tenantID, vehicleID int64) (*VehicleL
 					break
 				}
 			}
+		}
+	}
+	// Neither device has a fix — the assigned driver's phone, if any.
+	if v.Position == nil && v.Driver.MasterDataID != "" {
+		if phones, err := s.tel.MobileLiveMany(ctx, []string{v.Driver.MasterDataID}); err != nil {
+			log.Printf("liveview: phone position unavailable for %s: %v", v.LicensePlate, err)
+		} else if len(phones) > 0 {
+			enrichPhone(&v, &phones[0], now)
 		}
 	}
 	return &v, nil

@@ -26,6 +26,9 @@ type Driver struct {
 	ID    *int64  `json:"id"`
 	Name  *string `json:"name"`
 	Phone *string `json:"phone"`
+	// MasterDataID is the shared-platform driver id — the identity the K-Trip
+	// phone app reports positions under. Empty when the driver is unpaired.
+	MasterDataID string `json:"master_data_id,omitempty"`
 }
 
 // Tracker is the minimal tracker summary embedded in a live vehicle.
@@ -36,8 +39,11 @@ type Tracker struct {
 
 // Position is the JSON-friendly live fix.
 type Position struct {
-	// Source is where the fix came from: "tracker" (GPS unit) or "camera" (the
-	// dashcam's own GPS, used for vehicles that have no tracker).
+	// Source is where the fix came from, in order of preference: "tracker"
+	// (GPS unit), "camera" (the dashcam's own GPS, for vehicles without a
+	// tracker), or "phone" (the assigned driver's K-Trip app, when neither
+	// device has a fix). A phone follows the person, not the truck: it
+	// locates the vehicle only while that driver is assigned to it.
 	Source    string    `json:"source,omitempty"`
 	Lat       *float64  `json:"lat"`
 	Lon       *float64  `json:"lon"`
@@ -160,6 +166,39 @@ func enrichCamera(v *VehicleLive, lat, lon *float64, online bool, now time.Time)
 		v.DriveState = StateParking
 	} else {
 		v.DriveState = StateOffline
+	}
+}
+
+// enrichPhone places a vehicle by its assigned driver's phone — the last
+// resort after tracker and camera. The phone has speed but no ignition, so
+// the state is moving or parking, never idle; offline is the same age rule
+// as the tracker's, and state_since is the last fix in that case (the phone
+// keeps no state stamp).
+func enrichPhone(v *VehicleLive, p *telemetry.MobilePosition, now time.Time) {
+	if p == nil || p.Lat == nil || p.Lon == nil {
+		return // keep whatever the earlier sources left (offline)
+	}
+	v.Position = &Position{
+		Source: "phone",
+		Lat:    p.Lat, Lon: p.Lon, Speed: p.Speed, Bearing: p.Bearing,
+		Time: p.Time, Kecamatan: p.Kecamatan, Kabupaten: p.Kabupaten, Kota: p.Kota,
+		Provinsi: p.Provinsi, Jalan: p.Jalan,
+		Address: composeAddress(p.Jalan, p.Kecamatan, p.Kota, p.Kabupaten, p.Provinsi),
+	}
+	stale := now.Sub(p.Time).Minutes()
+	v.StaleMinutes = &stale
+	if now.Sub(p.Time) > freshWindow {
+		v.Online = false
+		v.DriveState = StateOffline
+		t := p.Time
+		v.StateSince = &t
+		return
+	}
+	v.Online = true
+	if p.Speed != nil && *p.Speed > movingSpeed {
+		v.DriveState = StateMoving
+	} else {
+		v.DriveState = StateParking
 	}
 }
 

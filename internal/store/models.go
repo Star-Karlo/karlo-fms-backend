@@ -224,6 +224,13 @@ type ServiceSchedule struct {
 	HangarID     *int64             `json:"hangar_id"`
 }
 
+type SopRun struct {
+	TenantID  int64              `json:"tenant_id"`
+	VehicleID int64              `json:"vehicle_id"`
+	Code      string             `json:"code"`
+	Since     pgtype.Timestamptz `json:"since"`
+}
+
 type Tenant struct {
 	ID        int64              `json:"id"`
 	Name      string             `json:"name"`

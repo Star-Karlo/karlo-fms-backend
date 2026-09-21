@@ -287,6 +287,34 @@ func (c *Client) getJSONVia(ctx context.Context, hc *http.Client, path string, d
 // FMS never calls VSS. These methods call the telemetry service's /v1/dashcams
 // endpoints; the service holds the VSS credentials and does the video work.
 
+// MobilePosition is a driver's latest phone (K-Trip) fix, keyed by the
+// master-data driver id rather than an IMEI.
+type MobilePosition struct {
+	Driver     string     `json:"driver"`
+	Time       time.Time  `json:"time"`
+	ReceivedAt *time.Time `json:"received_at"`
+	Lat        *float64   `json:"lat"`
+	Lon        *float64   `json:"lon"`
+	Speed      *float64   `json:"speed"`
+	Bearing    *float64   `json:"bearing"`
+	Kecamatan  string     `json:"kecamatan"`
+	Kelurahan  string     `json:"kelurahan"`
+	Kabupaten  string     `json:"kabupaten"`
+	Kota       string     `json:"kota"`
+	Provinsi   string     `json:"provinsi"`
+	Jalan      string     `json:"jalan"`
+}
+
+// MobileLiveMany returns the latest phone fix for each of the given drivers
+// that has one.
+func (c *Client) MobileLiveMany(ctx context.Context, drivers []string) ([]MobilePosition, error) {
+	if len(drivers) == 0 {
+		return nil, nil
+	}
+	var out []MobilePosition
+	return out, c.getJSON(ctx, "/v1/mobile/live?drivers="+url.QueryEscape(strings.Join(drivers, ",")), &out)
+}
+
 // Dashcam is a device as VSS knows it, relayed by the telemetry service.
 type Dashcam struct {
 	DeviceID     string   `json:"device_id"`

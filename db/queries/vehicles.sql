@@ -104,8 +104,10 @@ WHERE (sqlc.narg('q')::text IS NULL
 
 -- name: ListLiveViewVehicles :many
 -- Active vehicles that can be located: those with a tracker IMEI, OR a linked
--- dashcam whose own GPS stands in when there is no tracker. The live-view
--- endpoint enriches each with a position — the tracker fix, else the camera fix.
+-- dashcam whose own GPS stands in when there is no tracker, OR an assigned
+-- driver whose phone (K-Trip) can. The live-view
+-- endpoint enriches each with a position — the tracker fix, else the camera
+-- fix, else the assigned driver's phone.
 SELECT
   v.id            AS vehicle_id,
   v.license_plate,
@@ -119,6 +121,9 @@ SELECT
   e.id            AS driver_id,
   e.full_name     AS driver_name,
   e.phone         AS driver_phone,
+  -- The driver's master-data id is what the K-Trip phone app reports its
+  -- positions under: the third position source, after tracker and camera.
+  COALESCE(e.master_data_id, '') AS driver_master_data_id,
   t.id            AS tracker_id,
   t.imei          AS tracker_imei,
   COALESCE(dc.vss_device_id, '') AS camera_device_id
@@ -131,7 +136,7 @@ LEFT JOIN LATERAL (
 LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 LEFT JOIN employees e     ON e.id = v.current_driver_id
 WHERE v.status <> 'archive'
-  AND (t.imei IS NOT NULL OR dc.vss_device_id IS NOT NULL)
+  AND (t.imei IS NOT NULL OR dc.vss_device_id IS NOT NULL OR e.master_data_id IS NOT NULL)
   AND (sqlc.narg('fleet_group_id')::bigint IS NULL OR v.fleet_group_id = sqlc.narg('fleet_group_id'));
 
 -- name: GetLiveViewVehicle :one
@@ -145,6 +150,9 @@ SELECT
   e.id            AS driver_id,
   e.full_name     AS driver_name,
   e.phone         AS driver_phone,
+  -- The driver's master-data id is what the K-Trip phone app reports its
+  -- positions under: the third position source, after tracker and camera.
+  COALESCE(e.master_data_id, '') AS driver_master_data_id,
   t.id            AS tracker_id,
   t.imei          AS tracker_imei,
   COALESCE(dc.vss_device_id, '') AS camera_device_id

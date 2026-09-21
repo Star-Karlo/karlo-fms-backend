@@ -7908,6 +7908,10 @@ const docTemplate = `{
                 "id": {
                     "type": "integer"
                 },
+                "master_data_id": {
+                    "description": "MasterDataID is the shared-platform driver id — the identity the K-Trip\nphone app reports positions under. Empty when the driver is unpaired.",
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -8214,7 +8218,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "source": {
-                    "description": "Source is where the fix came from: \"tracker\" (GPS unit) or \"camera\" (the\ndashcam's own GPS, used for vehicles that have no tracker).",
+                    "description": "Source is where the fix came from, in order of preference: \"tracker\"\n(GPS unit), \"camera\" (the dashcam's own GPS, for vehicles without a\ntracker), or \"phone\" (the assigned driver's K-Trip app, when neither\ndevice has a fix). A phone follows the person, not the truck: it\nlocates the vehicle only while that driver is assigned to it.",
                     "type": "string"
                 },
                 "speed": {

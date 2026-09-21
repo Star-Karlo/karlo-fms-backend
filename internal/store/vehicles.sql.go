@@ -225,6 +225,9 @@ SELECT
   e.id            AS driver_id,
   e.full_name     AS driver_name,
   e.phone         AS driver_phone,
+  -- The driver's master-data id is what the K-Trip phone app reports its
+  -- positions under: the third position source, after tracker and camera.
+  COALESCE(e.master_data_id, '') AS driver_master_data_id,
   t.id            AS tracker_id,
   t.imei          AS tracker_imei,
   COALESCE(dc.vss_device_id, '') AS camera_device_id
@@ -239,18 +242,19 @@ WHERE v.id = $1
 `
 
 type GetLiveViewVehicleRow struct {
-	VehicleID      int64   `json:"vehicle_id"`
-	LicensePlate   string  `json:"license_plate"`
-	VehicleType    *string `json:"vehicle_type"`
-	Status         string  `json:"status"`
-	MasterDataID   *string `json:"master_data_id"`
-	FleetGroupName *string `json:"fleet_group_name"`
-	DriverID       *int64  `json:"driver_id"`
-	DriverName     *string `json:"driver_name"`
-	DriverPhone    *string `json:"driver_phone"`
-	TrackerID      *int64  `json:"tracker_id"`
-	TrackerImei    *string `json:"tracker_imei"`
-	CameraDeviceID string  `json:"camera_device_id"`
+	VehicleID          int64   `json:"vehicle_id"`
+	LicensePlate       string  `json:"license_plate"`
+	VehicleType        *string `json:"vehicle_type"`
+	Status             string  `json:"status"`
+	MasterDataID       *string `json:"master_data_id"`
+	FleetGroupName     *string `json:"fleet_group_name"`
+	DriverID           *int64  `json:"driver_id"`
+	DriverName         *string `json:"driver_name"`
+	DriverPhone        *string `json:"driver_phone"`
+	DriverMasterDataID string  `json:"driver_master_data_id"`
+	TrackerID          *int64  `json:"tracker_id"`
+	TrackerImei        *string `json:"tracker_imei"`
+	CameraDeviceID     string  `json:"camera_device_id"`
 }
 
 func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveViewVehicleRow, error) {
@@ -266,6 +270,7 @@ func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveView
 		&i.DriverID,
 		&i.DriverName,
 		&i.DriverPhone,
+		&i.DriverMasterDataID,
 		&i.TrackerID,
 		&i.TrackerImei,
 		&i.CameraDeviceID,
@@ -413,6 +418,9 @@ SELECT
   e.id            AS driver_id,
   e.full_name     AS driver_name,
   e.phone         AS driver_phone,
+  -- The driver's master-data id is what the K-Trip phone app reports its
+  -- positions under: the third position source, after tracker and camera.
+  COALESCE(e.master_data_id, '') AS driver_master_data_id,
   t.id            AS tracker_id,
   t.imei          AS tracker_imei,
   COALESCE(dc.vss_device_id, '') AS camera_device_id
@@ -424,28 +432,30 @@ LEFT JOIN LATERAL (
 LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 LEFT JOIN employees e     ON e.id = v.current_driver_id
 WHERE v.status <> 'archive'
-  AND (t.imei IS NOT NULL OR dc.vss_device_id IS NOT NULL)
+  AND (t.imei IS NOT NULL OR dc.vss_device_id IS NOT NULL OR e.master_data_id IS NOT NULL)
   AND ($1::bigint IS NULL OR v.fleet_group_id = $1)
 `
 
 type ListLiveViewVehiclesRow struct {
-	VehicleID      int64   `json:"vehicle_id"`
-	LicensePlate   string  `json:"license_plate"`
-	VehicleType    *string `json:"vehicle_type"`
-	Status         string  `json:"status"`
-	MasterDataID   *string `json:"master_data_id"`
-	FleetGroupName *string `json:"fleet_group_name"`
-	DriverID       *int64  `json:"driver_id"`
-	DriverName     *string `json:"driver_name"`
-	DriverPhone    *string `json:"driver_phone"`
-	TrackerID      *int64  `json:"tracker_id"`
-	TrackerImei    *string `json:"tracker_imei"`
-	CameraDeviceID string  `json:"camera_device_id"`
+	VehicleID          int64   `json:"vehicle_id"`
+	LicensePlate       string  `json:"license_plate"`
+	VehicleType        *string `json:"vehicle_type"`
+	Status             string  `json:"status"`
+	MasterDataID       *string `json:"master_data_id"`
+	FleetGroupName     *string `json:"fleet_group_name"`
+	DriverID           *int64  `json:"driver_id"`
+	DriverName         *string `json:"driver_name"`
+	DriverPhone        *string `json:"driver_phone"`
+	DriverMasterDataID string  `json:"driver_master_data_id"`
+	TrackerID          *int64  `json:"tracker_id"`
+	TrackerImei        *string `json:"tracker_imei"`
+	CameraDeviceID     string  `json:"camera_device_id"`
 }
 
 // Active vehicles that can be located: those with a tracker IMEI, OR a linked
 // dashcam whose own GPS stands in when there is no tracker. The live-view
-// endpoint enriches each with a position — the tracker fix, else the camera fix.
+// endpoint enriches each with a position — the tracker fix, else the camera
+// fix, else the assigned driver's phone.
 // At most one camera per vehicle stands in for GPS; pick the lowest-id device.
 func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64) ([]ListLiveViewVehiclesRow, error) {
 	rows, err := q.db.Query(ctx, listLiveViewVehicles, fleetGroupID)
@@ -466,6 +476,7 @@ func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64)
 			&i.DriverID,
 			&i.DriverName,
 			&i.DriverPhone,
+			&i.DriverMasterDataID,
 			&i.TrackerID,
 			&i.TrackerImei,
 			&i.CameraDeviceID,
