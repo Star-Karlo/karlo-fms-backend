@@ -4,8 +4,12 @@
 // truck renamed in TMS up to five minutes away from the FMS Vehicles page.
 // Master data — or TMS on its behalf — publishes a notice on the platform
 // Redis after a write, and every subscriber refreshes at once. The channel
-// carries no payload contract worth parsing: any message means "something
-// changed", and a full pass is a handful of gRPC lists.
+// carries {"kind":"vehicle"|"driver","company_id":"<uuid>","id":"<objectid>",
+// "op":"create"|"update"|"delete"} (masterdata-service 0d5674e), but it is
+// not parsed: any message means "something changed", both projections run,
+// and a full pass is a handful of gRPC lists. Deliberately both — a driver
+// delete also clears that driver from the company's vehicles and announces
+// only driver/delete.
 //
 // Same posture as the revocation feed (authctx.Revocations): the follower
 // reconnects with backoff and the ticker remains the safety net, so a Redis
