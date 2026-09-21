@@ -11,6 +11,7 @@ package features
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -193,11 +194,28 @@ func (h *Handler) Enabled(ctx context.Context, tenantID int64, key string) bool 
 
 // RequireFeature blocks (403) requests whose tenant has `key` disabled. Platform
 // admins always pass (they operate across tenants). Attach to a module's routes.
+//
+// A token from the shared authentication service carries the company's
+// entitlement (acc.fms.features, decided on Company Access), and that is
+// what decides here — the same answer /v1/me/features gives the sidebar.
+// Until 2026-09-21 this read fms_app.tenant_features instead, where nothing
+// had been written since the cutover, so a module switched off in the IAM
+// vanished from the sidebar but still answered when called directly. The
+// table remains only for a locally minted token.
 func (h *Handler) RequireFeature(key string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if c, ok := auth.FromContext(r.Context()); ok && auth.AtLeast(c.Role, auth.RolePlatformAdmin) {
+			c, ok := auth.FromContext(r.Context())
+			if ok && auth.AtLeast(c.Role, auth.RolePlatformAdmin) {
 				next.ServeHTTP(w, r)
+				return
+			}
+			if ok && c.FromSharedIAM() {
+				if !valid(key) || slices.Contains(c.Features, key) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				httpx.Error(w, http.StatusForbidden, "feature not enabled for this account")
 				return
 			}
 			if !h.Enabled(r.Context(), auth.TenantID(r.Context()), key) {
