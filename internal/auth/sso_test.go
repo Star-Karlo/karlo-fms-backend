@@ -2,11 +2,11 @@ package auth_test
 
 import (
 	"context"
-	"errors"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
