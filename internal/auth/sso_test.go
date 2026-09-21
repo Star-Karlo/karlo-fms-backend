@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -382,5 +383,60 @@ func TestActingForDoesNotLeakBetweenRequests(t *testing.T) {
 	}
 	if _, tenant := actingReq(t, token, "", dir, sso); tenant != 0 {
 		t.Errorf("after acting for two companies, a plain request saw tenant %d, want 0", tenant)
+	}
+}
+
+// fakeResolver stands in for the IAM's ValidateToken: it answers with the
+// access it is given now, and counts calls so the cache can be checked.
+type fakeResolver struct {
+	access authctx.ProductAccess
+	calls  int
+	err    error
+}
+
+func (f *fakeResolver) ValidateToken(_ context.Context, _ string) (authctx.Principal, error) {
+	f.calls++
+	if f.err != nil {
+		return authctx.Principal{}, f.err
+	}
+	return authctx.Principal{Access: map[authctx.Product]authctx.ProductAccess{authctx.ProductFMS: f.access}}, nil
+}
+
+// A change on Company Access must reach the claims on the next request, not
+// at the next token refresh: the live access replaces the token's copy, is
+// cached per user, and the token's copy is the fallback when the IAM is down.
+func TestLiveAccessReplacesTheTokensCopy(t *testing.T) {
+	priv, pub := keypair(t)
+	token := issue(t, priv, authctx.Principal{
+		UserID: "11111111-2222-3333-4444-555555555555", FMSTenantID: 7, FMSUserID: 42,
+		Access: map[authctx.Product]authctx.ProductAccess{
+			authctx.ProductFMS: {Role: "operator", Features: []string{"live", "maintenance"}},
+		},
+	})
+	live := &fakeResolver{access: authctx.ProductAccess{Role: "operator", Features: []string{"live"}}}
+	sso, _ := auth.NewSSO(pub)
+	sso.WithLiveAccess(live, time.Minute)
+
+	for i := 0; i < 3; i++ {
+		c, err := sso.Claims(token)
+		if err != nil {
+			t.Fatalf("Claims: %v", err)
+		}
+		if len(c.Features) != 1 || c.Features[0] != "live" {
+			t.Fatalf("features %v: the token's copy won over the IAM's", c.Features)
+		}
+	}
+	if live.calls != 1 {
+		t.Errorf("IAM asked %d times for one user inside the TTL; want 1", live.calls)
+	}
+
+	down, _ := auth.NewSSO(pub)
+	down.WithLiveAccess(&fakeResolver{err: errors.New("unavailable")}, time.Minute)
+	c, err := down.Claims(token)
+	if err != nil {
+		t.Fatalf("Claims with the IAM down: %v", err)
+	}
+	if len(c.Features) != 2 {
+		t.Errorf("features %v: with the IAM down the token's copy must stand", c.Features)
 	}
 }

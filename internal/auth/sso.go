@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -44,10 +47,79 @@ type SSO struct {
 	// (logout in TMS, suspension, entitlement change). Nil = signature and
 	// expiry only.
 	revoked *authctx.Revocations
+	// live, when set, replaces the token's FMS access (role, permissions,
+	// features) with what the IAM computes NOW from the company's
+	// entitlements — so a change on Company Access reaches the sidebar and
+	// the module gates on the next request, not at the next token refresh
+	// (15 min). One gRPC call per user per liveTTL; the token's own copy is
+	// the fallback when the IAM cannot be reached.
+	live    AccessResolver
+	liveTTL time.Duration
+	liveMu  sync.Mutex
+	liveC   map[string]liveEntry // user id -> cached access
+}
+
+// AccessResolver answers with the live principal for a token the IAM issued.
+type AccessResolver interface {
+	ValidateToken(ctx context.Context, token string) (authctx.Principal, error)
+}
+
+type liveEntry struct {
+	access authctx.ProductAccess
+	until  time.Time
 }
 
 // WithRevocations attaches the platform revocation list.
 func (s *SSO) WithRevocations(r *authctx.Revocations) *SSO { s.revoked = r; return s }
+
+// WithLiveAccess makes Claims read the company's current FMS entitlement
+// from the IAM (cached per user for ttl) rather than from the token.
+func (s *SSO) WithLiveAccess(r AccessResolver, ttl time.Duration) *SSO {
+	if r == nil {
+		return s
+	}
+	s.live, s.liveTTL, s.liveC = r, ttl, map[string]liveEntry{}
+	return s
+}
+
+// liveAccess returns the IAM's current FMS access for the token's user, or
+// the token's own copy when the IAM is unreachable or answers without FMS.
+func (s *SSO) liveAccess(token string, p authctx.Principal, fromToken authctx.ProductAccess) authctx.ProductAccess {
+	if s.live == nil || p.UserID == "" {
+		return fromToken
+	}
+	now := time.Now()
+	s.liveMu.Lock()
+	if e, ok := s.liveC[p.UserID]; ok && now.Before(e.until) {
+		s.liveMu.Unlock()
+		return e.access
+	}
+	s.liveMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	lp, err := s.live.ValidateToken(ctx, token)
+	if err != nil {
+		log.Printf("sso: live access for %s unavailable, using the token's: %v", p.UserID, err)
+		return fromToken
+	}
+	access, ok := lp.Access[authctx.ProductFMS]
+	if !ok {
+		return fromToken
+	}
+	s.liveMu.Lock()
+	s.liveC[p.UserID] = liveEntry{access: access, until: now.Add(s.liveTTL)}
+	// Keep the cache bounded to the users seen in the last window.
+	if len(s.liveC) > 4096 {
+		for id, e := range s.liveC {
+			if now.After(e.until) {
+				delete(s.liveC, id)
+			}
+		}
+	}
+	s.liveMu.Unlock()
+	return access
+}
 
 // ErrRevoked is a verified token the platform has since revoked.
 var ErrRevoked = errors.New("session revoked")
@@ -92,6 +164,8 @@ func (s *SSO) Claims(token string) (*Claims, error) {
 	if !hasFMS && !p.IsPlatformStaff {
 		return nil, ErrNotFMS
 	}
+	// What the company is entitled to right now, not at issue time.
+	access = s.liveAccess(token, p, access)
 
 	return &Claims{
 		TenantID: p.FMSTenantID,

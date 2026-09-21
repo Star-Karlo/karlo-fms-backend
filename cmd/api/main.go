@@ -158,6 +158,12 @@ func main() {
 	var syncWakers []mdevents.Waker // the projections POST /v1/platform/sync refreshes
 	if iamConn != nil {
 		defer iamConn.Close()
+		// Entitlements as they are NOW (Company Access), not as the token
+		// had them: one ValidateToken per user per minute.
+		if sso != nil {
+			sso.WithLiveAccess(iamConn, time.Minute)
+			log.Printf("sso: FMS access resolved live from the authentication service (cached 1m per user)")
+		}
 		if dir := tenantdir.New(iamConn, time.Minute); dir != nil {
 			tenantDir = dir
 			companyDir = dir
