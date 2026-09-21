@@ -41,13 +41,17 @@ type TrackerExport struct {
 	VehicleMasterDataID *string    `json:"vehicle_master_data_id,omitempty"`
 	LicensePlate        *string    `json:"license_plate,omitempty"`
 	FittedAt            *time.Time `json:"fitted_at,omitempty"`
-	CreatedAt           time.Time  `json:"created_at"`
+	// HasAssignmentHistory: fitted_at came from a real tracker_assignments
+	// row. False means the device was imported already on the vehicle and
+	// fitted_at is its created_at — "at least since then", not an install date.
+	HasAssignmentHistory bool      `json:"has_assignment_history"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 // trackersExport godoc
 //
 //	@Summary		Export the tracker and dashcam registry, every account (platform admin)
-//	@Description	FMS's own device registry as one list: GPS trackers (kind=gps, device_id=IMEI, phone_no, status, external_ref) and dashcams (kind=dashcam, device_id=VSS device id), each with its account, the account's master-data company id, and the current fitting (vehicle, its master-data id, plate, fitted_at from the open tracker_assignments row, else the tracker's created_at). For the one-off reconcile that makes master data the owner of devices; restricted to platform_admin.
+//	@Description	FMS's own device registry as one list: GPS trackers (kind=gps, device_id=IMEI, phone_no, status, external_ref) and dashcams (kind=dashcam, device_id=VSS device id), each with its account, the account's master-data company id, and the current fitting (vehicle, its master-data id, plate, fitted_at from the open tracker_assignments row — has_assignment_history=true — else the tracker's created_at as an estimate). Devices in stock are included with no vehicle fields. For the one-off reconcile that makes master data the owner of devices; restricted to platform_admin.
 //	@Tags			platform
 //	@Security		BearerAuth
 //	@Produce		json
@@ -98,6 +102,7 @@ func (h *Handler) exportTenant(ctx context.Context, t tenantRef) ([]TrackerExpor
 				&e.VehicleID, &e.VehicleMasterDataID, &e.LicensePlate, &e.FittedAt); err != nil {
 				return err
 			}
+			e.HasAssignmentHistory = e.FittedAt != nil
 			if e.VehicleID != nil && e.FittedAt == nil {
 				// Fitted before the assignment history existed (migration 0040).
 				c := e.CreatedAt

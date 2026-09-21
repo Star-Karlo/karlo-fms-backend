@@ -3662,7 +3662,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "FMS's own device registry as one list: GPS trackers (kind=gps, device_id=IMEI, phone_no, status, external_ref) and dashcams (kind=dashcam, device_id=VSS device id), each with its account, the account's master-data company id, and the current fitting (vehicle, its master-data id, plate, fitted_at from the open tracker_assignments row, else the tracker's created_at). For the one-off reconcile that makes master data the owner of devices; restricted to platform_admin.",
+                "description": "FMS's own device registry as one list: GPS trackers (kind=gps, device_id=IMEI, phone_no, status, external_ref) and dashcams (kind=dashcam, device_id=VSS device id), each with its account, the account's master-data company id, and the current fitting (vehicle, its master-data id, plate, fitted_at from the open tracker_assignments row — has_assignment_history=true — else the tracker's created_at as an estimate). Devices in stock are included with no vehicle fields. For the one-off reconcile that makes master data the owner of devices; restricted to platform_admin.",
                 "produces": [
                     "application/json"
                 ],
@@ -9080,6 +9080,10 @@ const docTemplate = `{
                 },
                 "fitted_at": {
                     "type": "string"
+                },
+                "has_assignment_history": {
+                    "description": "HasAssignmentHistory: fitted_at came from a real tracker_assignments\nrow. False means the device was imported already on the vehicle and\nfitted_at is its created_at — \"at least since then\", not an install date.",
+                    "type": "boolean"
                 },
                 "kind": {
                     "description": "gps | dashcam",
