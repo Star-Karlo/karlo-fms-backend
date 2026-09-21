@@ -247,10 +247,14 @@ func (c *Client) UpdateVehicle(ctx context.Context, caller Caller, id string, v 
 
 // SetVehicleDriver pairs (driverID = master-data driver id) or unpairs
 // (nil) a vehicle's current driver upstream. Its own call rather than a
-// Vehicle field: an explicit null must reach the wire to unpair, and a
-// nullable field on Vehicle would send that null on every other update.
+// Vehicle field: master data applies only the fields present, and on the
+// wire "" is what unpairs — null decodes there as "leave unchanged".
 func (c *Client) SetVehicleDriver(ctx context.Context, caller Caller, id string, driverID *string) error {
-	return c.do(ctx, caller, http.MethodPut, "/api/v1/vehicles/"+id, map[string]any{"currentDriverId": driverID}, nil)
+	v := ""
+	if driverID != nil {
+		v = *driverID
+	}
+	return c.do(ctx, caller, http.MethodPut, "/api/v1/vehicles/"+id, map[string]any{"currentDriverId": v}, nil)
 }
 
 func (c *Client) DeleteVehicle(ctx context.Context, caller Caller, id string) error {
