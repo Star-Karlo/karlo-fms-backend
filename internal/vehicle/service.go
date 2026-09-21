@@ -345,19 +345,45 @@ func (s *Service) AssignTracker(ctx context.Context, tenantID, id int64, tracker
 	return &dto, nil
 }
 
-// AssignDriver sets a vehicle's current driver.
-func (s *Service) AssignDriver(ctx context.Context, tenantID, id int64, driverID *int64) (*DTO, error) {
+// AssignDriver sets a vehicle's current driver, here and in master data.
+//
+// The pairing is master data's (TMS reads it for trips), so it is mirrored
+// upstream as currentDriverId the way plate/status edits are — as the
+// caller, after the local write. A driver with no master_data_id cannot be
+// named upstream; the local assignment stands and the caller is told.
+func (s *Service) AssignDriver(ctx context.Context, tenantID, id int64, caller mdwrite.Caller, driverID *int64) (*DTO, error) {
 	var dto DTO
+	var mdID, driverMD *string
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		v, err := store.New(tx).AssignVehicleDriver(ctx, store.AssignVehicleDriverParams{ID: id, CurrentDriverID: driverID})
+		q := store.New(tx)
+		if driverID != nil {
+			e, err := q.GetEmployee(ctx, *driverID)
+			if err != nil {
+				return fmt.Errorf("driver %d: %w", *driverID, err)
+			}
+			driverMD = e.MasterDataID
+		}
+		v, err := q.AssignVehicleDriver(ctx, store.AssignVehicleDriverParams{ID: id, CurrentDriverID: driverID})
 		if err != nil {
 			return err
 		}
+		mdID = v.MasterDataID
 		dto = fromVehicle(v)
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if s.md == nil || mdID == nil {
+		return &dto, nil
+	}
+	if driverID != nil && driverMD == nil {
+		log.Printf("vehicle %d: driver %d assigned locally but has no master_data_id; master data not told", id, *driverID)
+		return &dto, fmt.Errorf("driver is not paired with master data; assigned in FMS only")
+	}
+	if err := s.md.SetVehicleDriver(ctx, caller, *mdID, driverMD); err != nil {
+		log.Printf("vehicle %d: driver assignment committed locally, master data %s rejected it: %v", id, *mdID, err)
+		return &dto, err
 	}
 	return &dto, nil
 }

@@ -10,9 +10,12 @@ import (
 // DTO is the JSON representation of a vehicle, including a few joined labels.
 type DTO struct {
 	// Owning account — populated only in the platform-admin cross-account list.
-	TenantID        *int64     `json:"tenant_id,omitempty"`
-	TenantName      *string    `json:"tenant_name,omitempty"`
-	ID              int64      `json:"id"`
+	TenantID   *int64  `json:"tenant_id,omitempty"`
+	TenantName *string `json:"tenant_name,omitempty"`
+	ID         int64   `json:"id"`
+	// MasterDataID pairs the row with karlo_masterdata (the id TMS uses).
+	// Null until vehiclesync or write-through has paired it.
+	MasterDataID    *string    `json:"master_data_id"`
 	LicensePlate    string     `json:"license_plate"`
 	Manufacturer    *string    `json:"manufacturer"`
 	VehicleType     *string    `json:"vehicle_type"`
@@ -89,7 +92,7 @@ type AssignDriverRequest struct {
 
 func fromVehicle(v store.Vehicle) DTO {
 	return DTO{
-		ID: v.ID, LicensePlate: v.LicensePlate, Manufacturer: v.Manufacturer,
+		ID: v.ID, MasterDataID: v.MasterDataID, LicensePlate: v.LicensePlate, Manufacturer: v.Manufacturer,
 		VehicleType: v.VehicleType, BoxType: v.BoxType, UnitYear: v.UnitYear, HullNo: v.HullNo, Color: v.Color,
 		FleetGroupID: v.FleetGroupID, Status: v.Status, Garage: v.Garage,
 		Odometer: conv.NumF(v.Odometer), Hourmeter: conv.NumF(v.Hourmeter),
@@ -101,7 +104,7 @@ func fromVehicle(v store.Vehicle) DTO {
 
 func fromGetRow(v store.GetVehicleRow) DTO {
 	return DTO{
-		ID: v.ID, LicensePlate: v.LicensePlate, Manufacturer: v.Manufacturer,
+		ID: v.ID, MasterDataID: v.MasterDataID, LicensePlate: v.LicensePlate, Manufacturer: v.Manufacturer,
 		VehicleType: v.VehicleType, BoxType: v.BoxType, UnitYear: v.UnitYear, HullNo: v.HullNo, Color: v.Color,
 		FleetGroupID: v.FleetGroupID, FleetGroupName: v.FleetGroupName, Status: v.Status, Garage: v.Garage,
 		Odometer: conv.NumF(v.Odometer), Hourmeter: conv.NumF(v.Hourmeter),
@@ -114,7 +117,7 @@ func fromGetRow(v store.GetVehicleRow) DTO {
 
 func fromListRow(v store.ListVehiclesRow) DTO {
 	return DTO{
-		ID: v.ID, LicensePlate: v.LicensePlate, Manufacturer: v.Manufacturer,
+		ID: v.ID, MasterDataID: v.MasterDataID, LicensePlate: v.LicensePlate, Manufacturer: v.Manufacturer,
 		VehicleType: v.VehicleType, BoxType: v.BoxType, UnitYear: v.UnitYear, HullNo: v.HullNo, Color: v.Color,
 		FleetGroupID: v.FleetGroupID, FleetGroupName: v.FleetGroupName, Status: v.Status, Garage: v.Garage,
 		Odometer: conv.NumF(v.Odometer), Hourmeter: conv.NumF(v.Hourmeter),

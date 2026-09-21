@@ -260,6 +260,7 @@ func (h *Handler) assignTracker(w http.ResponseWriter, r *http.Request) {
 // assignDriver godoc
 //
 //	@Summary	Assign a driver to a vehicle
+//	@Description	Sets the vehicle's current driver here and mirrors it to master data as currentDriverId (null to unassign), so TMS sees the same pairing. 400 with the local change kept when the driver is not paired with master data or master data rejects it.
 //	@Tags		vehicles
 //	@Security	BearerAuth
 //	@Accept		json
@@ -279,7 +280,11 @@ func (h *Handler) assignDriver(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	dto, err := h.svc.AssignDriver(r.Context(), auth.EffectiveTenant(r), id, req.DriverID)
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	dto, err := h.svc.AssignDriver(r.Context(), auth.EffectiveTenant(r), id, caller, req.DriverID)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return

@@ -4895,6 +4895,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
+                "description": "Sets the vehicle's current driver here and mirrors it to master data as currentDriverId (null to unassign), so TMS sees the same pairing. 400 with the local change kept when the driver is not paired with master data or master data rejects it.",
                 "consumes": [
                     "application/json"
                 ],
@@ -9810,6 +9811,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "manufacturer": {
+                    "type": "string"
+                },
+                "master_data_id": {
+                    "description": "MasterDataID pairs the row with karlo_masterdata (the id TMS uses).\nNull until vehiclesync or write-through has paired it.",
                     "type": "string"
                 },
                 "notes": {

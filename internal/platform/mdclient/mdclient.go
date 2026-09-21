@@ -57,6 +57,9 @@ type Vehicle struct {
 	Status        string
 	IMEI          string
 	Deleted       bool
+	// DriverIDs are the drivers master data has paired with the truck —
+	// today at most one (currentDriverId). Empty means unpaired.
+	DriverIDs []string
 }
 
 // pageSize is what master data caps a page at. Asking for more is not an error
@@ -98,6 +101,7 @@ func (c *Client) ListVehicles(ctx context.Context, companyID string) ([]Vehicle,
 				Status:        t.GetStatus(),
 				IMEI:          t.GetImei(),
 				Deleted:       t.GetDeleted(),
+				DriverIDs:     t.GetDriverIds(),
 			})
 		}
 

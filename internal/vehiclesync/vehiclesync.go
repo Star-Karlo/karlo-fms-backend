@@ -111,6 +111,7 @@ type Result struct {
 	Archived  int
 	Restored  int // master data says live again; was archived here
 	Released  int // pairing pointed at a document master data no longer has
+	Paired    int // current driver changed to match master data
 	Skipped   int
 }
 
@@ -153,12 +154,13 @@ func (s *Syncer) Once(ctx context.Context) error {
 		total.Archived += r.Archived
 		total.Restored += r.Restored
 		total.Released += r.Released
+		total.Paired += r.Paired
 		total.Skipped += r.Skipped
 	}
 
-	if total.Linked+total.Inserted+total.Updated+total.Archived+total.Restored+total.Released > 0 {
-		log.Printf("vehiclesync: %d vehicle(s) across %d companies — %d linked, %d added, %d updated, %d archived, %d restored, %d re-paired",
-			total.Seen, total.Companies, total.Linked, total.Inserted, total.Updated, total.Archived, total.Restored, total.Released)
+	if total.Linked+total.Inserted+total.Updated+total.Archived+total.Restored+total.Released+total.Paired > 0 {
+		log.Printf("vehiclesync: %d vehicle(s) across %d companies — %d linked, %d added, %d updated, %d archived, %d restored, %d re-paired, %d driver pairings",
+			total.Seen, total.Companies, total.Linked, total.Inserted, total.Updated, total.Archived, total.Restored, total.Released, total.Paired)
 	}
 	return nil
 }
@@ -330,6 +332,30 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				return err
 			}
 			r.Restored += int(ct.RowsAffected())
+
+			// 3c. Current driver. Master data owns the pairing (TMS assigns
+			//     it for trips; FMS's assign-driver writes through to it),
+			//     so it is projected like the plate: the driver's ObjectId
+			//     resolves to the local employees row driversync created.
+			//     A driver not yet projected leaves the field as it is, so
+			//     the next pass — after driversync — pairs it rather than
+			//     clearing a pairing that exists upstream.
+			if len(v.DriverIDs) == 0 {
+				ct, err = tx.Exec(ctx, `
+					UPDATE vehicles SET current_driver_id = NULL, updated_at = now()
+					 WHERE master_data_id = $1 AND current_driver_id IS NOT NULL`, v.ID)
+			} else {
+				ct, err = tx.Exec(ctx, `
+					UPDATE vehicles SET current_driver_id = e.id, updated_at = now()
+					  FROM employees e
+					 WHERE vehicles.master_data_id = $1
+					   AND e.tenant_id = vehicles.tenant_id AND e.master_data_id = $2
+					   AND vehicles.current_driver_id IS DISTINCT FROM e.id`, v.ID, v.DriverIDs[0])
+			}
+			if err != nil {
+				return err
+			}
+			r.Paired += int(ct.RowsAffected())
 		}
 
 		// 4. Anything this company has here, already paired with master data,
