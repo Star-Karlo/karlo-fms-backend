@@ -37,14 +37,19 @@ type Syncer struct {
 	dir  *tenantdir.Directory
 	md   *mdclient.Client
 	wake chan struct{}
+	// fittings: whether master data's current_vehicle_id may move a device
+	// here (config.TrackerFittings). Off, devices are paired and their
+	// fields kept in step but vehicles.tracker_id / dashcam links are left
+	// as FMS has them.
+	fittings bool
 }
 
 // New returns nil unless both halves are configured, like vehiclesync.
-func New(pool *db.Pool, dir *tenantdir.Directory, md *mdclient.Client) *Syncer {
+func New(pool *db.Pool, dir *tenantdir.Directory, md *mdclient.Client, fittings bool) *Syncer {
 	if dir == nil || md == nil {
 		return nil
 	}
-	return &Syncer{pool: pool, dir: dir, md: md, wake: make(chan struct{}, 1)}
+	return &Syncer{pool: pool, dir: dir, md: md, wake: make(chan struct{}, 1), fittings: fittings}
 }
 
 // Wake asks for a refresh now (a karlo:masterdata notice, or an operator).
@@ -230,6 +235,9 @@ func (s *Syncer) gps(ctx context.Context, tx pgx.Tx, tenantID int64, d mdclient.
 	// 4. The fitting. Resolve master data's vehicle to the local row; a
 	//    vehicle not yet projected leaves the binding alone for the next
 	//    pass (vehiclesync runs on the same notice).
+	if !s.fittings {
+		return nil
+	}
 	var localID int64
 	var curVehicle *int64
 	if err := tx.QueryRow(ctx, `SELECT id, vehicle_id FROM trackers WHERE master_data_id = $1`, d.ID).Scan(&localID, &curVehicle); err != nil {
@@ -295,6 +303,9 @@ func (s *Syncer) dashcam(ctx context.Context, tx pgx.Tx, tenantID int64, d mdcli
 		}
 		r.Retired += int(ct.RowsAffected())
 		return nil
+	}
+	if !s.fittings {
+		return nil // paired; the link stays as FMS has it until the flag is on
 	}
 
 	var want *int64

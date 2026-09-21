@@ -363,8 +363,10 @@ func (s *Service) AssignTracker(ctx context.Context, tenantID, id int64, caller 
 	if s.md == nil {
 		return &dto, nil
 	}
-	// Unbind, or a swap: the previous device's fitting closes upstream.
-	if previousMD != nil {
+	// Unbind: the previous device's fitting closes upstream. On a swap the
+	// fit below closes it itself (one GPS per truck), so only the unbind
+	// case calls unfit.
+	if previousMD != nil && trackerID == nil {
 		if err := s.md.UnfitTracker(ctx, caller, *previousMD); err != nil {
 			log.Printf("vehicle %d: tracker unbound locally, master data %s rejected the unfit: %v", id, *previousMD, err)
 		}

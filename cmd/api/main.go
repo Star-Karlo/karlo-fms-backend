@@ -204,10 +204,10 @@ func main() {
 				}
 				// Devices last: a fitting resolves through vehicles.master_data_id,
 				// which vehiclesync fills on the same notice.
-				if ts := trackersync.New(pool, dir, mdConn); ts != nil {
+				if ts := trackersync.New(pool, dir, mdConn, cfg.TrackerFittings); ts != nil {
 					go ts.Run(ctx, 2*time.Minute)
 					wakers = append(wakers, ts)
-					log.Printf("trackersync: projecting devices from %s", cfg.MDGRPCTarget)
+					log.Printf("trackersync: projecting devices from %s (fittings: %v)", cfg.MDGRPCTarget, cfg.TrackerFittings)
 				}
 				mdevents.Follow(ctx, cfg.RedisAddr, wakers...)
 				syncWakers = wakers

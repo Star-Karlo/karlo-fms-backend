@@ -69,6 +69,18 @@ type Config struct {
 	// state of a deployment that has not cut over.
 	MDGRPCTarget string
 
+	// TrackerFittings lets trackersync MOVE a device between vehicles to match
+	// master data. Off, the projection still pairs devices and keeps
+	// imei/phone/status in step, but never touches vehicles.tracker_id.
+	//
+	// Off until the one-off reconcile has aligned master data's fittings to
+	// FMS's (positions flow from FMS's registry, so it is the truth being
+	// copied): the 1,885 backfilled devices are Karlo stock today and would
+	// appear to the projection all at once when re-owned, 200 of them with a
+	// fitting that may have drifted. Flip to true once master data's owner
+	// says the reconcile is done.
+	TrackerFittings bool
+
 	// MDServiceURL is master data's HTTP address, used for WRITES — creating and
 	// updating a vehicle or a driver as the signed-in user.
 	//
@@ -222,11 +234,12 @@ func Load() Config {
 		// service called it first. Reading only the latter is what sent an empty
 		// string to the auth service and produced "invalid service token" with a
 		// perfectly correct token sitting in the environment under the other name.
-		ServiceToken:   Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", "")),
-		AuthGRPCTarget: Env("AUTH_GRPC_TARGET", ""),
-		MDGRPCTarget:   Env("MD_GRPC_TARGET", ""),
-		MDServiceURL:   Env("MD_SERVICE_URL", ""),
-		MDServiceToken: Env("MD_SERVICE_TOKEN", Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", ""))),
+		ServiceToken:    Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", "")),
+		AuthGRPCTarget:  Env("AUTH_GRPC_TARGET", ""),
+		MDGRPCTarget:    Env("MD_GRPC_TARGET", ""),
+		TrackerFittings: EnvBool("TRACKERSYNC_FITTINGS", false),
+		MDServiceURL:    Env("MD_SERVICE_URL", ""),
+		MDServiceToken:  Env("MD_SERVICE_TOKEN", Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", ""))),
 
 		TelemetryBaseURL: Env("TELEMETRY_BASE_URL", "http://localhost:8082"),
 		TelemetryAPIKey:  Env("TELEMETRY_API_KEY", ""),
