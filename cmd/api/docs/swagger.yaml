@@ -5287,6 +5287,29 @@ paths:
       summary: Platform-wide overview (platform admin)
       tags:
       - platform
+  /v1/platform/sync:
+    post:
+      description: Asks vehiclesync and driversync to pull every company's fleet and
+        drivers from master data immediately instead of at their next tick. The pass
+        runs in the background; the response says only that it was requested. Master-data
+        change notices on the platform Redis do the same automatically.
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: no projection configured (pre-cutover deployment)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Refresh the master-data projections now (platform admin)
+      tags:
+      - platform
   /v1/platform/tenants/{id}/name:
     put:
       consumes:

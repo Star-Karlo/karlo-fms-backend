@@ -49,6 +49,7 @@ type Syncer struct {
 	pool *db.Pool
 	dir  *tenantdir.Directory
 	md   *mdclient.Client
+	wake chan struct{} // see Wake
 }
 
 // New returns nil unless both halves are configured, matching vehiclesync: the
@@ -57,10 +58,20 @@ func New(pool *db.Pool, dir *tenantdir.Directory, md *mdclient.Client) *Syncer {
 	if dir == nil || md == nil {
 		return nil
 	}
-	return &Syncer{pool: pool, dir: dir, md: md}
+	return &Syncer{pool: pool, dir: dir, md: md, wake: make(chan struct{}, 1)}
 }
 
-// Run refreshes now, then on a ticker.
+// Wake asks for a refresh now rather than at the next tick — a master-data
+// change notice (mdevents) or an operator's request. Never blocks; calls
+// that land while one is pending coalesce into a single pass.
+func (s *Syncer) Wake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Run refreshes now, then on a ticker or whenever woken.
 func (s *Syncer) Run(ctx context.Context, every time.Duration) {
 	if every <= 0 {
 		every = 5 * time.Minute
@@ -75,9 +86,10 @@ func (s *Syncer) Run(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := s.Once(ctx); err != nil {
-				log.Printf("driversync: %v", err)
-			}
+		case <-s.wake:
+		}
+		if err := s.Once(ctx); err != nil {
+			log.Printf("driversync: %v", err)
 		}
 	}
 }

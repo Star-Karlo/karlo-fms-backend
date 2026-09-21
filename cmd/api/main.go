@@ -61,6 +61,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 	"github.com/karlo/fms-backend/internal/platform/iamclient"
 	"github.com/karlo/fms-backend/internal/platform/mdclient"
+	"github.com/karlo/fms-backend/internal/platform/mdevents"
 	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 	"github.com/karlo/fms-backend/internal/platform/tenantdir"
 	"github.com/karlo/fms-backend/internal/platformadmin"
@@ -154,6 +155,7 @@ func main() {
 	// Nil when there is no directory; mdwrite.CallerFor then refuses any staff
 	// write made via ?account_id rather than misfiling it upstream.
 	var companyDir mdwrite.CompanyResolver
+	var syncWakers []mdevents.Waker // the projections POST /v1/platform/sync refreshes
 	if iamConn != nil {
 		defer iamConn.Close()
 		if dir := tenantdir.New(iamConn, time.Minute); dir != nil {
@@ -174,8 +176,13 @@ func main() {
 			}
 			if mdConn != nil {
 				defer mdConn.Close()
+				// Two minutes is the safety net; a change notice on the
+				// platform Redis (mdevents) or POST /v1/platform/sync
+				// refreshes at once.
+				var wakers []mdevents.Waker
 				if vs := vehiclesync.New(pool, dir, mdConn); vs != nil {
-					go vs.Run(ctx, 5*time.Minute)
+					go vs.Run(ctx, 2*time.Minute)
+					wakers = append(wakers, vs)
 					log.Printf("vehiclesync: projecting the fleet from %s", cfg.MDGRPCTarget)
 				}
 				// Drivers need the same projection as vehicles, and for a
@@ -184,9 +191,12 @@ func main() {
 				// at all. A company onboarded after the migration could not
 				// assign ANY driver until this ran.
 				if ds := driversync.New(pool, dir, mdConn); ds != nil {
-					go ds.Run(ctx, 5*time.Minute)
+					go ds.Run(ctx, 2*time.Minute)
+					wakers = append(wakers, ds)
 					log.Printf("driversync: projecting drivers from %s", cfg.MDGRPCTarget)
 				}
+				mdevents.Follow(ctx, cfg.RedisAddr, wakers...)
+				syncWakers = wakers
 			}
 		}
 	}
@@ -257,7 +267,7 @@ func main() {
 	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion)
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
-	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir)
+	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...)
 	apiTokenH := apitoken.NewHandler(pool).WithIAM(iamConn)
 	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)

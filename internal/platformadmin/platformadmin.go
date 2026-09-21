@@ -26,14 +26,16 @@ import (
 	"github.com/karlo/fms-backend/internal/liveview"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/mdevents"
 	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 )
 
 type Handler struct {
-	pool *db.Pool
-	live *liveview.Service
-	md   *mdwrite.Client         // nil before cutover; the backfill needs it
-	dir  mdwrite.CompanyResolver // tenant id -> company, for the backfill's acting-for
+	pool   *db.Pool
+	live   *liveview.Service
+	md     *mdwrite.Client         // nil before cutover; the backfill needs it
+	dir    mdwrite.CompanyResolver // tenant id -> company, for the backfill's acting-for
+	wakers []mdevents.Waker        // see WithSyncWakers
 }
 
 func NewHandler(pool *db.Pool, live *liveview.Service) *Handler {
@@ -47,6 +49,10 @@ func (h *Handler) WithMasterData(md *mdwrite.Client) *Handler { h.md = md; retur
 // WithResolver supplies the tenant -> company lookup the backfill needs.
 func (h *Handler) WithResolver(dir mdwrite.CompanyResolver) *Handler { h.dir = dir; return h }
 
+// WithSyncWakers supplies the master-data projections (vehiclesync,
+// driversync) that POST /v1/platform/sync refreshes on demand.
+func (h *Handler) WithSyncWakers(w ...mdevents.Waker) *Handler { h.wakers = w; return h }
+
 // Routes mounts the platform console — every endpoint requires platform_admin.
 func (h *Handler) Routes(r chi.Router) {
 	r.Group(func(ar chi.Router) {
@@ -56,8 +62,29 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Get("/v1/platform/users", h.users)
 		ar.Put("/v1/platform/users/{id}/password", h.resetPassword)
 		ar.Put("/v1/platform/tenants/{id}/name", h.renameTenant)
+		ar.Post("/v1/platform/sync", h.sync)
 		h.backfillRoutes(ar)
 	})
+}
+
+// sync godoc
+//
+//	@Summary		Refresh the master-data projections now (platform admin)
+//	@Description	Asks vehiclesync and driversync to pull every company's fleet and drivers from master data immediately instead of at their next tick. The pass runs in the background; the response says only that it was requested. Master-data change notices on the platform Redis do the same automatically.
+//	@Tags			platform
+//	@Security		BearerAuth
+//	@Success		202	{object}	map[string]any
+//	@Failure		503	{object}	map[string]string	"no projection configured (pre-cutover deployment)"
+//	@Router			/v1/platform/sync [post]
+func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
+	if len(h.wakers) == 0 {
+		httpx.Error(w, http.StatusServiceUnavailable, "master-data projection is not configured")
+		return
+	}
+	for _, wk := range h.wakers {
+		wk.Wake()
+	}
+	httpx.JSON(w, http.StatusAccepted, map[string]any{"requested": true, "projections": len(h.wakers)})
 }
 
 // renameTenant godoc

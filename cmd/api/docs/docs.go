@@ -3583,6 +3583,38 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/platform/sync": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Asks vehiclesync and driversync to pull every company's fleet and drivers from master data immediately instead of at their next tick. The pass runs in the background; the response says only that it was requested. Master-data change notices on the platform Redis do the same automatically.",
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Refresh the master-data projections now (platform admin)",
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "no projection configured (pre-cutover deployment)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/platform/tenants/{id}/name": {
             "put": {
                 "security": [
