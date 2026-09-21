@@ -76,7 +76,7 @@ func (s *Syncer) Run(ctx context.Context, every time.Duration) {
 	if every <= 0 {
 		every = 5 * time.Minute
 	}
-	if err := s.Once(ctx); err != nil {
+	if err := s.pass(ctx); err != nil {
 		log.Printf("driversync: first refresh failed, assignment will use the existing rows: %v", err)
 	}
 	t := time.NewTicker(every)
@@ -88,10 +88,28 @@ func (s *Syncer) Run(ctx context.Context, every time.Duration) {
 		case <-t.C:
 		case <-s.wake:
 		}
-		if err := s.Once(ctx); err != nil {
+		if err := s.pass(ctx); err != nil {
 			log.Printf("driversync: %v", err)
 		}
 	}
+}
+
+// passTimeout bounds one pass. A pass has no natural end if a gRPC call or
+// a row lock never answers, and a hung pass is silent: no error, no summary
+// line, no further ticks — and telemetrysync, which serialises on the same
+// per-tenant lock, stalls with it. Passes take seconds; this is a ceiling.
+const passTimeout = 3 * time.Minute
+
+// pass runs Once under passTimeout and reports a slow one.
+func (s *Syncer) pass(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, passTimeout)
+	defer cancel()
+	start := time.Now()
+	err := s.Once(ctx)
+	if d := time.Since(start); d > 30*time.Second {
+		log.Printf("driversync: pass took %s", d.Round(time.Second))
+	}
+	return err
 }
 
 // Result is what one pass changed.
