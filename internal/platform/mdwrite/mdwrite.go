@@ -309,3 +309,47 @@ func (c *Client) StampVehicleFMSID(ctx context.Context, caller Caller, id string
 		Attributes: map[string]any{"fmsVehicleId": fmsVehicleID},
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Trackers (GPS units and dashcams)
+// ---------------------------------------------------------------------------
+
+// Tracker is a device as master data holds it. Kind is "gps" (DeviceID the
+// IMEI) or "dashcam" (DeviceID the VSS device id).
+type Tracker struct {
+	ID         string         `json:"id,omitempty"`
+	Kind       string         `json:"kind,omitempty"`
+	DeviceID   string         `json:"deviceId,omitempty"`
+	PhoneNo    string         `json:"phoneNo,omitempty"`
+	Status     string         `json:"status,omitempty"` // active | inactive | retired
+	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
+// CreateTracker registers a device and returns its master-data id, which
+// the caller stores as the local row's master_data_id.
+func (c *Client) CreateTracker(ctx context.Context, caller Caller, t Tracker) (string, error) {
+	var out Tracker
+	if err := c.do(ctx, caller, http.MethodPost, "/api/v1/trackers", t, &out); err != nil {
+		return "", err
+	}
+	return out.ID, nil
+}
+
+func (c *Client) UpdateTracker(ctx context.Context, caller Caller, id string, t Tracker) error {
+	return c.do(ctx, caller, http.MethodPut, "/api/v1/trackers/"+id, t, nil)
+}
+
+func (c *Client) DeleteTracker(ctx context.Context, caller Caller, id string) error {
+	return c.do(ctx, caller, http.MethodDelete, "/api/v1/trackers/"+id, nil, nil)
+}
+
+// FitTracker records the device as fitted to a vehicle (master-data ids)
+// from now; master data closes any previous fitting itself.
+func (c *Client) FitTracker(ctx context.Context, caller Caller, id, vehicleID string) error {
+	return c.do(ctx, caller, http.MethodPost, "/api/v1/trackers/"+id+"/fit", map[string]any{"vehicleId": vehicleID}, nil)
+}
+
+// UnfitTracker closes the device's current fitting.
+func (c *Client) UnfitTracker(ctx context.Context, caller Caller, id string) error {
+	return c.do(ctx, caller, http.MethodPost, "/api/v1/trackers/"+id+"/unfit", map[string]any{}, nil)
+}

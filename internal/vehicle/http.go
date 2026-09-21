@@ -249,7 +249,11 @@ func (h *Handler) assignTracker(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	dto, err := h.svc.AssignTracker(r.Context(), auth.EffectiveTenant(r), id, req.TrackerID)
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	dto, err := h.svc.AssignTracker(r.Context(), auth.EffectiveTenant(r), id, caller, req.TrackerID)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return

@@ -1,6 +1,6 @@
 -- name: CreateTracker :one
-INSERT INTO trackers (tenant_id, imei, phone_no, vehicle_id, status)
-VALUES ($1, $2, sqlc.narg('phone_no'), sqlc.narg('vehicle_id'), COALESCE(sqlc.narg('status'), 'active'))
+INSERT INTO trackers (tenant_id, imei, phone_no, vehicle_id, status, master_data_id)
+VALUES ($1, $2, sqlc.narg('phone_no'), sqlc.narg('vehicle_id'), COALESCE(sqlc.narg('status'), 'active'), sqlc.narg('master_data_id'))
 RETURNING *;
 
 -- name: GetTracker :one
@@ -49,3 +49,7 @@ UPDATE trackers SET vehicle_id = NULL WHERE vehicle_id = $1;
 -- On BIND: detach any OTHER tracker still pointing at this vehicle (fixes the
 -- bidirectional staleness so a vehicle never has two open device assignments).
 UPDATE trackers SET vehicle_id = NULL WHERE vehicle_id = $1 AND id <> $2;
+
+-- name: StampTrackerMasterDataID :exec
+-- Pair a local device with its master-data record, once.
+UPDATE trackers SET master_data_id = $2 WHERE id = $1 AND master_data_id IS NULL;

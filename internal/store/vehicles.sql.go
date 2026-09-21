@@ -453,7 +453,8 @@ type ListLiveViewVehiclesRow struct {
 }
 
 // Active vehicles that can be located: those with a tracker IMEI, OR a linked
-// dashcam whose own GPS stands in when there is no tracker. The live-view
+// dashcam whose own GPS stands in when there is no tracker, OR an assigned
+// driver whose phone (K-Trip) can. The live-view
 // endpoint enriches each with a position — the tracker fix, else the camera
 // fix, else the assigned driver's phone.
 // At most one camera per vehicle stands in for GPS; pick the lowest-id device.

@@ -2,6 +2,7 @@
 package tracker
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 	"github.com/karlo/fms-backend/internal/store"
 )
 
@@ -57,10 +59,48 @@ func iface(s *string) interface{} {
 }
 
 // Handler exposes tracker endpoints.
-type Handler struct{ pool *db.Pool }
+type Handler struct {
+	pool *db.Pool
+	md   *mdwrite.Client         // nil before cutover: writes stay local
+	dir  mdwrite.CompanyResolver // tenant -> company for the write-through's caller
+}
 
 // NewHandler builds the tracker handler.
 func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
+
+// WithMasterData makes device writes reach master data first — it owns
+// devices now (trackersync projects them back), so a device registered or
+// re-fitted here must exist there or TMS keeps the old fitting.
+func (h *Handler) WithMasterData(md *mdwrite.Client) *Handler { h.md = md; return h }
+
+// WithResolver supplies the tenant -> company lookup the write-through needs.
+func (h *Handler) WithResolver(dir mdwrite.CompanyResolver) *Handler { h.dir = dir; return h }
+
+// caller builds the identity to forward upstream, or writes a 409 and
+// returns false when a staff member acts for a tenant whose company is
+// unknown — refusing beats filing the device under the wrong customer.
+func (h *Handler) caller(w http.ResponseWriter, r *http.Request) (mdwrite.Caller, bool) {
+	if h.md == nil {
+		return mdwrite.Caller{}, true
+	}
+	c, err := mdwrite.CallerFor(r, auth.TenantID(r.Context()), auth.EffectiveTenant(r), h.dir)
+	if err != nil {
+		httpx.Error(w, http.StatusConflict, err.Error())
+		return c, false
+	}
+	return c, true
+}
+
+// mdStatus maps this table's status onto master data's vocabulary.
+func mdStatus(s *string) string {
+	if s == nil {
+		return ""
+	}
+	if *s == "inactive" {
+		return "inactive"
+	}
+	return "active"
+}
 
 // Routes mounts tracker endpoints. IMEI/tracker configuration is restricted to
 // the platform operator (platform_admin) -- customers do not self-configure
@@ -230,11 +270,37 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tid := auth.EffectiveTenant(r)
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	// Master data first, so the local row is born paired. Its refusal (a
+	// duplicate IMEI in another company, say) is the caller's answer.
+	var mdID *string
+	if h.md != nil {
+		phone := ""
+		if req.PhoneNo != nil {
+			phone = *req.PhoneNo
+		}
+		id, err := h.md.CreateTracker(r.Context(), caller, mdwrite.Tracker{Kind: "gps", DeviceID: req.Imei, PhoneNo: phone, Status: mdStatus(req.Status)})
+		if err != nil {
+			httpx.Error(w, http.StatusBadGateway, "master data refused the tracker: "+err.Error())
+			return
+		}
+		mdID = &id
+	}
 	var dto DTO
+	var vehicleMD *string
 	err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
-		t, err := store.New(tx).CreateTracker(r.Context(), store.CreateTrackerParams{TenantID: tid, Imei: req.Imei, PhoneNo: req.PhoneNo, VehicleID: req.VehicleID, Status: iface(req.Status)})
+		q := store.New(tx)
+		t, err := q.CreateTracker(r.Context(), store.CreateTrackerParams{TenantID: tid, Imei: req.Imei, PhoneNo: req.PhoneNo, VehicleID: req.VehicleID, Status: iface(req.Status), MasterDataID: mdID})
 		if err != nil {
 			return err
+		}
+		if req.VehicleID != nil {
+			if v, err := q.GetVehicleRow(r.Context(), *req.VehicleID); err == nil {
+				vehicleMD = v.MasterDataID
+			}
 		}
 		dto = fromRow(t)
 		return nil
@@ -242,6 +308,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if h.md != nil && mdID != nil && req.VehicleID != nil {
+		if vehicleMD == nil {
+			log.Printf("tracker %d: fitted locally to vehicle %d, which has no master_data_id; master data not told", dto.ID, *req.VehicleID)
+		} else if err := h.md.FitTracker(r.Context(), caller, *mdID, *vehicleMD); err != nil {
+			log.Printf("tracker %d: created and fitted locally, master data %s refused the fitting: %v", dto.ID, *mdID, err)
+		}
 	}
 	httpx.JSON(w, http.StatusCreated, dto)
 }
@@ -268,18 +341,43 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
 	var dto DTO
+	var mdID *string
 	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		t, err := store.New(tx).UpdateTracker(r.Context(), store.UpdateTrackerParams{ID: id, Imei: req.Imei, PhoneNo: req.PhoneNo, Status: req.Status})
 		if err != nil {
 			return err
 		}
+		mdID = t.MasterDataID
 		dto = fromRow(t)
 		return nil
 	})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// Mirror upstream. An unpaired device (pre-cutover row the reconcile
+	// has not reached) is skipped, not created here.
+	if h.md != nil && mdID != nil {
+		t := mdwrite.Tracker{Status: mdStatus(req.Status)}
+		if req.Imei != nil {
+			t.DeviceID = *req.Imei
+		}
+		if req.PhoneNo != nil {
+			t.PhoneNo = *req.PhoneNo
+		}
+		if req.Status == nil {
+			t.Status = ""
+		}
+		if err := h.md.UpdateTracker(r.Context(), caller, *mdID, t); err != nil {
+			log.Printf("tracker %d: local update committed, master data %s rejected it: %v", id, *mdID, err)
+			httpx.Error(w, http.StatusBadGateway, "saved here, but master data rejected it: "+err.Error())
+			return
+		}
 	}
 	httpx.JSON(w, http.StatusOK, dto)
 }
@@ -299,12 +397,27 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	var mdID *string
 	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
-		return store.New(tx).DeleteTracker(r.Context(), id)
+		q := store.New(tx)
+		if t, err := q.GetTracker(r.Context(), id); err == nil {
+			mdID = t.MasterDataID
+		}
+		return q.DeleteTracker(r.Context(), id)
 	})
 	if err != nil {
 		httpx.Error(w, http.StatusConflict, "tracker in use or delete failed")
 		return
+	}
+	// Retire it upstream too, or trackersync brings it back on the next pass.
+	if h.md != nil && mdID != nil {
+		if err := h.md.DeleteTracker(r.Context(), caller, *mdID); err != nil {
+			log.Printf("tracker %d: deleted locally, master data %s rejected the delete: %v", id, *mdID, err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

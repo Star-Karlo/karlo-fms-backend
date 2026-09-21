@@ -76,6 +76,7 @@ import (
 	"github.com/karlo/fms-backend/internal/telemetrysync"
 	"github.com/karlo/fms-backend/internal/tenantsync"
 	"github.com/karlo/fms-backend/internal/tracker"
+	"github.com/karlo/fms-backend/internal/trackersync"
 	"github.com/karlo/fms-backend/internal/trackinglink"
 	"github.com/karlo/fms-backend/internal/vehicle"
 	"github.com/karlo/fms-backend/internal/vehiclesync"
@@ -201,6 +202,13 @@ func main() {
 					wakers = append(wakers, ds)
 					log.Printf("driversync: projecting drivers from %s", cfg.MDGRPCTarget)
 				}
+				// Devices last: a fitting resolves through vehicles.master_data_id,
+				// which vehiclesync fills on the same notice.
+				if ts := trackersync.New(pool, dir, mdConn); ts != nil {
+					go ts.Run(ctx, 2*time.Minute)
+					wakers = append(wakers, ts)
+					log.Printf("trackersync: projecting devices from %s", cfg.MDGRPCTarget)
+				}
 				mdevents.Follow(ctx, cfg.RedisAddr, wakers...)
 				syncWakers = wakers
 			}
@@ -230,7 +238,7 @@ func main() {
 	vehicleH := vehicle.NewHandler(vehicle.NewService(pool).WithMasterData(mdWriter)).WithResolver(companyDir)
 	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool))
 	driverH := driver.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
-	trackerH := tracker.NewHandler(pool)
+	trackerH := tracker.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
 	tel := telemetry.NewClient(cfg.TelemetryBaseURL, cfg.TelemetryAPIKey, cfg.TelemetryTimeout)
 	liveSvc := liveview.NewService(pool, tel)
 	liveH := liveview.NewHandler(liveSvc)
@@ -270,7 +278,7 @@ func main() {
 	maintenanceH := maintenance.NewHandler(pool)
 	scorecardH := scorecard.NewHandler(pool)
 	trackingH := trackinglink.NewHandler(pool, liveSvc)
-	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion)
+	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion).WithMasterData(mdWriter, companyDir)
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
 	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...)

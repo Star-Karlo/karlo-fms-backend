@@ -118,6 +118,57 @@ func (c *Client) ListVehicles(ctx context.Context, companyID string) ([]Vehicle,
 	}
 }
 
+// Tracker is a master-data device: a GPS unit (DeviceID = IMEI) or a
+// dashcam (DeviceID = VSS device id).
+type Tracker struct {
+	ID               string
+	CompanyID        string
+	Kind             string // gps | dashcam
+	DeviceID         string
+	PhoneNo          string
+	Status           string // active | inactive | retired
+	CurrentVehicleID string // master-data vehicle id; empty when in stock
+	FittedAt         time.Time
+	Deleted          bool
+}
+
+// ListTrackers pages every device master data holds for a company (both
+// kinds when kind is empty).
+func (c *Client) ListTrackers(ctx context.Context, companyID, kind string) ([]Tracker, error) {
+	var out []Tracker
+	for page := int32(0); ; page++ {
+		resp, err := c.client.ListTrackers(ctx, &mdv1.ListTrackersRequest{
+			CompanyId: companyID,
+			Kind:      kind,
+			Query: &commonv1.Query{
+				Page: &commonv1.Page{Page: page, PageSize: pageSize},
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("mdclient: list trackers for %s: %w", companyID, err)
+		}
+		items := resp.GetTrackers()
+		for _, t := range items {
+			out = append(out, Tracker{
+				ID:               t.GetId(),
+				CompanyID:        t.GetCompanyId(),
+				Kind:             t.GetKind(),
+				DeviceID:         t.GetDeviceId(),
+				PhoneNo:          t.GetPhoneNo(),
+				Status:           t.GetStatus(),
+				CurrentVehicleID: t.GetCurrentVehicleId(),
+				FittedAt:         t.GetFittedAt().AsTime(),
+				Deleted:          t.GetDeleted(),
+			})
+		}
+		// Same stop rule as ListVehicles.
+		info := resp.GetPageInfo()
+		if len(items) < pageSize || (info != nil && int64(len(out)) >= info.GetTotalRows()) {
+			return out, nil
+		}
+	}
+}
+
 // Driver is the subset of a master-data driver that FMS projects.
 type Driver struct {
 	ID            string // master data's ObjectId — the stable key

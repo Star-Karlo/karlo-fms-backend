@@ -81,6 +81,7 @@ type Dashcam struct {
 	Channels     int32              `json:"channels"`
 	ChannelNames *string            `json:"channel_names"`
 	AccessMode   *int32             `json:"access_mode"`
+	MasterDataID *string            `json:"master_data_id"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -239,15 +240,16 @@ type Tenant struct {
 }
 
 type Tracker struct {
-	ID          int64              `json:"id"`
-	TenantID    int64              `json:"tenant_id"`
-	Imei        string             `json:"imei"`
-	PhoneNo     *string            `json:"phone_no"`
-	VehicleID   *int64             `json:"vehicle_id"`
-	Status      string             `json:"status"`
-	ExternalRef *string            `json:"external_ref"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID           int64              `json:"id"`
+	TenantID     int64              `json:"tenant_id"`
+	Imei         string             `json:"imei"`
+	PhoneNo      *string            `json:"phone_no"`
+	VehicleID    *int64             `json:"vehicle_id"`
+	Status       string             `json:"status"`
+	ExternalRef  *string            `json:"external_ref"`
+	MasterDataID *string            `json:"master_data_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TrackerAssignment struct {

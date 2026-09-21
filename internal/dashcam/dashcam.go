@@ -31,6 +31,7 @@ import (
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 	"github.com/karlo/fms-backend/internal/telemetry"
 )
 
@@ -58,8 +59,65 @@ type AttachRequest struct {
 type Handler struct {
 	pool    *db.Pool
 	tel     *telemetry.Client
-	presign *s3.PresignClient // signs GET URLs for saved clips (nil = disabled)
-	s3c     *s3.Client        // deletes the S3 object when a saved clip is removed
+	presign *s3.PresignClient       // signs GET URLs for saved clips (nil = disabled)
+	s3c     *s3.Client              // deletes the S3 object when a saved clip is removed
+	md      *mdwrite.Client         // nil before cutover: links stay local
+	dir     mdwrite.CompanyResolver // tenant -> company for the write-through's caller
+}
+
+// WithMasterData makes a link/unlink reach master data (kind=dashcam,
+// fit/unfit) — it owns devices; trackersync projects them back.
+func (h *Handler) WithMasterData(md *mdwrite.Client, dir mdwrite.CompanyResolver) *Handler {
+	h.md, h.dir = md, dir
+	return h
+}
+
+// mdCaller builds the identity to forward upstream (409 when a staff member
+// acts for a tenant whose company is unknown).
+func (h *Handler) mdCaller(w http.ResponseWriter, r *http.Request) (mdwrite.Caller, bool) {
+	if h.md == nil {
+		return mdwrite.Caller{}, true
+	}
+	c, err := mdwrite.CallerFor(r, auth.TenantID(r.Context()), auth.EffectiveTenant(r), h.dir)
+	if err != nil {
+		httpx.Error(w, http.StatusConflict, err.Error())
+		return c, false
+	}
+	return c, true
+}
+
+// mirrorLink tells master data a dashcam is on a vehicle: the device is
+// registered there on first sight (kind=dashcam, device id = VSS id), then
+// fitted. The local row keeps the master-data id so a later unlink can
+// unfit the same record. Failures are logged, not fatal: the VSS platform
+// is the camera's real registry and the link here already works.
+func (h *Handler) mirrorLink(ctx context.Context, caller mdwrite.Caller, tid, dashcamID int64, vssID string, vehicleID int64) {
+	if h.md == nil {
+		return
+	}
+	var mdID, vehicleMD *string
+	_ = db.Tx(ctx, h.pool, tid, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT d.master_data_id, v.master_data_id FROM dashcams d JOIN vehicles v ON v.id = d.vehicle_id WHERE d.id = $1`, dashcamID).Scan(&mdID, &vehicleMD)
+	})
+	if mdID == nil {
+		id, err := h.md.CreateTracker(ctx, caller, mdwrite.Tracker{Kind: "dashcam", DeviceID: vssID, Status: "active"})
+		if err != nil {
+			log.Printf("dashcam %d: linked locally, master data refused the device: %v", dashcamID, err)
+			return
+		}
+		mdID = &id
+		_ = db.Tx(ctx, h.pool, tid, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE dashcams SET master_data_id = $2 WHERE id = $1 AND master_data_id IS NULL`, dashcamID, id)
+			return err
+		})
+	}
+	if vehicleMD == nil {
+		log.Printf("dashcam %d: vehicle %d has no master_data_id; master data not told of the fitting", dashcamID, vehicleID)
+		return
+	}
+	if err := h.md.FitTracker(ctx, caller, *mdID, *vehicleMD); err != nil {
+		log.Printf("dashcam %d: linked locally, master data %s rejected the fit: %v", dashcamID, *mdID, err)
+	}
 }
 
 // NewHandler builds the handler. tel is the telemetry-service client — the only
@@ -246,6 +304,10 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tid := auth.EffectiveTenant(r)
+	caller, ok := h.mdCaller(w, r)
+	if !ok {
+		return
+	}
 	var out DTO
 	err = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
 		return tx.QueryRow(r.Context(), `
@@ -268,6 +330,7 @@ RETURNING id, vehicle_id, vss_device_id, device_name, channels, channel_names`,
 		httpx.Error(w, http.StatusBadRequest, "attach failed")
 		return
 	}
+	h.mirrorLink(r.Context(), caller, tid, out.ID, req.VSSDeviceID, req.VehicleID)
 	httpx.JSON(w, http.StatusCreated, out)
 }
 
@@ -285,12 +348,24 @@ func (h *Handler) detach(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	caller, ok := h.mdCaller(w, r)
+	if !ok {
+		return
+	}
+	var mdID *string
 	if err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
+		_ = tx.QueryRow(r.Context(), `SELECT master_data_id FROM dashcams WHERE id=$1`, id).Scan(&mdID)
 		_, e := tx.Exec(r.Context(), `DELETE FROM dashcams WHERE id=$1`, id)
 		return e
 	}); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "detach failed")
 		return
+	}
+	// The device stays registered upstream; only its fitting closes.
+	if h.md != nil && mdID != nil {
+		if err := h.md.UnfitTracker(r.Context(), caller, *mdID); err != nil {
+			log.Printf("dashcam %d: unlinked locally, master data %s rejected the unfit: %v", id, *mdID, err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

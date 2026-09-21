@@ -73,6 +73,7 @@ CREATE TABLE trackers (
   vehicle_id  bigint,
   status      text NOT NULL DEFAULT 'active',
   external_ref text,
+  master_data_id text,
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -293,6 +294,7 @@ CREATE TABLE dashcams (
   channels      int NOT NULL DEFAULT 0,
   channel_names text,
   access_mode   int,
+  master_data_id text,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 

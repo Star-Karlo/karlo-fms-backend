@@ -311,10 +311,28 @@ func (s *Service) Archive(ctx context.Context, tenantID, id int64, caller mdwrit
 }
 
 // AssignTracker binds/unbinds a tracker, keeping both sides of the link in sync.
-func (s *Service) AssignTracker(ctx context.Context, tenantID, id int64, trackerID *int64) (*DTO, error) {
+//
+// The fitting is master data's too (TMS's Trackers page reads it), so it is
+// mirrored upstream as fit/unfit after the local write — as the caller.
+// Master data closes the previous fitting on fit itself.
+func (s *Service) AssignTracker(ctx context.Context, tenantID, id int64, caller mdwrite.Caller, trackerID *int64) (*DTO, error) {
 	var dto DTO
+	var vehicleMD, trackerMD, previousMD *string
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		q := store.New(tx)
+		if before, err := q.GetVehicleRow(ctx, id); err == nil {
+			vehicleMD = before.MasterDataID
+			if before.TrackerID != nil && (trackerID == nil || *before.TrackerID != *trackerID) {
+				if prev, err := q.GetTracker(ctx, *before.TrackerID); err == nil {
+					previousMD = prev.MasterDataID
+				}
+			}
+		}
+		if trackerID != nil {
+			if t, err := q.GetTracker(ctx, *trackerID); err == nil {
+				trackerMD = t.MasterDataID
+			}
+		}
 		v, err := q.AssignVehicleTracker(ctx, store.AssignVehicleTrackerParams{ID: id, TrackerID: trackerID})
 		if err != nil {
 			return err
@@ -341,6 +359,26 @@ func (s *Service) AssignTracker(ctx context.Context, tenantID, id int64, tracker
 	})
 	if err != nil {
 		return nil, err
+	}
+	if s.md == nil {
+		return &dto, nil
+	}
+	// Unbind, or a swap: the previous device's fitting closes upstream.
+	if previousMD != nil {
+		if err := s.md.UnfitTracker(ctx, caller, *previousMD); err != nil {
+			log.Printf("vehicle %d: tracker unbound locally, master data %s rejected the unfit: %v", id, *previousMD, err)
+		}
+	}
+	if trackerID != nil {
+		switch {
+		case trackerMD == nil || vehicleMD == nil:
+			log.Printf("vehicle %d: tracker %d bound locally; not paired with master data (tracker %v, vehicle %v), master data not told", id, *trackerID, trackerMD != nil, vehicleMD != nil)
+		default:
+			if err := s.md.FitTracker(ctx, caller, *trackerMD, *vehicleMD); err != nil {
+				log.Printf("vehicle %d: tracker bound locally, master data %s rejected the fit: %v", id, *trackerMD, err)
+				return &dto, err
+			}
+		}
 	}
 	return &dto, nil
 }
