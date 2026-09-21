@@ -42,6 +42,9 @@ type Position struct {
 	Provinsi   string          `json:"provinsi"`
 	Jalan      string          `json:"jalan"`
 	Metadata   json.RawMessage `json:"metadata,omitempty"`
+	// StateSince: when the device's drive state (moving/idle/parking) last
+	// changed, kept by the telemetry current-state upsert. Live reads only.
+	StateSince *time.Time `json:"state_since,omitempty"`
 }
 
 // Client calls the telemetry read API.

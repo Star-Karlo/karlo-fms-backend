@@ -24,7 +24,7 @@ import (
 )
 
 // liveFields trims the upstream payload to what the map needs (drops metadata).
-var liveFields = []string{"lat", "lon", "speed", "bearing", "ignition", "kecamatan", "kabupaten", "kota", "provinsi", "jalan"}
+var liveFields = []string{"lat", "lon", "speed", "bearing", "ignition", "kecamatan", "kabupaten", "kota", "provinsi", "jalan", "state_since"}
 
 // historyFields trims the trip-history payload to what TripPoint needs. Without
 // this the upstream returns the full per-point metadata blob (~2.5x larger and

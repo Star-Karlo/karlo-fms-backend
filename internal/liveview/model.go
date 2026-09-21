@@ -93,6 +93,13 @@ type VehicleLive struct {
 	Online         bool     `json:"online"`
 	DriveState     string   `json:"drive_state"`
 	StaleMinutes   *float64 `json:"stale_minutes"`
+	// StateSince is when the current DriveState began, so a list can say
+	// "idle for 40 min" instead of a speed. Moving/idle/parking come from the
+	// telemetry current-state row, which keeps the timestamp of the last
+	// class change; for offline it is the last fix (the truck has not been
+	// heard from since). Omitted for camera-only positions and for rows
+	// written before the telemetry service kept it.
+	StateSince *time.Time `json:"state_since,omitempty"`
 	// From the telemetry collector's state table (updated ~2min) — cheap to
 	// join fleet-wide, powers list filters without shipping metadata blobs.
 	BatteryV  *float64 `json:"battery_v"`
@@ -123,9 +130,12 @@ func enrich(v *VehicleLive, p *telemetry.Position, now time.Time) {
 	if now.Sub(p.Time) > freshWindow {
 		v.Online = false
 		v.DriveState = StateOffline
+		t := p.Time
+		v.StateSince = &t
 		return
 	}
 	v.Online = true
+	v.StateSince = p.StateSince
 	switch {
 	case p.Speed != nil && *p.Speed > movingSpeed:
 		v.DriveState = StateMoving
