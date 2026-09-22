@@ -170,6 +170,9 @@ func main() {
 			companyDir = dir
 			if sync := tenantsync.New(pool, dir); sync != nil {
 				go sync.Run(ctx, 5*time.Minute)
+				// A company created, renamed or granted FMS upstream shows
+				// here on the notice, not at the next 5-minute tick.
+				mdevents.FollowChannel(ctx, cfg.RedisAddr, mdevents.CompanyChannel, sync)
 				log.Printf("tenantsync: projecting companies from %s", cfg.AuthGRPCTarget)
 			}
 
@@ -215,8 +218,9 @@ func main() {
 		}
 	}
 	authH := auth.NewHandler(auth.NewService(pool, tm)).WithCookieDomain(cfg.AuthCookieDomain)
-	if up := auth.NewUpstream(cfg.AuthServiceURL, 10*time.Second); up != nil {
-		authH = authH.WithUpstream(up, sso)
+	authUp := auth.NewUpstream(cfg.AuthServiceURL, 10*time.Second)
+	if authUp != nil {
+		authH = authH.WithUpstream(authUp, sso)
 		log.Printf("auth: login and refresh delegate to %s", cfg.AuthServiceURL)
 	}
 	// WRITE-THROUGH to master data, as the signed-in user.
@@ -281,7 +285,7 @@ func main() {
 	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion).WithMasterData(mdWriter, companyDir)
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
-	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...)
+	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...).WithAuthUpstream(authUp)
 	apiTokenH := apitoken.NewHandler(pool).WithIAM(iamConn)
 	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)

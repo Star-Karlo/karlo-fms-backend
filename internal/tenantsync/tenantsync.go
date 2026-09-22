@@ -45,13 +45,23 @@ import (
 type Syncer struct {
 	pool *db.Pool
 	dir  *tenantdir.Directory
+	wake chan struct{}
+}
+
+// Wake asks for a refresh now — a karlo:companies notice (a company
+// created, renamed, or granted FMS). Never blocks; wakes coalesce.
+func (s *Syncer) Wake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
 }
 
 func New(pool *db.Pool, dir *tenantdir.Directory) *Syncer {
 	if dir == nil {
 		return nil
 	}
-	return &Syncer{pool: pool, dir: dir}
+	return &Syncer{pool: pool, dir: dir, wake: make(chan struct{}, 1)}
 }
 
 // Run refreshes immediately, then on every tick.
@@ -73,9 +83,12 @@ func (s *Syncer) Run(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := s.Once(ctx); err != nil {
-				log.Printf("tenantsync: %v", err)
-			}
+		case <-s.wake:
+			// A company notice: the directory's minute-old copy is stale.
+			s.dir.Invalidate()
+		}
+		if err := s.Once(ctx); err != nil {
+			log.Printf("tenantsync: %v", err)
 		}
 	}
 }

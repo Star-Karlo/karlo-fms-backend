@@ -36,6 +36,7 @@ type Handler struct {
 	md     *mdwrite.Client         // nil before cutover; the backfill needs it
 	dir    mdwrite.CompanyResolver // tenant id -> company, for the backfill's acting-for
 	wakers []mdevents.Waker        // see WithSyncWakers
+	authUp *auth.Upstream          // nil before cutover; renames then stay local
 }
 
 func NewHandler(pool *db.Pool, live *liveview.Service) *Handler {
@@ -48,6 +49,10 @@ func (h *Handler) WithMasterData(md *mdwrite.Client) *Handler { h.md = md; retur
 
 // WithResolver supplies the tenant -> company lookup the backfill needs.
 func (h *Handler) WithResolver(dir mdwrite.CompanyResolver) *Handler { h.dir = dir; return h }
+
+// WithAuthUpstream routes an account rename to the authentication service,
+// which owns companies, as the calling operator.
+func (h *Handler) WithAuthUpstream(up *auth.Upstream) *Handler { h.authUp = up; return h }
 
 // WithSyncWakers supplies the master-data projections (vehiclesync,
 // driversync) that POST /v1/platform/sync refreshes on demand.
@@ -91,7 +96,7 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 // renameTenant godoc
 //
 //	@Summary		Rename a customer account (platform admin)
-//	@Description	Change an account's display name. The tenants table carries no RLS, so this is a direct scoped update — platform_admin only.
+//	@Description	Change an account's display name. Companies belong to the authentication service: the rename is sent there as the calling operator (PUT /api/v1/companies/{id}), and the local copy follows — immediately here, and again from the company notice tenantsync receives. platform_admin only.
 //	@Tags			platform
 //	@Security		BearerAuth
 //	@Accept			json
@@ -112,7 +117,30 @@ func (h *Handler) renameTenant(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	tag, err := h.pool.Exec(r.Context(), `UPDATE tenants SET name = $2, updated_at = now() WHERE id = $1`, id, strings.TrimSpace(body.Name))
+	name := strings.TrimSpace(body.Name)
+	// Upstream first: a rename that only lands here is undone by the next
+	// tenantsync pass, which is exactly what used to happen.
+	if h.authUp != nil {
+		company := ""
+		if h.dir != nil {
+			company, _ = h.dir.CompanyForTenant(r.Context(), id)
+		}
+		if company == "" {
+			httpx.Error(w, http.StatusConflict, "this account is not paired with a company in the authentication service; rename it there")
+			return
+		}
+		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		status, raw, err := h.authUp.Forward(r.Context(), http.MethodPut, "/api/v1/companies/"+company, bearer, map[string]any{"name": name})
+		if err != nil {
+			httpx.Error(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		if status < 200 || status >= 300 {
+			httpx.Error(w, http.StatusBadGateway, "authentication service refused the rename: "+strings.TrimSpace(string(raw)))
+			return
+		}
+	}
+	tag, err := h.pool.Exec(r.Context(), `UPDATE tenants SET name = $2, updated_at = now() WHERE id = $1`, id, name)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "rename failed")
 		return

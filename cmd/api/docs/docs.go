@@ -3622,7 +3622,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Change an account's display name. The tenants table carries no RLS, so this is a direct scoped update — platform_admin only.",
+                "description": "Change an account's display name. Companies belong to the authentication service: the rename is sent there as the calling operator (PUT /api/v1/companies/{id}), and the local copy follows — immediately here, and again from the company notice tenantsync receives. platform_admin only.",
                 "consumes": [
                     "application/json"
                 ],

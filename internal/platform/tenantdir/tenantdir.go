@@ -102,6 +102,15 @@ func (d *Directory) List(ctx context.Context) ([]Tenant, error) {
 	return got, nil
 }
 
+// Invalidate drops the cached list so the next List refetches — a company
+// notice says the directory has changed; waiting out the TTL would leave a
+// newly granted customer invisible to every worker for up to a minute.
+func (d *Directory) Invalidate() {
+	d.mu.Lock()
+	d.cachedAt = time.Time{}
+	d.mu.Unlock()
+}
+
 // IDs is the shape the background workers want.
 func (d *Directory) IDs(ctx context.Context) ([]int64, error) {
 	ts, err := d.List(ctx)
