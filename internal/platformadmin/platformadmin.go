@@ -96,7 +96,7 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 // renameTenant godoc
 //
 //	@Summary		Rename a customer account (platform admin)
-//	@Description	Change an account's display name. Companies belong to the authentication service: the rename is sent there as the calling operator (PUT /api/v1/companies/{id}), and the local copy follows — immediately here, and again from the company notice tenantsync receives. platform_admin only.
+//	@Description	Change an account's display name. Companies belong to the authentication service: the rename is sent there as the calling operator (PUT /api/v1/admin/companies/{id}), and the local copy follows — immediately here, and again from the company notice tenantsync receives. platform_admin only.
 //	@Tags			platform
 //	@Security		BearerAuth
 //	@Accept			json
@@ -130,7 +130,7 @@ func (h *Handler) renameTenant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		status, raw, err := h.authUp.Forward(r.Context(), http.MethodPut, "/api/v1/companies/"+company, bearer, map[string]any{"name": name})
+		status, raw, err := h.authUp.Forward(r.Context(), http.MethodPut, "/api/v1/admin/companies/"+company, bearer, map[string]any{"name": name})
 		if err != nil {
 			httpx.Error(w, http.StatusBadGateway, err.Error())
 			return
