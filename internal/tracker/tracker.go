@@ -21,15 +21,18 @@ import (
 // DTO is the JSON shape of a tracker.
 type DTO struct {
 	// Owning account — set only in the platform-admin all-accounts list.
-	TenantID   *int64     `json:"tenant_id,omitempty"`
-	TenantName *string    `json:"tenant_name,omitempty"`
-	ID         int64      `json:"id"`
-	Imei       string     `json:"imei"`
-	PhoneNo    *string    `json:"phone_no"`
-	VehicleID  *int64     `json:"vehicle_id"`
-	Status     string     `json:"status"`
-	CreatedAt  *time.Time `json:"created_at"`
-	UpdatedAt  *time.Time `json:"updated_at"`
+	TenantID   *int64  `json:"tenant_id,omitempty"`
+	TenantName *string `json:"tenant_name,omitempty"`
+	ID         int64   `json:"id"`
+	Imei       string  `json:"imei"`
+	PhoneNo    *string `json:"phone_no"`
+	VehicleID  *int64  `json:"vehicle_id"`
+	Status     string  `json:"status"`
+	// IsDemo marks a copy of a device that really belongs to another account
+	// (shown here for a demo). Never paired with or written to master data.
+	IsDemo    bool       `json:"is_demo"`
+	CreatedAt *time.Time `json:"created_at"`
+	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 // CreateRequest is the create body.
@@ -38,6 +41,9 @@ type CreateRequest struct {
 	PhoneNo   *string `json:"phone_no"`
 	VehicleID *int64  `json:"vehicle_id"`
 	Status    *string `json:"status"`
+	// IsDemo: this account only demos the device; its real owner is another
+	// account. Not registered in master data.
+	IsDemo bool `json:"is_demo"`
 }
 
 // UpdateRequest is the update body (patch-style).
@@ -45,10 +51,11 @@ type UpdateRequest struct {
 	Imei    *string `json:"imei"`
 	PhoneNo *string `json:"phone_no"`
 	Status  *string `json:"status"`
+	IsDemo  *bool   `json:"is_demo"`
 }
 
 func fromRow(t store.Tracker) DTO {
-	return DTO{ID: t.ID, Imei: t.Imei, PhoneNo: t.PhoneNo, VehicleID: t.VehicleID, Status: t.Status, CreatedAt: conv.Time(t.CreatedAt), UpdatedAt: conv.Time(t.UpdatedAt)}
+	return DTO{ID: t.ID, Imei: t.Imei, PhoneNo: t.PhoneNo, VehicleID: t.VehicleID, Status: t.Status, IsDemo: t.IsDemo, CreatedAt: conv.Time(t.CreatedAt), UpdatedAt: conv.Time(t.UpdatedAt)}
 }
 
 func iface(s *string) interface{} {
@@ -277,7 +284,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// Master data first, so the local row is born paired. Its refusal (a
 	// duplicate IMEI in another company, say) is the caller's answer.
 	var mdID *string
-	if h.md != nil {
+	if h.md != nil && !req.IsDemo {
 		phone := ""
 		if req.PhoneNo != nil {
 			phone = *req.PhoneNo
@@ -296,6 +303,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		t, err := q.CreateTracker(r.Context(), store.CreateTrackerParams{TenantID: tid, Imei: req.Imei, PhoneNo: req.PhoneNo, VehicleID: req.VehicleID, Status: iface(req.Status), MasterDataID: mdID})
 		if err != nil {
 			return err
+		}
+		if req.IsDemo {
+			if t, err = q.UpdateTracker(r.Context(), store.UpdateTrackerParams{ID: t.ID, IsDemo: &req.IsDemo}); err != nil {
+				return err
+			}
 		}
 		if req.VehicleID != nil {
 			if v, err := q.GetVehicleRow(r.Context(), *req.VehicleID); err == nil {
@@ -348,7 +360,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	var dto DTO
 	var mdID *string
 	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
-		t, err := store.New(tx).UpdateTracker(r.Context(), store.UpdateTrackerParams{ID: id, Imei: req.Imei, PhoneNo: req.PhoneNo, Status: req.Status})
+		t, err := store.New(tx).UpdateTracker(r.Context(), store.UpdateTrackerParams{ID: id, Imei: req.Imei, PhoneNo: req.PhoneNo, Status: req.Status, IsDemo: req.IsDemo})
 		if err != nil {
 			return err
 		}

@@ -74,6 +74,7 @@ CREATE TABLE trackers (
   status      text NOT NULL DEFAULT 'active',
   external_ref text,
   master_data_id text,
+  is_demo     boolean NOT NULL DEFAULT false,
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -295,6 +296,7 @@ CREATE TABLE dashcams (
   channel_names text,
   access_mode   int,
   master_data_id text,
+  is_demo       boolean NOT NULL DEFAULT false,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 

@@ -44,8 +44,11 @@ type TrackerExport struct {
 	// HasAssignmentHistory: fitted_at came from a real tracker_assignments
 	// row. False means the device was imported already on the vehicle and
 	// fitted_at is its created_at — "at least since then", not an install date.
-	HasAssignmentHistory bool      `json:"has_assignment_history"`
-	CreatedAt            time.Time `json:"created_at"`
+	HasAssignmentHistory bool `json:"has_assignment_history"`
+	// IsDemo: a copy of a device owned by another account, shown here for a
+	// demo. Master data keeps the real owner; skip this row when reconciling.
+	IsDemo    bool      `json:"is_demo"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // trackersExport godoc
@@ -85,7 +88,7 @@ func (h *Handler) exportTenant(ctx context.Context, t tenantRef) ([]TrackerExpor
 	var out []TrackerExport
 	err := db.Tx(ctx, h.pool, t.id, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT tr.imei, tr.phone_no, tr.status, tr.external_ref, tr.created_at,
+			SELECT tr.imei, tr.phone_no, tr.status, tr.external_ref, tr.created_at, tr.is_demo,
 			       v.id, v.master_data_id, v.license_plate,
 			       (SELECT max(a.fitted_at) FROM tracker_assignments a
 			         WHERE a.tracker_id = tr.id AND a.unfitted_at IS NULL)
@@ -98,7 +101,7 @@ func (h *Handler) exportTenant(ctx context.Context, t tenantRef) ([]TrackerExpor
 		defer rows.Close()
 		for rows.Next() {
 			e := TrackerExport{Kind: "gps", TenantID: t.id, TenantName: t.name, CompanyID: company}
-			if err := rows.Scan(&e.DeviceID, &e.PhoneNo, &e.Status, &e.ExternalRef, &e.CreatedAt,
+			if err := rows.Scan(&e.DeviceID, &e.PhoneNo, &e.Status, &e.ExternalRef, &e.CreatedAt, &e.IsDemo,
 				&e.VehicleID, &e.VehicleMasterDataID, &e.LicensePlate, &e.FittedAt); err != nil {
 				return err
 			}
@@ -115,7 +118,7 @@ func (h *Handler) exportTenant(ctx context.Context, t tenantRef) ([]TrackerExpor
 		}
 
 		rows, err = tx.Query(ctx, `
-			SELECT d.vss_device_id, d.device_name, d.device_type, d.created_at,
+			SELECT d.vss_device_id, d.device_name, d.device_type, d.created_at, d.is_demo,
 			       v.id, v.master_data_id, v.license_plate
 			  FROM dashcams d
 			  LEFT JOIN vehicles v ON v.id = d.vehicle_id
@@ -126,7 +129,7 @@ func (h *Handler) exportTenant(ctx context.Context, t tenantRef) ([]TrackerExpor
 		defer rows.Close()
 		for rows.Next() {
 			e := TrackerExport{Kind: "dashcam", TenantID: t.id, TenantName: t.name, CompanyID: company, Status: "active"}
-			if err := rows.Scan(&e.DeviceID, &e.DeviceName, &e.DeviceType, &e.CreatedAt,
+			if err := rows.Scan(&e.DeviceID, &e.DeviceName, &e.DeviceType, &e.CreatedAt, &e.IsDemo,
 				&e.VehicleID, &e.VehicleMasterDataID, &e.LicensePlate); err != nil {
 				return err
 			}

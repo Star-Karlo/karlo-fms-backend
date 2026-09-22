@@ -10,7 +10,8 @@ SELECT * FROM trackers WHERE id = $1;
 UPDATE trackers
 SET imei       = COALESCE(sqlc.narg('imei'), imei),
     phone_no   = COALESCE(sqlc.narg('phone_no'), phone_no),
-    status     = COALESCE(sqlc.narg('status'), status)
+    status     = COALESCE(sqlc.narg('status'), status),
+    is_demo    = COALESCE(sqlc.narg('is_demo'), is_demo)
 WHERE id = $1
 RETURNING *;
 

@@ -6746,6 +6746,10 @@ const docTemplate = `{
         "dashcam.AttachRequest": {
             "type": "object",
             "properties": {
+                "is_demo": {
+                    "description": "IsDemo: this account only demos the camera; another account owns it.\nNot registered in master data.",
+                    "type": "boolean"
+                },
                 "vehicle_id": {
                     "type": "integer"
                 },
@@ -6829,6 +6833,10 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                },
+                "is_demo": {
+                    "description": "IsDemo: a copy of another account's camera, shown here for a demo.",
+                    "type": "boolean"
                 },
                 "license_plate": {
                     "type": "string"
@@ -9326,6 +9334,10 @@ const docTemplate = `{
                     "description": "HasAssignmentHistory: fitted_at came from a real tracker_assignments\nrow. False means the device was imported already on the vehicle and\nfitted_at is its created_at — \"at least since then\", not an install date.",
                     "type": "boolean"
                 },
+                "is_demo": {
+                    "description": "IsDemo: a copy of a device owned by another account, shown here for a\ndemo. Master data keeps the real owner; skip this row when reconciling.",
+                    "type": "boolean"
+                },
                 "kind": {
                     "description": "gps | dashcam",
                     "type": "string"
@@ -9850,6 +9862,10 @@ const docTemplate = `{
                 "imei": {
                     "type": "string"
                 },
+                "is_demo": {
+                    "description": "IsDemo: this account only demos the device; its real owner is another\naccount. Not registered in master data.",
+                    "type": "boolean"
+                },
                 "phone_no": {
                     "type": "string"
                 },
@@ -9872,6 +9888,10 @@ const docTemplate = `{
                 },
                 "imei": {
                     "type": "string"
+                },
+                "is_demo": {
+                    "description": "IsDemo marks a copy of a device that really belongs to another account\n(shown here for a demo). Never paired with or written to master data.",
+                    "type": "boolean"
                 },
                 "phone_no": {
                     "type": "string"
@@ -9899,6 +9919,9 @@ const docTemplate = `{
             "properties": {
                 "imei": {
                     "type": "string"
+                },
+                "is_demo": {
+                    "type": "boolean"
                 },
                 "phone_no": {
                     "type": "string"

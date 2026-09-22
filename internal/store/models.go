@@ -82,6 +82,7 @@ type Dashcam struct {
 	ChannelNames *string            `json:"channel_names"`
 	AccessMode   *int32             `json:"access_mode"`
 	MasterDataID *string            `json:"master_data_id"`
+	IsDemo       bool               `json:"is_demo"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -248,6 +249,7 @@ type Tracker struct {
 	Status       string             `json:"status"`
 	ExternalRef  *string            `json:"external_ref"`
 	MasterDataID *string            `json:"master_data_id"`
+	IsDemo       bool               `json:"is_demo"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }

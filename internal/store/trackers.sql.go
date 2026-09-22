@@ -62,7 +62,7 @@ func (q *Queries) CountTrackers(ctx context.Context, arg CountTrackersParams) (i
 const createTracker = `-- name: CreateTracker :one
 INSERT INTO trackers (tenant_id, imei, phone_no, vehicle_id, status, master_data_id)
 VALUES ($1, $2, $3, $4, COALESCE($5, 'active'), $6)
-RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, created_at, updated_at
+RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at
 `
 
 type CreateTrackerParams struct {
@@ -93,6 +93,7 @@ func (q *Queries) CreateTracker(ctx context.Context, arg CreateTrackerParams) (T
 		&i.Status,
 		&i.ExternalRef,
 		&i.MasterDataID,
+		&i.IsDemo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -109,7 +110,7 @@ func (q *Queries) DeleteTracker(ctx context.Context, id int64) error {
 }
 
 const getTracker = `-- name: GetTracker :one
-SELECT id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, created_at, updated_at FROM trackers WHERE id = $1
+SELECT id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at FROM trackers WHERE id = $1
 `
 
 func (q *Queries) GetTracker(ctx context.Context, id int64) (Tracker, error) {
@@ -124,6 +125,7 @@ func (q *Queries) GetTracker(ctx context.Context, id int64) (Tracker, error) {
 		&i.Status,
 		&i.ExternalRef,
 		&i.MasterDataID,
+		&i.IsDemo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -131,7 +133,7 @@ func (q *Queries) GetTracker(ctx context.Context, id int64) (Tracker, error) {
 }
 
 const listTrackers = `-- name: ListTrackers :many
-SELECT id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, created_at, updated_at FROM trackers
+SELECT id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at FROM trackers
 WHERE ($1::text IS NULL
        OR imei ILIKE '%' || $1 || '%'
        OR phone_no ILIKE '%' || $1 || '%')
@@ -173,6 +175,7 @@ func (q *Queries) ListTrackers(ctx context.Context, arg ListTrackersParams) ([]T
 			&i.Status,
 			&i.ExternalRef,
 			&i.MasterDataID,
+			&i.IsDemo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -188,7 +191,7 @@ func (q *Queries) ListTrackers(ctx context.Context, arg ListTrackersParams) ([]T
 
 const setTrackerVehicle = `-- name: SetTrackerVehicle :one
 UPDATE trackers SET vehicle_id = $2 WHERE id = $1
-RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, created_at, updated_at
+RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at
 `
 
 type SetTrackerVehicleParams struct {
@@ -208,6 +211,7 @@ func (q *Queries) SetTrackerVehicle(ctx context.Context, arg SetTrackerVehiclePa
 		&i.Status,
 		&i.ExternalRef,
 		&i.MasterDataID,
+		&i.IsDemo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -233,9 +237,10 @@ const updateTracker = `-- name: UpdateTracker :one
 UPDATE trackers
 SET imei       = COALESCE($2, imei),
     phone_no   = COALESCE($3, phone_no),
-    status     = COALESCE($4, status)
+    status     = COALESCE($4, status),
+    is_demo    = COALESCE($5, is_demo)
 WHERE id = $1
-RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, created_at, updated_at
+RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at
 `
 
 type UpdateTrackerParams struct {
@@ -243,6 +248,7 @@ type UpdateTrackerParams struct {
 	Imei    *string `json:"imei"`
 	PhoneNo *string `json:"phone_no"`
 	Status  *string `json:"status"`
+	IsDemo  *bool   `json:"is_demo"`
 }
 
 func (q *Queries) UpdateTracker(ctx context.Context, arg UpdateTrackerParams) (Tracker, error) {
@@ -251,6 +257,7 @@ func (q *Queries) UpdateTracker(ctx context.Context, arg UpdateTrackerParams) (T
 		arg.Imei,
 		arg.PhoneNo,
 		arg.Status,
+		arg.IsDemo,
 	)
 	var i Tracker
 	err := row.Scan(
@@ -262,6 +269,7 @@ func (q *Queries) UpdateTracker(ctx context.Context, arg UpdateTrackerParams) (T
 		&i.Status,
 		&i.ExternalRef,
 		&i.MasterDataID,
+		&i.IsDemo,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

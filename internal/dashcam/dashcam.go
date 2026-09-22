@@ -46,13 +46,18 @@ type DTO struct {
 	DeviceName   *string `json:"device_name"`
 	Channels     int     `json:"channels"`
 	ChannelNames *string `json:"channel_names"`
-	Online       bool    `json:"online"`
+	// IsDemo: a copy of another account's camera, shown here for a demo.
+	IsDemo bool `json:"is_demo"`
+	Online bool `json:"online"`
 }
 
 // AttachRequest links a device to a vehicle.
 type AttachRequest struct {
 	VehicleID   int64  `json:"vehicle_id"`
 	VSSDeviceID string `json:"vss_device_id"`
+	// IsDemo: this account only demos the camera; another account owns it.
+	// Not registered in master data.
+	IsDemo bool `json:"is_demo"`
 }
 
 // Handler serves the FMS dashcam endpoints.
@@ -96,9 +101,13 @@ func (h *Handler) mirrorLink(ctx context.Context, caller mdwrite.Caller, tid, da
 		return
 	}
 	var mdID, vehicleMD *string
+	var demo bool
 	_ = db.Tx(ctx, h.pool, tid, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT d.master_data_id, v.master_data_id FROM dashcams d JOIN vehicles v ON v.id = d.vehicle_id WHERE d.id = $1`, dashcamID).Scan(&mdID, &vehicleMD)
+		return tx.QueryRow(ctx, `SELECT d.master_data_id, d.is_demo, v.master_data_id FROM dashcams d JOIN vehicles v ON v.id = d.vehicle_id WHERE d.id = $1`, dashcamID).Scan(&mdID, &demo, &vehicleMD)
 	})
+	if demo {
+		return // a demo copy of another account's camera: master data keeps the real owner
+	}
 	if mdID == nil {
 		id, err := h.md.CreateTracker(ctx, caller, mdwrite.Tracker{Kind: "dashcam", DeviceID: vssID, Status: "active"})
 		if err != nil {
@@ -165,7 +174,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		rows, err := tx.Query(r.Context(), `
 SELECT d.id, d.vehicle_id, v.license_plate, v.vehicle_type, e.full_name,
-       d.vss_device_id, d.device_name, d.channels, d.channel_names
+       d.vss_device_id, d.device_name, d.channels, d.channel_names, d.is_demo
 FROM dashcams d
 LEFT JOIN vehicles v  ON v.id = d.vehicle_id
 LEFT JOIN employees e ON e.id = v.current_driver_id
@@ -178,7 +187,7 @@ ORDER BY v.license_plate NULLS LAST, d.vss_device_id`)
 		for rows.Next() {
 			var d DTO
 			if err := rows.Scan(&d.ID, &d.VehicleID, &d.LicensePlate, &d.VehicleType, &d.DriverName,
-				&d.VSSDeviceID, &d.DeviceName, &d.Channels, &d.ChannelNames); err != nil {
+				&d.VSSDeviceID, &d.DeviceName, &d.Channels, &d.ChannelNames, &d.IsDemo); err != nil {
 				return err
 			}
 			items = append(items, d)
@@ -311,14 +320,15 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 	var out DTO
 	err = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
 		return tx.QueryRow(r.Context(), `
-INSERT INTO dashcams (tenant_id, vehicle_id, vss_device_id, device_name, device_type, channels, channel_names, last_sync_at)
-VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,NULLIF($7,''), now())
+INSERT INTO dashcams (tenant_id, vehicle_id, vss_device_id, device_name, device_type, channels, channel_names, last_sync_at, is_demo)
+VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,NULLIF($7,''), now(), $8)
 ON CONFLICT (tenant_id, vss_device_id) DO UPDATE
   SET vehicle_id=EXCLUDED.vehicle_id, device_name=EXCLUDED.device_name,
       device_type=EXCLUDED.device_type, channels=EXCLUDED.channels,
-      channel_names=EXCLUDED.channel_names, last_sync_at=now(), updated_at=now()
+      channel_names=EXCLUDED.channel_names, last_sync_at=now(), updated_at=now(),
+      is_demo=dashcams.is_demo OR EXCLUDED.is_demo
 RETURNING id, vehicle_id, vss_device_id, device_name, channels, channel_names`,
-			tid, req.VehicleID, req.VSSDeviceID, dev.DeviceName, dev.DeviceType, dev.Channels, dev.ChannelNames).
+			tid, req.VehicleID, req.VSSDeviceID, dev.DeviceName, dev.DeviceType, dev.Channels, dev.ChannelNames, req.IsDemo).
 			Scan(&out.ID, &out.VehicleID, &out.VSSDeviceID, &out.DeviceName, &out.Channels, &out.ChannelNames)
 	})
 	if err != nil {

@@ -105,6 +105,7 @@ type Result struct {
 	Updated   int
 	Fitted    int // vehicle binding changed to match master data
 	Retired   int // master data says retired/deleted; local row inactive
+	Demo      int // rows whose demo flag changed (device owned elsewhere)
 	Skipped   int
 }
 
@@ -118,12 +119,38 @@ func (s *Syncer) Once(ctx context.Context) error {
 		log.Printf("trackersync: the company list came back empty; leaving the projection alone")
 		return nil
 	}
+	// Every company's devices first: a device master data owns under
+	// company A that also has a row under FMS account B is B's DEMO copy,
+	// and each company's pass needs the whole map to know that.
+	owner := map[string]string{} // kind+"/"+device id -> owning company
+	lists := map[string][]mdclient.Tracker{}
+	for _, c := range companies {
+		if c.CompanyID == "" || c.ID == 0 {
+			continue
+		}
+		devices, err := s.md.ListTrackers(ctx, c.CompanyID, "")
+		if err != nil {
+			log.Printf("trackersync: %s (tenant %d): %v", c.Name, c.ID, err)
+			continue
+		}
+		lists[c.CompanyID] = devices
+		for _, d := range devices {
+			if !d.Deleted && d.Status != "retired" {
+				owner[d.Kind+"/"+strings.TrimSpace(d.DeviceID)] = c.CompanyID
+			}
+		}
+	}
+
 	var total Result
 	for _, c := range companies {
 		if c.CompanyID == "" || c.ID == 0 {
 			continue
 		}
-		r, err := s.company(ctx, c)
+		devices, ok := lists[c.CompanyID]
+		if !ok {
+			continue // its read failed above
+		}
+		r, err := s.company(ctx, c, devices, owner)
 		if err != nil {
 			log.Printf("trackersync: %s (tenant %d): %v", c.Name, c.ID, err)
 			continue
@@ -135,29 +162,33 @@ func (s *Syncer) Once(ctx context.Context) error {
 		total.Updated += r.Updated
 		total.Fitted += r.Fitted
 		total.Retired += r.Retired
+		total.Demo += r.Demo
 		total.Skipped += r.Skipped
 	}
-	if total.Linked+total.Inserted+total.Updated+total.Fitted+total.Retired > 0 {
-		log.Printf("trackersync: %d device(s) across %d companies — %d linked, %d added, %d updated, %d fittings, %d retired",
-			total.Seen, total.Companies, total.Linked, total.Inserted, total.Updated, total.Fitted, total.Retired)
+	if total.Linked+total.Inserted+total.Updated+total.Fitted+total.Retired+total.Demo > 0 {
+		log.Printf("trackersync: %d device(s) across %d companies — %d linked, %d added, %d updated, %d fittings, %d retired, %d demo flags changed",
+			total.Seen, total.Companies, total.Linked, total.Inserted, total.Updated, total.Fitted, total.Retired, total.Demo)
 	}
 	return nil
 }
 
-func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error) {
+func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant, devices []mdclient.Tracker, owner map[string]string) (Result, error) {
 	var r Result
-	devices, err := s.md.ListTrackers(ctx, c.CompanyID, "")
-	if err != nil {
-		return r, err
-	}
 	r.Seen = len(devices)
-	if len(devices) == 0 {
-		return r, nil // a company with no devices and a failed read look alike; do nothing
-	}
 
-	err = db.Tx(ctx, s.pool, c.ID, func(tx pgx.Tx) error {
+	err := db.Tx(ctx, s.pool, c.ID, func(tx pgx.Tx) error {
 		if err := db.LockFleetProjection(ctx, tx, c.ID); err != nil {
 			return err
+		}
+		// Demo copies: this account's device rows whose device master data
+		// owns under ANOTHER company. Flagged (and never paired), and the
+		// flag is cleared again if master data moves the device here. A
+		// row master data knows nowhere is left as the operator set it.
+		if err := s.markDemo(ctx, tx, c, owner, &r); err != nil {
+			return err
+		}
+		if len(devices) == 0 {
+			return nil // a company with no devices and a failed read look alike; do nothing more
 		}
 		for _, d := range devices {
 			id := strings.TrimSpace(d.DeviceID)
@@ -181,6 +212,45 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 	return r, err
 }
 
+// markDemo sets is_demo on this account's rows for devices master data
+// owns under another company, and clears it where master data owns them
+// here. Manual flags on devices master data does not know stay untouched.
+func (s *Syncer) markDemo(ctx context.Context, tx pgx.Tx, c tenantdir.Tenant, owner map[string]string, r *Result) error {
+	var elsewhereGPS, hereGPS, elsewhereCam, hereCam []string
+	for k, co := range owner {
+		kind, id, _ := strings.Cut(k, "/")
+		switch {
+		case kind == "dashcam" && co == c.CompanyID:
+			hereCam = append(hereCam, id)
+		case kind == "dashcam":
+			elsewhereCam = append(elsewhereCam, id)
+		case co == c.CompanyID:
+			hereGPS = append(hereGPS, id)
+		default:
+			elsewhereGPS = append(elsewhereGPS, id)
+		}
+	}
+	for _, q := range []struct {
+		sql string
+		ids []string
+	}{
+		{`UPDATE trackers SET is_demo = true, updated_at = now() WHERE tenant_id = $1 AND NOT is_demo AND imei = ANY($2)`, elsewhereGPS},
+		{`UPDATE trackers SET is_demo = false, updated_at = now() WHERE tenant_id = $1 AND is_demo AND imei = ANY($2)`, hereGPS},
+		{`UPDATE dashcams SET is_demo = true WHERE tenant_id = $1 AND NOT is_demo AND vss_device_id = ANY($2)`, elsewhereCam},
+		{`UPDATE dashcams SET is_demo = false WHERE tenant_id = $1 AND is_demo AND vss_device_id = ANY($2)`, hereCam},
+	} {
+		if len(q.ids) == 0 {
+			continue
+		}
+		ct, err := tx.Exec(ctx, q.sql, c.ID, q.ids)
+		if err != nil {
+			return err
+		}
+		r.Demo += int(ct.RowsAffected())
+	}
+	return nil
+}
+
 // localStatus maps master data's vocabulary onto this table's.
 func localStatus(d mdclient.Tracker) string {
 	if d.Deleted || d.Status == "retired" || d.Status == "inactive" {
@@ -193,7 +263,7 @@ func (s *Syncer) gps(ctx context.Context, tx pgx.Tx, tenantID int64, d mdclient.
 	// 1. Adopt by IMEI, once.
 	ct, err := tx.Exec(ctx, `
 		UPDATE trackers SET master_data_id = $1, updated_at = now()
-		 WHERE tenant_id = $2 AND master_data_id IS NULL AND imei = $3`, d.ID, tenantID, imei)
+		 WHERE tenant_id = $2 AND master_data_id IS NULL AND NOT is_demo AND imei = $3`, d.ID, tenantID, imei)
 	if err != nil {
 		return err
 	}
@@ -288,7 +358,7 @@ func (s *Syncer) dashcam(ctx context.Context, tx pgx.Tx, tenantID int64, d mdcli
 	// Adopt by VSS device id, once.
 	ct, err := tx.Exec(ctx, `
 		UPDATE dashcams SET master_data_id = $1
-		 WHERE tenant_id = $2 AND master_data_id IS NULL AND vss_device_id = $3`, d.ID, tenantID, deviceID)
+		 WHERE tenant_id = $2 AND master_data_id IS NULL AND NOT is_demo AND vss_device_id = $3`, d.ID, tenantID, deviceID)
 	if err != nil {
 		return err
 	}
