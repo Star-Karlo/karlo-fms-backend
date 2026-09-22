@@ -39,6 +39,7 @@ func (h *Handler) caller(w http.ResponseWriter, r *http.Request) (mdwrite.Caller
 // Routes mounts vehicle endpoints. Reads require any authenticated user;
 // mutations require manager+.
 func (h *Handler) Routes(r chi.Router) {
+	h.CatalogRoutes(r)
 	r.Get("/v1/vehicles", h.list)
 	r.Get("/v1/vehicles/{id}", h.get)
 	r.Group(func(mr chi.Router) {

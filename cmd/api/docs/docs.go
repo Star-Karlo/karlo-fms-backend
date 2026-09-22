@@ -930,6 +930,114 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/catalog/{kind}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Master data's catalogue as this account sees it: Karlo's shared entries plus the account's own. The vehicle form's manufacturer picker reads brand, box type reads truck_body, and vehicle type reads truck_head (with truck_body as the fallback vocabulary). Empty when master data is not configured — the fields then stay free text.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "vehicles"
+                ],
+                "summary": "Catalogue entries for the vehicle form (brand, truck body, truck head)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "brand | truck_body | truck_head",
+                        "name": "kind",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/vehicle.CatalogEntry"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates the entry in master data as the calling user — company-scoped for a customer, shared for platform staff — so a value the fleet needs exists once for both products. truck_head is Karlo-maintained and cannot be added here. An existing entry of the same name (case-insensitive) is returned rather than duplicated.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "vehicles"
+                ],
+                "summary": "Add a catalogue entry (brand or truck body) for this account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "brand | truck_body",
+                        "name": "kind",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "{\\",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/vehicle.CatalogEntry"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "kind is Karlo-maintained",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/company/logo": {
             "get": {
                 "security": [
@@ -3506,6 +3614,74 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/platformadmin.BackfillResult"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/platform/catalog-audit": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For every account: each distinct manufacturer, vehicle_type and box_type on vehicles paired with master data, with the catalogue entry it resolves to by normalised name (manufacturer→brand; box_type→truck body; vehicle_type→truck body first, then truck head) or \"none\". The \"none\" rows are the operator's to map or add in TMS's catalogue; apply (POST) pushes the matched ones.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Free-text vehicle brand/type/body values vs master data's catalogues (platform admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/platformadmin.CatalogAudit"
+                        }
+                    },
+                    "503": {
+                        "description": "master data not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/platform/catalog-audit/apply": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For every paired vehicle whose free-text values resolve in the audit, PUT /vehicles/{id} upstream with brandId / truckBodyId / truckHeadId, as the operator (acting for each account). Unmatched values are left alone. Idempotent — run it again after adding catalogue entries.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Push the matched brand/body/head ids to master data (platform admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/platformadmin.CatalogApplyResult"
+                        }
+                    },
+                    "503": {
+                        "description": "master data not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -8945,6 +9121,71 @@ const docTemplate = `{
                 }
             }
         },
+        "platformadmin.CatalogApplyResult": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "updated": {
+                    "description": "master data accepted",
+                    "type": "integer"
+                },
+                "vehicles": {
+                    "description": "paired vehicles with at least one resolvable value",
+                    "type": "integer"
+                }
+            }
+        },
+        "platformadmin.CatalogAudit": {
+            "type": "object",
+            "properties": {
+                "matched": {
+                    "type": "integer"
+                },
+                "unmatched": {
+                    "type": "integer"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platformadmin.CatalogAuditValue"
+                    }
+                }
+            }
+        },
+        "platformadmin.CatalogAuditValue": {
+            "type": "object",
+            "properties": {
+                "column": {
+                    "description": "manufacturer | vehicle_type | box_type",
+                    "type": "string"
+                },
+                "match": {
+                    "description": "Match: \"brand\" | \"truck_body\" | \"truck_head\" with the catalogue entry it\nresolved to, or \"none\".",
+                    "type": "string"
+                },
+                "match_id": {
+                    "type": "string"
+                },
+                "match_name": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "integer"
+                },
+                "tenant_name": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                },
+                "vehicles": {
+                    "description": "rows carrying it (paired with master data)",
+                    "type": "integer"
+                }
+            }
+        },
         "platformadmin.Overview": {
             "type": "object",
             "properties": {
@@ -9812,6 +10053,21 @@ const docTemplate = `{
             "properties": {
                 "tracker_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "vehicle.CatalogEntry": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "own": {
+                    "description": "Own is true for the company's private entry (as opposed to Karlo's).",
+                    "type": "boolean"
                 }
             }
         },

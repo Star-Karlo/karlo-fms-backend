@@ -226,6 +226,12 @@ type Vehicle struct {
 	UnitType      string `json:"unitType,omitempty"`
 	Year          int32  `json:"year,omitempty"`
 	Status        string `json:"status,omitempty"`
+	// Catalogue references, resolved from FMS's free-text names by
+	// catalog.Resolver. Master data models a truck as head + body; there is
+	// no truckTypeId on a vehicle.
+	BrandID     string `json:"brandId,omitempty"`
+	TruckBodyID string `json:"truckBodyId,omitempty"`
+	TruckHeadID string `json:"truckHeadId,omitempty"`
 	// Attributes MERGE upstream rather than replace, so writing fmsVehicleId
 	// here does not erase whatever else the record carries.
 	Attributes map[string]any `json:"attributes,omitempty"`
@@ -352,4 +358,25 @@ func (c *Client) FitTracker(ctx context.Context, caller Caller, id, vehicleID st
 // UnfitTracker closes the device's current fitting.
 func (c *Client) UnfitTracker(ctx context.Context, caller Caller, id string) error {
 	return c.do(ctx, caller, http.MethodPost, "/api/v1/trackers/"+id+"/unfit", map[string]any{}, nil)
+}
+
+// ---------------------------------------------------------------------------
+// Catalogues
+// ---------------------------------------------------------------------------
+
+// CatalogItem is a catalogue entry as master data returns it on create.
+type CatalogItem struct {
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	CompanyID string `json:"companyId,omitempty"`
+}
+
+// CreateCatalogItem adds an entry to a catalogue as the caller: a tenant's
+// entry is company-scoped by master data, staff's is global. kind is the
+// HTTP slug (brand | truckBody | truckHead); master data refuses tenant
+// writes to Karlo-maintained catalogues (truckHead) with 403.
+func (c *Client) CreateCatalogItem(ctx context.Context, caller Caller, kind, name string) (CatalogItem, error) {
+	var out CatalogItem
+	err := c.do(ctx, caller, http.MethodPost, "/api/v1/catalog/"+kind, map[string]any{"name": name}, &out)
+	return out, err
 }

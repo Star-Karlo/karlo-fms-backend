@@ -56,6 +56,7 @@ import (
 	"github.com/karlo/fms-backend/internal/notifengine"
 	"github.com/karlo/fms-backend/internal/notifrule"
 	"github.com/karlo/fms-backend/internal/platform/authctx"
+	"github.com/karlo/fms-backend/internal/platform/catalog"
 	"github.com/karlo/fms-backend/internal/platform/config"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
@@ -157,6 +158,9 @@ func main() {
 	// write made via ?account_id rather than misfiling it upstream.
 	var companyDir mdwrite.CompanyResolver
 	var syncWakers []mdevents.Waker // the projections POST /v1/platform/sync refreshes
+	// Brand / truck body / truck head: FMS keeps names, master data keeps
+	// ids; the resolver translates at the write-through and the projection.
+	var cat *catalog.Resolver
 	if iamConn != nil {
 		defer iamConn.Close()
 		// Entitlements as they are NOW (Company Access), not as the token
@@ -186,11 +190,12 @@ func main() {
 			}
 			if mdConn != nil {
 				defer mdConn.Close()
+				cat = catalog.New(mdConn)
 				// Two minutes is the safety net; a change notice on the
 				// platform Redis (mdevents) or POST /v1/platform/sync
 				// refreshes at once.
 				var wakers []mdevents.Waker
-				if vs := vehiclesync.New(pool, dir, mdConn); vs != nil {
+				if vs := vehiclesync.New(pool, dir, mdConn).WithCatalog(cat); vs != nil {
 					go vs.Run(ctx, 2*time.Minute)
 					wakers = append(wakers, vs)
 					log.Printf("vehiclesync: projecting the fleet from %s", cfg.MDGRPCTarget)
@@ -239,7 +244,7 @@ func main() {
 		log.Printf("mdwrite: vehicle and driver writes also go to %s as the calling user", cfg.MDServiceURL)
 	}
 
-	vehicleH := vehicle.NewHandler(vehicle.NewService(pool).WithMasterData(mdWriter)).WithResolver(companyDir)
+	vehicleH := vehicle.NewHandler(vehicle.NewService(pool).WithMasterData(mdWriter).WithCatalog(cat, companyDir)).WithResolver(companyDir)
 	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool))
 	driverH := driver.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
 	trackerH := tracker.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
@@ -285,7 +290,7 @@ func main() {
 	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion).WithMasterData(mdWriter, companyDir)
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
-	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...).WithAuthUpstream(authUp)
+	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...).WithAuthUpstream(authUp).WithCatalog(cat)
 	apiTokenH := apitoken.NewHandler(pool).WithIAM(iamConn)
 	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)

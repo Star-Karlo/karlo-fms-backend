@@ -45,6 +45,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/karlo/fms-backend/internal/platform/catalog"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/mdclient"
 	"github.com/karlo/fms-backend/internal/platform/tenantdir"
@@ -56,6 +57,19 @@ type Syncer struct {
 	dir  *tenantdir.Directory
 	md   *mdclient.Client
 	wake chan struct{} // see Wake
+	// cat turns master data's brand / truck body / truck head ids into the
+	// names FMS stores (manufacturer, box_type, vehicle_type). Nil = names
+	// are not projected.
+	cat *catalog.Resolver
+}
+
+// WithCatalog projects catalogue names into the free-text columns. Nil-safe
+// so it chains off New's nil.
+func (s *Syncer) WithCatalog(c *catalog.Resolver) *Syncer {
+	if s != nil {
+		s.cat = c
+	}
+	return s
 }
 
 // New returns nil unless both halves are configured — the directory to know
@@ -330,6 +344,35 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				return err
 			}
 			r.Updated += int(ct.RowsAffected())
+
+			// 3a. Catalogue names. Master data models a truck as head + body;
+			//     FMS shows manufacturer / vehicle_type / box_type as text.
+			//     manufacturer ← brand, box_type ← body, vehicle_type ← head
+			//     when the truck has one, else the body name. Only when master
+			//     data carries the id: an FMS-only free-text value stays.
+			if s.cat != nil {
+				brand := s.cat.Name(ctx, c.CompanyID, mdclient.KindBrand, v.BrandID)
+				body := s.cat.Name(ctx, c.CompanyID, mdclient.KindTruckBody, v.TruckBodyID)
+				head := s.cat.Name(ctx, c.CompanyID, mdclient.KindTruckHead, v.TruckHeadID)
+				vtype := head
+				if vtype == "" {
+					vtype = body
+				}
+				ct, err = tx.Exec(ctx, `
+					UPDATE vehicles SET manufacturer = COALESCE(NULLIF($2,''), manufacturer),
+					                    box_type     = COALESCE(NULLIF($3,''), box_type),
+					                    vehicle_type = COALESCE(NULLIF($4,''), vehicle_type),
+					                    updated_at   = now()
+					 WHERE master_data_id = $1
+					   AND ((NULLIF($2,'') IS NOT NULL AND manufacturer IS DISTINCT FROM $2)
+					     OR (NULLIF($3,'') IS NOT NULL AND box_type     IS DISTINCT FROM $3)
+					     OR (NULLIF($4,'') IS NOT NULL AND vehicle_type IS DISTINCT FROM $4))`,
+					v.ID, brand, body, vtype)
+				if err != nil {
+					return err
+				}
+				r.Updated += int(ct.RowsAffected())
+			}
 
 			// 3b. Un-archive when master data says the truck is live again.
 			//

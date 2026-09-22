@@ -24,6 +24,7 @@ import (
 
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/liveview"
+	"github.com/karlo/fms-backend/internal/platform/catalog"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
 	"github.com/karlo/fms-backend/internal/platform/mdevents"
@@ -37,6 +38,7 @@ type Handler struct {
 	dir    mdwrite.CompanyResolver // tenant id -> company, for the backfill's acting-for
 	wakers []mdevents.Waker        // see WithSyncWakers
 	authUp *auth.Upstream          // nil before cutover; renames then stay local
+	cat    *catalog.Resolver       // brand / body / head catalogues, for the audit
 }
 
 func NewHandler(pool *db.Pool, live *liveview.Service) *Handler {
@@ -69,6 +71,8 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Put("/v1/platform/tenants/{id}/name", h.renameTenant)
 		ar.Post("/v1/platform/sync", h.sync)
 		ar.Get("/v1/platform/trackers/export", h.trackersExport)
+		ar.Get("/v1/platform/catalog-audit", h.catalogAudit)
+		ar.Post("/v1/platform/catalog-audit/apply", h.catalogApply)
 		h.backfillRoutes(ar)
 	})
 }

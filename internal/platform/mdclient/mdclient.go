@@ -60,6 +60,53 @@ type Vehicle struct {
 	// DriverIDs are the drivers master data has paired with the truck —
 	// today at most one (currentDriverId). Empty means unpaired.
 	DriverIDs []string
+	// Catalogue references (brand, truck body, truck head). Names come from
+	// ListCatalogItems; FMS stores the names.
+	BrandID, TruckBodyID, TruckHeadID string
+}
+
+// CatalogKind names the catalogues FMS reads and resolves against.
+type CatalogKind int32
+
+const (
+	KindBrand     CatalogKind = CatalogKind(mdv1.CatalogKind_CATALOG_KIND_BRAND)
+	KindTruckBody CatalogKind = CatalogKind(mdv1.CatalogKind_CATALOG_KIND_TRUCK_BODY)
+	KindTruckHead CatalogKind = CatalogKind(mdv1.CatalogKind_CATALOG_KIND_TRUCK_HEAD)
+)
+
+// CatalogItem is one catalogue entry: Karlo's global one (CompanyID empty)
+// or a company's own.
+type CatalogItem struct {
+	ID        string
+	Name      string
+	CompanyID string
+	Active    bool
+}
+
+// ListCatalogItems returns the globals plus the company's own entries for a
+// catalogue, paged through.
+func (c *Client) ListCatalogItems(ctx context.Context, kind CatalogKind, companyID string) ([]CatalogItem, error) {
+	var out []CatalogItem
+	for page := int32(0); ; page++ {
+		resp, err := c.client.ListCatalogItems(ctx, &mdv1.ListCatalogItemsRequest{
+			Kind:      mdv1.CatalogKind(kind),
+			CompanyId: companyID,
+			Query: &commonv1.Query{
+				Page: &commonv1.Page{Page: page, PageSize: pageSize},
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("mdclient: list catalog %d for %q: %w", kind, companyID, err)
+		}
+		items := resp.GetItems()
+		for _, it := range items {
+			out = append(out, CatalogItem{ID: it.GetId(), Name: it.GetName(), CompanyID: it.GetCompanyId(), Active: it.GetActive()})
+		}
+		info := resp.GetPageInfo()
+		if len(items) < pageSize || (info != nil && int64(len(out)) >= info.GetTotalRows()) {
+			return out, nil
+		}
+	}
 }
 
 // pageSize is what master data caps a page at. Asking for more is not an error
@@ -102,6 +149,9 @@ func (c *Client) ListVehicles(ctx context.Context, companyID string) ([]Vehicle,
 				IMEI:          t.GetImei(),
 				Deleted:       t.GetDeleted(),
 				DriverIDs:     t.GetDriverIds(),
+				BrandID:       t.GetBrandId(),
+				TruckBodyID:   t.GetTruckBodyId(),
+				TruckHeadID:   t.GetTruckHeadId(),
 			})
 		}
 

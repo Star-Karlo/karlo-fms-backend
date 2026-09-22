@@ -7,9 +7,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/karlo/fms-backend/internal/platform/catalog"
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/mdclient"
 	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 	"github.com/karlo/fms-backend/internal/store"
 )
@@ -17,7 +19,48 @@ import (
 // Service holds vehicle business logic over the tenant-scoped store.
 type Service struct {
 	pool *db.Pool
-	md   *mdwrite.Client // nil before cutover: writes stay local
+	md   *mdwrite.Client   // nil before cutover: writes stay local
+	cat  *catalog.Resolver // nil without master data: names go up unresolved (omitted)
+	dir  mdwrite.CompanyResolver
+}
+
+// WithCatalog makes the write-through resolve manufacturer / box_type /
+// vehicle_type to master data's brand / truck body / truck head ids, in the
+// tenant's company scope (dir).
+func (s *Service) WithCatalog(c *catalog.Resolver, dir mdwrite.CompanyResolver) *Service {
+	s.cat, s.dir = c, dir
+	return s
+}
+
+func (s *Service) company(ctx context.Context, tenantID int64) string {
+	if s.dir == nil {
+		return ""
+	}
+	c, _ := s.dir.CompanyForTenant(ctx, tenantID)
+	return c
+}
+
+// catalogIDs resolves FMS's three free-text columns against the caller's
+// company catalogues. vehicle_type is a HEAD only when it names one; a body
+// or class word ("Wingbox", "Tronton") resolves through box_type's catalogue
+// instead, so the id is sent as truckBodyId when box_type is empty.
+func (s *Service) catalogIDs(ctx context.Context, company string, manufacturer, vehicleType, boxType *string) (brand, body, head string) {
+	if s.cat == nil || company == "" {
+		return "", "", ""
+	}
+	if manufacturer != nil {
+		brand = s.cat.Resolve(ctx, company, mdclient.KindBrand, *manufacturer)
+	}
+	if boxType != nil {
+		body = s.cat.Resolve(ctx, company, mdclient.KindTruckBody, *boxType)
+	}
+	if vehicleType != nil {
+		head = s.cat.Resolve(ctx, company, mdclient.KindTruckHead, *vehicleType)
+		if head == "" && body == "" && (boxType == nil || *boxType == "") {
+			body = s.cat.Resolve(ctx, company, mdclient.KindTruckBody, *vehicleType)
+		}
+	}
+	return brand, body, head
 }
 
 // NewService builds the vehicle service.
@@ -178,9 +221,9 @@ func (s *Service) Create(ctx context.Context, tenantID int64, caller mdwrite.Cal
 	// upstream and is the correct answer rather than a bug to work around.
 	var mdID *string
 	if s.md != nil {
-		id, err := s.md.CreateVehicle(ctx, caller, mdVehicle(
-			req.LicensePlate, req.HullNo, req.UnitYear, req.Status,
-		))
+		mv := mdVehicle(req.LicensePlate, req.HullNo, req.UnitYear, req.Status)
+		mv.BrandID, mv.TruckBodyID, mv.TruckHeadID = s.catalogIDs(ctx, s.company(ctx, tenantID), req.Manufacturer, req.VehicleType, req.BoxType)
+		id, err := s.md.CreateVehicle(ctx, caller, mv)
 		if err != nil {
 			return nil, err
 		}
@@ -259,9 +302,11 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 	// An UNPAIRED vehicle is skipped, not created: it predates write-through and
 	// belongs to the backfill, which handles the whole set deliberately rather
 	// than racing it one edit at a time.
-	touchesMD := req.LicensePlate != nil || req.HullNo != nil || req.UnitYear != nil || req.Status != nil
+	touchesMD := req.LicensePlate != nil || req.HullNo != nil || req.UnitYear != nil || req.Status != nil ||
+		req.Manufacturer != nil || req.VehicleType != nil || req.BoxType != nil
 	if s.md != nil && mdID != nil && touchesMD {
 		v := mdwrite.Vehicle{}
+		v.BrandID, v.TruckBodyID, v.TruckHeadID = s.catalogIDs(ctx, s.company(ctx, tenantID), req.Manufacturer, req.VehicleType, req.BoxType)
 		if req.LicensePlate != nil {
 			v.LicensePlate = *req.LicensePlate
 		}
