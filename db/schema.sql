@@ -15,6 +15,7 @@ CREATE TABLE fleet_groups (
   tenant_id   bigint NOT NULL REFERENCES tenants(id),
   name        text NOT NULL,
   description text,
+  master_data_id text,
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );

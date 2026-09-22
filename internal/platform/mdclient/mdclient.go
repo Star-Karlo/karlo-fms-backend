@@ -63,6 +63,30 @@ type Vehicle struct {
 	// Catalogue references (brand, truck body, truck head). Names come from
 	// ListCatalogItems; FMS stores the names.
 	BrandID, TruckBodyID, TruckHeadID string
+	// TruckGroupID is the vehicle group (FMS: fleet group); empty = none.
+	TruckGroupID string
+}
+
+// TruckGroup is a company's vehicle group (FMS: fleet group).
+type TruckGroup struct {
+	ID          string
+	CompanyID   string
+	Name        string
+	Description string
+	Deleted     bool
+}
+
+// ListTruckGroups returns every group of a company, retired ones included.
+func (c *Client) ListTruckGroups(ctx context.Context, companyID string) ([]TruckGroup, error) {
+	resp, err := c.client.ListTruckGroups(ctx, &mdv1.ListTruckGroupsRequest{CompanyId: companyID})
+	if err != nil {
+		return nil, fmt.Errorf("mdclient: list truck groups for %s: %w", companyID, err)
+	}
+	out := make([]TruckGroup, 0, len(resp.GetGroups()))
+	for _, g := range resp.GetGroups() {
+		out = append(out, TruckGroup{ID: g.GetId(), CompanyID: g.GetCompanyId(), Name: g.GetName(), Description: g.GetDescription(), Deleted: g.GetDeleted()})
+	}
+	return out, nil
 }
 
 // CatalogKind names the catalogues FMS reads and resolves against.
@@ -152,6 +176,7 @@ func (c *Client) ListVehicles(ctx context.Context, companyID string) ([]Vehicle,
 				BrandID:       t.GetBrandId(),
 				TruckBodyID:   t.GetTruckBodyId(),
 				TruckHeadID:   t.GetTruckHeadId(),
+				TruckGroupID:  t.GetTruckGroupId(),
 			})
 		}
 

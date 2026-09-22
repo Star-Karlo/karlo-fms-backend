@@ -9,6 +9,19 @@ import (
 	"context"
 )
 
+const clearVehiclesFleetGroup = `-- name: ClearVehiclesFleetGroup :execrows
+UPDATE vehicles SET fleet_group_id = NULL WHERE fleet_group_id = $1
+`
+
+// Before a group goes: a vehicle in it becomes ungrouped (the FK is RESTRICT).
+func (q *Queries) ClearVehiclesFleetGroup(ctx context.Context, fleetGroupID *int64) (int64, error) {
+	result, err := q.db.Exec(ctx, clearVehiclesFleetGroup, fleetGroupID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countFleetGroups = `-- name: CountFleetGroups :one
 SELECT count(*) FROM fleet_groups
 WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%')
@@ -22,25 +35,32 @@ func (q *Queries) CountFleetGroups(ctx context.Context, q_ *string) (int64, erro
 }
 
 const createFleetGroup = `-- name: CreateFleetGroup :one
-INSERT INTO fleet_groups (tenant_id, name, description)
-VALUES ($1, $2, $3)
-RETURNING id, tenant_id, name, description, created_at, updated_at
+INSERT INTO fleet_groups (tenant_id, name, description, master_data_id)
+VALUES ($1, $2, $3, $4)
+RETURNING id, tenant_id, name, description, master_data_id, created_at, updated_at
 `
 
 type CreateFleetGroupParams struct {
-	TenantID    int64   `json:"tenant_id"`
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
+	TenantID     int64   `json:"tenant_id"`
+	Name         string  `json:"name"`
+	Description  *string `json:"description"`
+	MasterDataID *string `json:"master_data_id"`
 }
 
 func (q *Queries) CreateFleetGroup(ctx context.Context, arg CreateFleetGroupParams) (FleetGroup, error) {
-	row := q.db.QueryRow(ctx, createFleetGroup, arg.TenantID, arg.Name, arg.Description)
+	row := q.db.QueryRow(ctx, createFleetGroup,
+		arg.TenantID,
+		arg.Name,
+		arg.Description,
+		arg.MasterDataID,
+	)
 	var i FleetGroup
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
 		&i.Name,
 		&i.Description,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -57,7 +77,7 @@ func (q *Queries) DeleteFleetGroup(ctx context.Context, id int64) error {
 }
 
 const getFleetGroup = `-- name: GetFleetGroup :one
-SELECT id, tenant_id, name, description, created_at, updated_at FROM fleet_groups WHERE id = $1
+SELECT id, tenant_id, name, description, master_data_id, created_at, updated_at FROM fleet_groups WHERE id = $1
 `
 
 func (q *Queries) GetFleetGroup(ctx context.Context, id int64) (FleetGroup, error) {
@@ -68,6 +88,7 @@ func (q *Queries) GetFleetGroup(ctx context.Context, id int64) (FleetGroup, erro
 		&i.TenantID,
 		&i.Name,
 		&i.Description,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -75,7 +96,7 @@ func (q *Queries) GetFleetGroup(ctx context.Context, id int64) (FleetGroup, erro
 }
 
 const listFleetGroups = `-- name: ListFleetGroups :many
-SELECT id, tenant_id, name, description, created_at, updated_at FROM fleet_groups
+SELECT id, tenant_id, name, description, master_data_id, created_at, updated_at FROM fleet_groups
 WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%')
 ORDER BY name
 LIMIT $3 OFFSET $2
@@ -101,6 +122,7 @@ func (q *Queries) ListFleetGroups(ctx context.Context, arg ListFleetGroupsParams
 			&i.TenantID,
 			&i.Name,
 			&i.Description,
+			&i.MasterDataID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -119,7 +141,7 @@ UPDATE fleet_groups
 SET name        = COALESCE($2, name),
     description = COALESCE($3, description)
 WHERE id = $1
-RETURNING id, tenant_id, name, description, created_at, updated_at
+RETURNING id, tenant_id, name, description, master_data_id, created_at, updated_at
 `
 
 type UpdateFleetGroupParams struct {
@@ -136,6 +158,7 @@ func (q *Queries) UpdateFleetGroup(ctx context.Context, arg UpdateFleetGroupPara
 		&i.TenantID,
 		&i.Name,
 		&i.Description,
+		&i.MasterDataID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

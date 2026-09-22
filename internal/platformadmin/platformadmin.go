@@ -27,6 +27,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/catalog"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/mdclient"
 	"github.com/karlo/fms-backend/internal/platform/mdevents"
 	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 )
@@ -39,6 +40,7 @@ type Handler struct {
 	wakers []mdevents.Waker        // see WithSyncWakers
 	authUp *auth.Upstream          // nil before cutover; renames then stay local
 	cat    *catalog.Resolver       // brand / body / head catalogues, for the audit
+	mdRead *mdclient.Client        // gRPC reads (groups backfill adopts by name)
 }
 
 func NewHandler(pool *db.Pool, live *liveview.Service) *Handler {
@@ -73,6 +75,7 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Get("/v1/platform/trackers/export", h.trackersExport)
 		ar.Get("/v1/platform/catalog-audit", h.catalogAudit)
 		ar.Post("/v1/platform/catalog-audit/apply", h.catalogApply)
+		ar.Post("/v1/platform/groups-backfill", h.groupsBackfill)
 		h.backfillRoutes(ar)
 	})
 }

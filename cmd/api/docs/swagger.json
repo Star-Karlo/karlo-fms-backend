@@ -3718,6 +3718,40 @@
                 }
             }
         },
+        "/v1/platform/groups-backfill": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For every account, as the operator: create each fleet group master data lacks (adopting one with the same name if it exists) and record it as paired; then set truckGroupId on every paired vehicle from its FMS fleet group. Run once before switching GROUPSYNC_MEMBERSHIP on; idempotent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Push FMS fleet groups and memberships to master data (platform admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/platformadmin.GroupsBackfillResult"
+                        }
+                    },
+                    "503": {
+                        "description": "master data not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/platform/overview": {
             "get": {
                 "security": [
@@ -9183,6 +9217,33 @@
                 },
                 "vehicles": {
                     "description": "rows carrying it (paired with master data)",
+                    "type": "integer"
+                }
+            }
+        },
+        "platformadmin.GroupsBackfillResult": {
+            "type": "object",
+            "properties": {
+                "accounts": {
+                    "type": "integer"
+                },
+                "groups_adopted": {
+                    "type": "integer"
+                },
+                "groups_created": {
+                    "type": "integer"
+                },
+                "groups_failed": {
+                    "type": "integer"
+                },
+                "vehicles_failed": {
+                    "type": "integer"
+                },
+                "vehicles_set": {
+                    "type": "integer"
+                },
+                "vehicles_unpaired": {
+                    "description": "VehiclesUnpaired: grouped here but with no master_data_id — nothing to\nset upstream until vehiclesync pairs them.",
                     "type": "integer"
                 }
             }

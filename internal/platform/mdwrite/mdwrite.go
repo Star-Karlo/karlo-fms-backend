@@ -380,3 +380,43 @@ func (c *Client) CreateCatalogItem(ctx context.Context, caller Caller, kind, nam
 	err := c.do(ctx, caller, http.MethodPost, "/api/v1/catalog/"+kind, map[string]any{"name": name}, &out)
 	return out, err
 }
+
+// ---------------------------------------------------------------------------
+// Vehicle groups (FMS: fleet groups) — catalogue kind vehicleGroup
+// ---------------------------------------------------------------------------
+
+// VehicleGroup is a group as master data holds it.
+type VehicleGroup struct {
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// CreateVehicleGroup returns the new master-data id, stored as the local
+// row's master_data_id so it is born paired.
+func (c *Client) CreateVehicleGroup(ctx context.Context, caller Caller, g VehicleGroup) (string, error) {
+	var out VehicleGroup
+	if err := c.do(ctx, caller, http.MethodPost, "/api/v1/catalog/vehicleGroup", g, &out); err != nil {
+		return "", err
+	}
+	return out.ID, nil
+}
+
+func (c *Client) UpdateVehicleGroup(ctx context.Context, caller Caller, id string, g VehicleGroup) error {
+	return c.do(ctx, caller, http.MethodPut, "/api/v1/catalog/vehicleGroup/"+id, g, nil)
+}
+
+func (c *Client) DeleteVehicleGroup(ctx context.Context, caller Caller, id string) error {
+	return c.do(ctx, caller, http.MethodDelete, "/api/v1/catalog/vehicleGroup/"+id, nil, nil)
+}
+
+// SetVehicleGroup puts a vehicle in a group (master-data ids) or takes it
+// out (nil). Its own call like SetVehicleDriver: "" on the wire clears, and
+// an absent field leaves the membership as it is.
+func (c *Client) SetVehicleGroup(ctx context.Context, caller Caller, vehicleID string, groupID *string) error {
+	v := ""
+	if groupID != nil {
+		v = *groupID
+	}
+	return c.do(ctx, caller, http.MethodPut, "/api/v1/vehicles/"+vehicleID, map[string]any{"truckGroupId": v}, nil)
+}

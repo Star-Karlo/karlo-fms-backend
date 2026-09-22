@@ -81,6 +81,14 @@ type Config struct {
 	// says the reconcile is done.
 	TrackerFittings bool
 
+	// GroupMembership lets vehiclesync set (and CLEAR) vehicles.fleet_group_id
+	// from master data's Truck.truck_group_id. Off until the one-off backfill
+	// (POST /v1/platform/groups-backfill) has pushed FMS's current
+	// memberships upstream — before that master data holds no group on
+	// ~2,000 trucks that are grouped here, and projecting would ungroup the
+	// fleet. Groups themselves (groupsync) project regardless.
+	GroupMembership bool
+
 	// MDServiceURL is master data's HTTP address, used for WRITES — creating and
 	// updating a vehicle or a driver as the signed-in user.
 	//
@@ -238,6 +246,7 @@ func Load() Config {
 		AuthGRPCTarget:  Env("AUTH_GRPC_TARGET", ""),
 		MDGRPCTarget:    Env("MD_GRPC_TARGET", ""),
 		TrackerFittings: EnvBool("TRACKERSYNC_FITTINGS", false),
+		GroupMembership: EnvBool("GROUPSYNC_MEMBERSHIP", false),
 		MDServiceURL:    Env("MD_SERVICE_URL", ""),
 		MDServiceToken:  Env("MD_SERVICE_TOKEN", Env("SERVICE_TOKEN", Env("AUTH_SERVICE_TOKEN", ""))),
 

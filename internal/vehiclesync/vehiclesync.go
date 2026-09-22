@@ -61,6 +61,17 @@ type Syncer struct {
 	// names FMS stores (manufacturer, box_type, vehicle_type). Nil = names
 	// are not projected.
 	cat *catalog.Resolver
+	// membership: whether Truck.truck_group_id may set or clear
+	// vehicles.fleet_group_id (config.GroupMembership).
+	membership bool
+}
+
+// WithGroupMembership enables projecting group membership. Nil-safe.
+func (s *Syncer) WithGroupMembership(on bool) *Syncer {
+	if s != nil {
+		s.membership = on
+	}
+	return s
 }
 
 // WithCatalog projects catalogue names into the free-text columns. Nil-safe
@@ -144,6 +155,7 @@ type Result struct {
 	Restored  int // master data says live again; was archived here
 	Released  int // pairing pointed at a document master data no longer has
 	Paired    int // current driver changed to match master data
+	Grouped   int // fleet group changed to match master data
 	Skipped   int
 }
 
@@ -187,12 +199,13 @@ func (s *Syncer) Once(ctx context.Context) error {
 		total.Restored += r.Restored
 		total.Released += r.Released
 		total.Paired += r.Paired
+		total.Grouped += r.Grouped
 		total.Skipped += r.Skipped
 	}
 
-	if total.Linked+total.Inserted+total.Updated+total.Archived+total.Restored+total.Released+total.Paired > 0 {
-		log.Printf("vehiclesync: %d vehicle(s) across %d companies — %d linked, %d added, %d updated, %d archived, %d restored, %d re-paired, %d driver pairings",
-			total.Seen, total.Companies, total.Linked, total.Inserted, total.Updated, total.Archived, total.Restored, total.Released, total.Paired)
+	if total.Linked+total.Inserted+total.Updated+total.Archived+total.Restored+total.Released+total.Paired+total.Grouped > 0 {
+		log.Printf("vehiclesync: %d vehicle(s) across %d companies — %d linked, %d added, %d updated, %d archived, %d restored, %d re-paired, %d driver pairings, %d group changes",
+			total.Seen, total.Companies, total.Linked, total.Inserted, total.Updated, total.Archived, total.Restored, total.Released, total.Paired, total.Grouped)
 	}
 	return nil
 }
@@ -375,6 +388,29 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 					return err
 				}
 				r.Updated += int(ct.RowsAffected())
+			}
+
+			// 3a'. Group membership — master data's vehicle group becomes the
+			//      fleet group, resolved through fleet_groups.master_data_id
+			//      (groupsync fills it on the same notice; an unknown group
+			//      leaves the field for the next pass). Empty upstream clears.
+			if s.membership {
+				if v.TruckGroupID == "" {
+					ct, err = tx.Exec(ctx, `
+						UPDATE vehicles SET fleet_group_id = NULL, updated_at = now()
+						 WHERE master_data_id = $1 AND fleet_group_id IS NOT NULL`, v.ID)
+				} else {
+					ct, err = tx.Exec(ctx, `
+						UPDATE vehicles SET fleet_group_id = g.id, updated_at = now()
+						  FROM fleet_groups g
+						 WHERE vehicles.master_data_id = $1
+						   AND g.tenant_id = vehicles.tenant_id AND g.master_data_id = $2
+						   AND vehicles.fleet_group_id IS DISTINCT FROM g.id`, v.ID, v.TruckGroupID)
+				}
+				if err != nil {
+					return err
+				}
+				r.Grouped += int(ct.RowsAffected())
 			}
 
 			// 3b. Un-archive when master data says the truck is live again.

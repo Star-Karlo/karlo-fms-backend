@@ -32,6 +32,30 @@ func (s *Service) WithCatalog(c *catalog.Resolver, dir mdwrite.CompanyResolver) 
 	return s
 }
 
+// groupMD resolves a local fleet group to its master-data id; "" when the
+// group is unpaired (pre-backfill) or nil when no group is given.
+func groupMD(ctx context.Context, q *store.Queries, fleetGroupID *int64) (*string, bool) {
+	if fleetGroupID == nil {
+		return nil, true
+	}
+	g, err := q.GetFleetGroup(ctx, *fleetGroupID)
+	if err != nil || g.MasterDataID == nil {
+		return nil, false
+	}
+	return g.MasterDataID, true
+}
+
+// mirrorGroup tells master data which group the vehicle is in (nil = none).
+func (s *Service) mirrorGroup(ctx context.Context, caller mdwrite.Caller, localID int64, mdID string, group *string, resolved bool) {
+	if !resolved {
+		log.Printf("vehicle %d: fleet group set locally but not paired with master data; membership not sent", localID)
+		return
+	}
+	if err := s.md.SetVehicleGroup(ctx, caller, mdID, group); err != nil {
+		log.Printf("vehicle %d: fleet group set locally, master data %s rejected the membership: %v", localID, mdID, err)
+	}
+}
+
 func (s *Service) company(ctx context.Context, tenantID int64) string {
 	if s.dir == nil {
 		return ""
@@ -233,7 +257,10 @@ func (s *Service) Create(ctx context.Context, tenantID int64, caller mdwrite.Cal
 	}
 
 	var dto DTO
+	var group *string
+	var groupOK bool
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		group, groupOK = groupMD(ctx, store.New(tx), req.FleetGroupID)
 		v, err := store.New(tx).CreateVehicle(ctx, store.CreateVehicleParams{
 			TenantID: tenantID, LicensePlate: req.LicensePlate, Manufacturer: req.Manufacturer,
 			VehicleType: req.VehicleType, BoxType: req.BoxType, UnitYear: req.UnitYear, HullNo: req.HullNo,
@@ -260,6 +287,9 @@ func (s *Service) Create(ctx context.Context, tenantID int64, caller mdwrite.Cal
 		if err := s.md.StampVehicleFMSID(ctx, caller, *mdID, dto.ID); err != nil {
 			log.Printf("vehicle: created %d / master data %s but could not stamp fmsVehicleId: %v", dto.ID, *mdID, err)
 		}
+		if req.FleetGroupID != nil {
+			s.mirrorGroup(ctx, caller, dto.ID, *mdID, group, groupOK)
+		}
 	}
 	return &dto, nil
 }
@@ -271,12 +301,19 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 	}
 	var dto DTO
 	var mdID *string
+	var group *string
+	var groupOK, groupTouched bool
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		q := store.New(tx)
 		// Read the pairing in the same transaction as the write, so the
 		// upstream call targets the record this row belongs to.
 		if before, err := q.GetVehicleRow(ctx, id); err == nil {
 			mdID = before.MasterDataID
+			// fleet_group_id is a patch field: present and different = a move.
+			if req.FleetGroupID != nil && (before.FleetGroupID == nil || *before.FleetGroupID != *req.FleetGroupID) {
+				groupTouched = true
+				group, groupOK = groupMD(ctx, q, req.FleetGroupID)
+			}
 		}
 		v, err := q.UpdateVehicle(ctx, store.UpdateVehicleParams{
 			ID: id, LicensePlate: req.LicensePlate, Manufacturer: req.Manufacturer,
@@ -325,6 +362,9 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 			log.Printf("vehicle %d: local update committed, master data %s rejected it: %v", id, *mdID, err)
 			return &dto, err
 		}
+	}
+	if s.md != nil && mdID != nil && groupTouched {
+		s.mirrorGroup(ctx, caller, id, *mdID, group, groupOK)
 	}
 	return &dto, nil
 }

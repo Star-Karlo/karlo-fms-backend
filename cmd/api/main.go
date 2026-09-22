@@ -47,6 +47,7 @@ import (
 	"github.com/karlo/fms-backend/internal/fuel"
 	"github.com/karlo/fms-backend/internal/fuelanalysis"
 	"github.com/karlo/fms-backend/internal/geofence"
+	"github.com/karlo/fms-backend/internal/groupsync"
 	"github.com/karlo/fms-backend/internal/hangar"
 	"github.com/karlo/fms-backend/internal/insight"
 	"github.com/karlo/fms-backend/internal/license"
@@ -161,6 +162,7 @@ func main() {
 	// Brand / truck body / truck head: FMS keeps names, master data keeps
 	// ids; the resolver translates at the write-through and the projection.
 	var cat *catalog.Resolver
+	var mdRead *mdclient.Client // the gRPC client, for the platform console's backfills
 	if iamConn != nil {
 		defer iamConn.Close()
 		// Entitlements as they are NOW (Company Access), not as the token
@@ -191,11 +193,12 @@ func main() {
 			if mdConn != nil {
 				defer mdConn.Close()
 				cat = catalog.New(mdConn)
+				mdRead = mdConn
 				// Two minutes is the safety net; a change notice on the
 				// platform Redis (mdevents) or POST /v1/platform/sync
 				// refreshes at once.
 				var wakers []mdevents.Waker
-				if vs := vehiclesync.New(pool, dir, mdConn).WithCatalog(cat); vs != nil {
+				if vs := vehiclesync.New(pool, dir, mdConn).WithCatalog(cat).WithGroupMembership(cfg.GroupMembership); vs != nil {
 					go vs.Run(ctx, 2*time.Minute)
 					wakers = append(wakers, vs)
 					log.Printf("vehiclesync: projecting the fleet from %s", cfg.MDGRPCTarget)
@@ -209,6 +212,12 @@ func main() {
 					go ds.Run(ctx, 2*time.Minute)
 					wakers = append(wakers, ds)
 					log.Printf("driversync: projecting drivers from %s", cfg.MDGRPCTarget)
+				}
+				// Groups before vehicles' membership can resolve them.
+				if gs := groupsync.New(pool, dir, mdConn); gs != nil {
+					go gs.Run(ctx, 2*time.Minute)
+					wakers = append(wakers, gs)
+					log.Printf("groupsync: projecting vehicle groups from %s (membership: %v)", cfg.MDGRPCTarget, cfg.GroupMembership)
 				}
 				// Devices last: a fitting resolves through vehicles.master_data_id,
 				// which vehiclesync fills on the same notice.
@@ -245,7 +254,7 @@ func main() {
 	}
 
 	vehicleH := vehicle.NewHandler(vehicle.NewService(pool).WithMasterData(mdWriter).WithCatalog(cat, companyDir)).WithResolver(companyDir)
-	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool))
+	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool)).WithMasterData(mdWriter, companyDir)
 	driverH := driver.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
 	trackerH := tracker.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
 	tel := telemetry.NewClient(cfg.TelemetryBaseURL, cfg.TelemetryAPIKey, cfg.TelemetryTimeout)
@@ -290,7 +299,7 @@ func main() {
 	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion).WithMasterData(mdWriter, companyDir)
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
-	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...).WithAuthUpstream(authUp).WithCatalog(cat)
+	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...).WithAuthUpstream(authUp).WithCatalog(cat).WithMasterDataClient(mdRead)
 	apiTokenH := apitoken.NewHandler(pool).WithIAM(iamConn)
 	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)

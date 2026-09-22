@@ -131,12 +131,13 @@ type Employee struct {
 }
 
 type FleetGroup struct {
-	ID          int64              `json:"id"`
-	TenantID    int64              `json:"tenant_id"`
-	Name        string             `json:"name"`
-	Description *string            `json:"description"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID           int64              `json:"id"`
+	TenantID     int64              `json:"tenant_id"`
+	Name         string             `json:"name"`
+	Description  *string            `json:"description"`
+	MasterDataID *string            `json:"master_data_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 type FuelPrice struct {

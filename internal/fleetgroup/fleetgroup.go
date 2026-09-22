@@ -3,6 +3,7 @@ package fleetgroup
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/platform/mdwrite"
 	"github.com/karlo/fms-backend/internal/store"
 )
 
@@ -62,10 +64,42 @@ func (s *Service) list(ctx context.Context, tid int64, p httpx.ListParams) ([]DT
 }
 
 // Handler exposes fleet-group endpoints.
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc *Service
+	md  *mdwrite.Client         // nil before cutover: groups stay local
+	dir mdwrite.CompanyResolver // tenant -> company for the write-through's caller
+}
 
 // NewHandler builds the handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithMasterData makes group writes reach master data first (catalogue
+// kind vehicleGroup) — it owns groups; groupsync projects them back.
+func (h *Handler) WithMasterData(md *mdwrite.Client, dir mdwrite.CompanyResolver) *Handler {
+	h.md, h.dir = md, dir
+	return h
+}
+
+// caller builds the identity to forward upstream, or writes a 409 when a
+// staff member acts for a tenant whose company is unknown.
+func (h *Handler) caller(w http.ResponseWriter, r *http.Request) (mdwrite.Caller, bool) {
+	if h.md == nil {
+		return mdwrite.Caller{}, true
+	}
+	c, err := mdwrite.CallerFor(r, auth.TenantID(r.Context()), auth.EffectiveTenant(r), h.dir)
+	if err != nil {
+		httpx.Error(w, http.StatusConflict, err.Error())
+		return c, false
+	}
+	return c, true
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
 
 // Routes mounts fleet-group endpoints (reads: any user; writes: manager+).
 func (h *Handler) Routes(r chi.Router) {
@@ -149,9 +183,25 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tid := auth.TenantID(r.Context())
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	// Master data first, so the row is born paired; its refusal is the answer.
+	var mdID *string
+	if h.md != nil {
+		id, err := h.md.CreateVehicleGroup(r.Context(), caller, mdwrite.VehicleGroup{Name: req.Name, Description: deref(req.Description)})
+		if err != nil {
+			httpx.Error(w, http.StatusBadGateway, "master data refused the group: "+err.Error())
+			return
+		}
+		if id != "" {
+			mdID = &id
+		}
+	}
 	var dto DTO
 	err := db.Tx(r.Context(), h.svc.pool, tid, func(tx pgx.Tx) error {
-		g, err := store.New(tx).CreateFleetGroup(r.Context(), store.CreateFleetGroupParams{TenantID: tid, Name: req.Name, Description: req.Description})
+		g, err := store.New(tx).CreateFleetGroup(r.Context(), store.CreateFleetGroupParams{TenantID: tid, Name: req.Name, Description: req.Description, MasterDataID: mdID})
 		if err != nil {
 			return err
 		}
@@ -187,18 +237,32 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
 	var dto DTO
+	var mdID *string
 	err := db.Tx(r.Context(), h.svc.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
 		g, err := store.New(tx).UpdateFleetGroup(r.Context(), store.UpdateFleetGroupParams{ID: id, Name: conv.StrPtr(req.Name), Description: req.Description})
 		if err != nil {
 			return err
 		}
+		mdID = g.MasterDataID
 		dto = fromRow(g)
 		return nil
 	})
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// Mirror upstream; an unpaired group (pre-backfill) is left to the backfill.
+	if h.md != nil && mdID != nil {
+		if err := h.md.UpdateVehicleGroup(r.Context(), caller, *mdID, mdwrite.VehicleGroup{Name: req.Name, Description: deref(req.Description)}); err != nil {
+			log.Printf("fleet group %d: local update committed, master data %s rejected it: %v", id, *mdID, err)
+			httpx.Error(w, http.StatusBadGateway, "saved here, but master data rejected it: "+err.Error())
+			return
+		}
 	}
 	httpx.JSON(w, http.StatusOK, dto)
 }
@@ -217,9 +281,24 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	caller, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	var mdID *string
 	err := db.Tx(r.Context(), h.svc.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
-		return store.New(tx).DeleteFleetGroup(r.Context(), id)
+		q := store.New(tx)
+		if g, err := q.GetFleetGroup(r.Context(), id); err == nil {
+			mdID = g.MasterDataID
+		}
+		return q.DeleteFleetGroup(r.Context(), id)
 	})
+	// Retire it upstream too, or groupsync brings it back on the next pass.
+	if err == nil && h.md != nil && mdID != nil {
+		if e := h.md.DeleteVehicleGroup(r.Context(), caller, *mdID); e != nil {
+			log.Printf("fleet group %d: deleted locally, master data %s rejected the delete: %v", id, *mdID, e)
+		}
+	}
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, err.Error())
 		return

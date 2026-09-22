@@ -1,6 +1,6 @@
 -- name: CreateFleetGroup :one
-INSERT INTO fleet_groups (tenant_id, name, description)
-VALUES ($1, $2, sqlc.narg('description'))
+INSERT INTO fleet_groups (tenant_id, name, description, master_data_id)
+VALUES ($1, $2, sqlc.narg('description'), sqlc.narg('master_data_id'))
 RETURNING *;
 
 -- name: GetFleetGroup :one
@@ -25,3 +25,7 @@ LIMIT sqlc.arg('lim') OFFSET sqlc.arg('off');
 -- name: CountFleetGroups :one
 SELECT count(*) FROM fleet_groups
 WHERE (sqlc.narg('q')::text IS NULL OR name ILIKE '%' || sqlc.narg('q') || '%');
+
+-- name: ClearVehiclesFleetGroup :execrows
+-- Before a group goes: a vehicle in it becomes ungrouped (the FK is RESTRICT).
+UPDATE vehicles SET fleet_group_id = NULL WHERE fleet_group_id = $1;
