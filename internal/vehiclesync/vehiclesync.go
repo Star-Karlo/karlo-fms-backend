@@ -350,7 +350,10 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 			//     manufacturer ← brand, box_type ← body, vehicle_type ← head
 			//     when the truck has one, else the body name. Only when master
 			//     data carries the id: an FMS-only free-text value stays.
-			if s.cat != nil {
+			// Most of the fleet was created in FMS and carries no catalogue
+			// id upstream: no statement for those, or the pass takes 30 s
+			// instead of 6 (one no-op UPDATE per vehicle, 2,000 of them).
+			if s.cat != nil && (v.BrandID != "" || v.TruckBodyID != "" || v.TruckHeadID != "") {
 				brand := s.cat.Name(ctx, c.CompanyID, mdclient.KindBrand, v.BrandID)
 				body := s.cat.Name(ctx, c.CompanyID, mdclient.KindTruckBody, v.TruckBodyID)
 				head := s.cat.Name(ctx, c.CompanyID, mdclient.KindTruckHead, v.TruckHeadID)
