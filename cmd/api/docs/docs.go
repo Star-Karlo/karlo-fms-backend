@@ -3933,6 +3933,48 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/platform/trackers/history-diff": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Periods, not just the current fitting: for each account, every stretch during which a device sat on a vehicle, as FMS recorded it and as master data recorded it. Counts are agreed (both describe the same device on the same vehicle over an overlapping period), fms_only and masterdata_only (the other side has no row — usually nobody recorded it rather than a conflict, since both histories only hold fits made through their own API), and conflict, which is the one that matters: at one moment the two put the same device on DIFFERENT trucks. Only conflicts are listed. Read-only. Default window is the last 365 days; pass ?days= to change it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Compare the device fit HISTORIES with master data (platform admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "how far back to compare (default 365)",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/platformadmin.HistoryDiff"
+                        }
+                    },
+                    "503": {
+                        "description": "master data not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/platform/users": {
             "get": {
                 "security": [
@@ -9286,6 +9328,69 @@ const docTemplate = `{
                 "vehicles_unpaired": {
                     "description": "VehiclesUnpaired: grouped here but with no master_data_id — nothing to\nset upstream until vehiclesync pairs them.",
                     "type": "integer"
+                }
+            }
+        },
+        "platformadmin.HistoryConflict": {
+            "type": "object",
+            "properties": {
+                "fms": {
+                    "$ref": "#/definitions/platformadmin.HistoryPeriod"
+                },
+                "imei": {
+                    "type": "string"
+                },
+                "masterdata": {
+                    "$ref": "#/definitions/platformadmin.HistoryPeriod"
+                },
+                "overlap": {
+                    "description": "the period they disagree about",
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "integer"
+                },
+                "tenant_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "platformadmin.HistoryDiff": {
+            "type": "object",
+            "properties": {
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platformadmin.HistoryConflict"
+                    }
+                },
+                "counts": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "window": {
+                    "type": "string"
+                }
+            }
+        },
+        "platformadmin.HistoryPeriod": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "imei": {
+                    "type": "string"
+                },
+                "to": {
+                    "description": "empty = still fitted",
+                    "type": "string"
+                },
+                "vehicle": {
+                    "description": "plate where resolvable, else the master-data id",
+                    "type": "string"
                 }
             }
         },

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -222,4 +224,229 @@ func (h *Handler) diffTenant(ctx context.Context, t tenantRef, company string) (
 		}
 	}
 	return out, len(out), nil
+}
+
+// ---------------------------------------------------------------------------
+// History comparison
+// ---------------------------------------------------------------------------
+
+// The current fitting answers "is a switchover safe today". This answers the
+// other half: do the two FIT HISTORIES agree about the past, which is what a
+// historical read resolves against.
+//
+// Both sides are thin for the same reason and it matters for reading the
+// result: FMS has rows only since migration 0040 and only for fits recorded
+// through it (a CSV import with a vehicle attached leaves none), and master
+// data has rows only for fits made through its Fit/Unfit API. So "one side
+// has no row" is overwhelmingly "nobody recorded it", not "the other side
+// invented it" — those are counted separately from a real conflict, where
+// both sides describe the same device at the same time on DIFFERENT trucks.
+
+// HistoryPeriod is one side's view of a device on a vehicle.
+type HistoryPeriod struct {
+	IMEI    string `json:"imei"`
+	Vehicle string `json:"vehicle"` // plate where resolvable, else the master-data id
+	From    string `json:"from"`
+	To      string `json:"to,omitempty"` // empty = still fitted
+}
+
+// HistoryConflict is the case that actually matters: at one moment, the two
+// systems put the same device on different trucks.
+type HistoryConflict struct {
+	TenantID   int64         `json:"tenant_id"`
+	TenantName string        `json:"tenant_name"`
+	IMEI       string        `json:"imei"`
+	Overlap    string        `json:"overlap"` // the period they disagree about
+	FMS        HistoryPeriod `json:"fms"`
+	MasterData HistoryPeriod `json:"masterdata"`
+}
+
+// HistoryDiff is the report.
+type HistoryDiff struct {
+	Window    string            `json:"window"`
+	Counts    map[string]int    `json:"counts"`
+	Conflicts []HistoryConflict `json:"conflicts"`
+}
+
+// trackerHistoryDiff godoc
+//
+//	@Summary		Compare the device fit HISTORIES with master data (platform admin)
+//	@Description	Periods, not just the current fitting: for each account, every stretch during which a device sat on a vehicle, as FMS recorded it and as master data recorded it. Counts are agreed (both describe the same device on the same vehicle over an overlapping period), fms_only and masterdata_only (the other side has no row — usually nobody recorded it rather than a conflict, since both histories only hold fits made through their own API), and conflict, which is the one that matters: at one moment the two put the same device on DIFFERENT trucks. Only conflicts are listed. Read-only. Default window is the last 365 days; pass ?days= to change it.
+//	@Tags			platform
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			days	query		int	false	"how far back to compare (default 365)"
+//	@Success		200		{object}	platformadmin.HistoryDiff
+//	@Failure		503		{object}	map[string]string	"master data not configured"
+//	@Router			/v1/platform/trackers/history-diff [get]
+func (h *Handler) trackerHistoryDiff(w http.ResponseWriter, r *http.Request) {
+	if h.mdRead == nil || h.dir == nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "master data is not configured")
+		return
+	}
+	days := 365
+	if v := r.URL.Query().Get("days"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 3650 {
+			days = n
+		}
+	}
+	to := time.Now()
+	from := to.AddDate(0, 0, -days)
+
+	tenants, err := h.tenantList(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "list accounts failed")
+		return
+	}
+	out := HistoryDiff{
+		Window: from.Format(time.RFC3339) + " .. " + to.Format(time.RFC3339),
+		Counts: map[string]int{},
+	}
+	for _, t := range tenants {
+		company, _ := h.dir.CompanyForTenant(r.Context(), t.id)
+		if company == "" {
+			continue
+		}
+		if err := h.historyDiffTenant(r.Context(), t, company, from, to, &out); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "history diff failed for "+t.name+": "+err.Error())
+			return
+		}
+	}
+	sort.Slice(out.Conflicts, func(i, j int) bool {
+		if out.Conflicts[i].TenantID != out.Conflicts[j].TenantID {
+			return out.Conflicts[i].TenantID < out.Conflicts[j].TenantID
+		}
+		return out.Conflicts[i].IMEI < out.Conflicts[j].IMEI
+	})
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+// period is one side's row, normalised for comparison.
+type period struct {
+	imei      string
+	vehicleMD string // master-data vehicle id, the only identifier both sides share
+	plate     string
+	from, to  time.Time // zero `to` = still fitted
+}
+
+func (p period) overlaps(q period) bool {
+	endP, endQ := p.to, q.to
+	if endP.IsZero() {
+		endP = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	if endQ.IsZero() {
+		endQ = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	return p.from.Before(endQ) && q.from.Before(endP)
+}
+
+func (p period) show() HistoryPeriod {
+	v := p.plate
+	if v == "" {
+		v = p.vehicleMD
+	}
+	hp := HistoryPeriod{IMEI: p.imei, Vehicle: v, From: p.from.Format(time.RFC3339)}
+	if !p.to.IsZero() {
+		hp.To = p.to.Format(time.RFC3339)
+	}
+	return hp
+}
+
+func (h *Handler) historyDiffTenant(ctx context.Context, t tenantRef, company string, from, to time.Time, out *HistoryDiff) error {
+	up, err := h.mdRead.ListDeviceAssignments(ctx, company, "", from, to)
+	if err != nil {
+		return err
+	}
+
+	plateByMDID := map[string]string{}
+	var mine []period
+	err = db.Tx(ctx, h.pool, t.id, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT a.imei, coalesce(v.master_data_id,''), coalesce(v.license_plate,''), a.fitted_at, a.unfitted_at
+			  FROM tracker_assignments a
+			  JOIN vehicles v ON v.id = a.vehicle_id
+			 WHERE a.fitted_at < $1 AND (a.unfitted_at IS NULL OR a.unfitted_at > $2)`, to, from)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p period
+			var un *time.Time
+			if err := rows.Scan(&p.imei, &p.vehicleMD, &p.plate, &p.from, &un); err != nil {
+				return err
+			}
+			if un != nil {
+				p.to = *un
+			}
+			mine = append(mine, p)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		vr, err := tx.Query(ctx, `SELECT master_data_id, license_plate FROM vehicles WHERE master_data_id IS NOT NULL`)
+		if err != nil {
+			return err
+		}
+		defer vr.Close()
+		for vr.Next() {
+			var id, plate string
+			if err := vr.Scan(&id, &plate); err != nil {
+				return err
+			}
+			plateByMDID[id] = plate
+		}
+		return vr.Err()
+	})
+	if err != nil {
+		return err
+	}
+
+	theirs := make([]period, 0, len(up))
+	for _, a := range up {
+		theirs = append(theirs, period{imei: a.IMEI, vehicleMD: a.VehicleID, plate: plateByMDID[a.VehicleID], from: a.FittedAt, to: a.UnfittedAt})
+	}
+
+	matchedTheirs := make([]bool, len(theirs))
+	for _, m := range mine {
+		found := false
+		for j, o := range theirs {
+			if m.imei != o.imei || !m.overlaps(o) {
+				continue
+			}
+			found = true
+			matchedTheirs[j] = true
+			if m.vehicleMD != "" && o.vehicleMD != "" && m.vehicleMD != o.vehicleMD {
+				// The same device, at the same time, on two different trucks.
+				out.Counts["conflict"]++
+				out.Conflicts = append(out.Conflicts, HistoryConflict{
+					TenantID: t.id, TenantName: t.name, IMEI: m.imei,
+					Overlap: latest(m.from, o.from).Format(time.RFC3339),
+					FMS:     m.show(), MasterData: o.show(),
+				})
+			} else {
+				out.Counts["agreed"]++
+			}
+			break
+		}
+		if !found {
+			// Master data has no row for this stretch — almost always
+			// "never recorded upstream", not a contradiction.
+			out.Counts["fms_only_not_recorded_upstream"]++
+		}
+	}
+	for j, o := range theirs {
+		if !matchedTheirs[j] {
+			out.Counts["masterdata_only_not_recorded_here"]++
+			_ = o
+		}
+	}
+	return nil
+}
+
+func latest(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }

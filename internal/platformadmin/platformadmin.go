@@ -74,6 +74,7 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Post("/v1/platform/sync", h.sync)
 		ar.Get("/v1/platform/trackers/export", h.trackersExport)
 		ar.Get("/v1/platform/trackers/diff", h.trackerDiff)
+		ar.Get("/v1/platform/trackers/history-diff", h.trackerHistoryDiff)
 		ar.Get("/v1/platform/catalog-audit", h.catalogAudit)
 		ar.Post("/v1/platform/catalog-audit/apply", h.catalogApply)
 		ar.Post("/v1/platform/groups-backfill", h.groupsBackfill)

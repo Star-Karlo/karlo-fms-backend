@@ -13,6 +13,7 @@ package mdclient
 import (
 	"context"
 	"fmt"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"time"
 
 	"google.golang.org/grpc"
@@ -65,6 +66,46 @@ type Vehicle struct {
 	BrandID, TruckBodyID, TruckHeadID string
 	// TruckGroupID is the vehicle group (FMS: fleet group); empty = none.
 	TruckGroupID string
+}
+
+// DeviceAssignment is one stretch during which a vehicle carried a device.
+// UnfittedAt is the zero time while the device is still fitted — master data
+// deliberately does not clamp it to the window's end, so "still on the truck"
+// stays distinguishable from "removed exactly then".
+type DeviceAssignment struct {
+	VehicleID  string // master-data vehicle id
+	IMEI       string
+	FittedAt   time.Time
+	UnfittedAt time.Time
+}
+
+// ListDeviceAssignments answers which device a vehicle carried, and when,
+// over a window — the question a historical read has to ask, because a
+// reading is keyed by IMEI and a box moves between trucks.
+//
+// An empty vehicleID asks for the WHOLE company, which is how this service
+// reconciles its own copy: one call rather than one per vehicle. Both ends
+// of the window are required upstream; the wrong answer to a loose query is
+// not an error but a plausible device belonging to another truck.
+func (c *Client) ListDeviceAssignments(ctx context.Context, companyID, vehicleID string, from, to time.Time) ([]DeviceAssignment, error) {
+	resp, err := c.client.ListDeviceAssignments(ctx, &mdv1.ListDeviceAssignmentsRequest{
+		CompanyId: companyID,
+		VehicleId: vehicleID,
+		From:      timestamppb.New(from),
+		To:        timestamppb.New(to),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mdclient: device assignments for %s: %w", companyID, err)
+	}
+	out := make([]DeviceAssignment, 0, len(resp.GetAssignments()))
+	for _, a := range resp.GetAssignments() {
+		d := DeviceAssignment{VehicleID: a.GetVehicleId(), IMEI: a.GetImei(), FittedAt: a.GetFittedAt().AsTime()}
+		if a.GetUnfittedAt() != nil {
+			d.UnfittedAt = a.GetUnfittedAt().AsTime()
+		}
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 // TruckGroup is a company's vehicle group (FMS: fleet group).
