@@ -2433,6 +2433,47 @@ definitions:
       vehicles:
         type: integer
     type: object
+  platformadmin.TrackerDiff:
+    properties:
+      checked:
+        description: Checked is how many devices were compared.
+        type: integer
+      counts:
+        additionalProperties:
+          type: integer
+        type: object
+      rows:
+        items:
+          $ref: '#/definitions/platformadmin.TrackerDiffRow'
+        type: array
+    type: object
+  platformadmin.TrackerDiffRow:
+    properties:
+      device_id:
+        description: IMEI
+        type: string
+      fms_vehicle:
+        description: What each side says, as a plate where FMS can resolve one.
+        type: string
+      is_demo:
+        type: boolean
+      masterdata_vehicle:
+        type: string
+      tenant_id:
+        type: integer
+      tenant_name:
+        type: string
+      verdict:
+        description: |-
+          Verdict:
+            agree          — both say the same vehicle (or both say unfitted)
+            differ         — fitted to DIFFERENT vehicles. The dangerous one.
+            fms_only       — FMS has it on a truck, master data has it in stock
+            masterdata_only— master data has it on a truck, FMS has it unfitted
+            unpaired       — FMS has no master_data_id for the device yet
+            unknown_vehicle— master data names a vehicle FMS cannot resolve
+        type: string
+    type: object
   platformadmin.TrackerExport:
     properties:
       company_id:
@@ -5648,6 +5689,34 @@ paths:
       security:
       - BearerAuth: []
       summary: Rename a customer account (platform admin)
+      tags:
+      - platform
+  /v1/platform/trackers/diff:
+    get:
+      description: 'For every account, the device register as FMS holds it against
+        the register in master data, device by device. Verdicts: agree, differ (fitted
+        to different vehicles — the one that matters), fms_only, masterdata_only,
+        unpaired (no master_data_id here yet), unknown_vehicle (master data names
+        a vehicle this account cannot resolve). Rows that agree are summarised in
+        the counts and omitted from the list. Read-only: nothing is written anywhere.
+        Run this before switching device writes or history resolution over, so a correction
+        cannot silently move a live mapping.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/platformadmin.TrackerDiff'
+        "503":
+          description: master data not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Compare FMS device fittings with master data (platform admin)
       tags:
       - platform
   /v1/platform/trackers/export:

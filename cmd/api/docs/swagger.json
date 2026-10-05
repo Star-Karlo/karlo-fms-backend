@@ -3858,6 +3858,40 @@
                 }
             }
         },
+        "/v1/platform/trackers/diff": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For every account, the device register as FMS holds it against the register in master data, device by device. Verdicts: agree, differ (fitted to different vehicles — the one that matters), fms_only, masterdata_only, unpaired (no master_data_id here yet), unknown_vehicle (master data names a vehicle this account cannot resolve). Rows that agree are summarised in the counts and omitted from the list. Read-only: nothing is written anywhere. Run this before switching device writes or history resolution over, so a correction cannot silently move a live mapping.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Compare FMS device fittings with master data (platform admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/platformadmin.TrackerDiff"
+                        }
+                    },
+                    "503": {
+                        "description": "master data not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/platform/trackers/export": {
             "get": {
                 "security": [
@@ -9355,6 +9389,56 @@
                 },
                 "vehicles": {
                     "type": "integer"
+                }
+            }
+        },
+        "platformadmin.TrackerDiff": {
+            "type": "object",
+            "properties": {
+                "checked": {
+                    "description": "Checked is how many devices were compared.",
+                    "type": "integer"
+                },
+                "counts": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platformadmin.TrackerDiffRow"
+                    }
+                }
+            }
+        },
+        "platformadmin.TrackerDiffRow": {
+            "type": "object",
+            "properties": {
+                "device_id": {
+                    "description": "IMEI",
+                    "type": "string"
+                },
+                "fms_vehicle": {
+                    "description": "What each side says, as a plate where FMS can resolve one.",
+                    "type": "string"
+                },
+                "is_demo": {
+                    "type": "boolean"
+                },
+                "masterdata_vehicle": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "integer"
+                },
+                "tenant_name": {
+                    "type": "string"
+                },
+                "verdict": {
+                    "description": "Verdict:\n  agree          — both say the same vehicle (or both say unfitted)\n  differ         — fitted to DIFFERENT vehicles. The dangerous one.\n  fms_only       — FMS has it on a truck, master data has it in stock\n  masterdata_only— master data has it on a truck, FMS has it unfitted\n  unpaired       — FMS has no master_data_id for the device yet\n  unknown_vehicle— master data names a vehicle FMS cannot resolve",
+                    "type": "string"
                 }
             }
         },
