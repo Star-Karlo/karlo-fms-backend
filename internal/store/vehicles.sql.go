@@ -228,6 +228,10 @@ SELECT
   -- The driver's master-data id is what the K-Trip phone app reports its
   -- positions under: the third position source, after tracker and camera.
   COALESCE(e.master_data_id, '') AS driver_master_data_id,
+  -- Tank size: FMS's own field (master data does not hold it), published
+  -- here because every consumer showing a vehicle's specification needs it
+  -- and the alternative is a second request per truck.
+  v.fuel_tank_liters,
   t.id            AS tracker_id,
   t.imei          AS tracker_imei,
   COALESCE(dc.vss_device_id, '') AS camera_device_id
@@ -242,19 +246,20 @@ WHERE v.id = $1
 `
 
 type GetLiveViewVehicleRow struct {
-	VehicleID          int64   `json:"vehicle_id"`
-	LicensePlate       string  `json:"license_plate"`
-	VehicleType        *string `json:"vehicle_type"`
-	Status             string  `json:"status"`
-	MasterDataID       *string `json:"master_data_id"`
-	FleetGroupName     *string `json:"fleet_group_name"`
-	DriverID           *int64  `json:"driver_id"`
-	DriverName         *string `json:"driver_name"`
-	DriverPhone        *string `json:"driver_phone"`
-	DriverMasterDataID string  `json:"driver_master_data_id"`
-	TrackerID          *int64  `json:"tracker_id"`
-	TrackerImei        *string `json:"tracker_imei"`
-	CameraDeviceID     string  `json:"camera_device_id"`
+	VehicleID          int64    `json:"vehicle_id"`
+	LicensePlate       string   `json:"license_plate"`
+	VehicleType        *string  `json:"vehicle_type"`
+	Status             string   `json:"status"`
+	MasterDataID       *string  `json:"master_data_id"`
+	FleetGroupName     *string  `json:"fleet_group_name"`
+	DriverID           *int64   `json:"driver_id"`
+	DriverName         *string  `json:"driver_name"`
+	DriverPhone        *string  `json:"driver_phone"`
+	DriverMasterDataID string   `json:"driver_master_data_id"`
+	FuelTankLiters     *float64 `json:"fuel_tank_liters"`
+	TrackerID          *int64   `json:"tracker_id"`
+	TrackerImei        *string  `json:"tracker_imei"`
+	CameraDeviceID     string   `json:"camera_device_id"`
 }
 
 func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveViewVehicleRow, error) {
@@ -271,6 +276,7 @@ func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveView
 		&i.DriverName,
 		&i.DriverPhone,
 		&i.DriverMasterDataID,
+		&i.FuelTankLiters,
 		&i.TrackerID,
 		&i.TrackerImei,
 		&i.CameraDeviceID,
@@ -421,6 +427,10 @@ SELECT
   -- The driver's master-data id is what the K-Trip phone app reports its
   -- positions under: the third position source, after tracker and camera.
   COALESCE(e.master_data_id, '') AS driver_master_data_id,
+  -- Tank size: FMS's own field (master data does not hold it), published
+  -- here because every consumer showing a vehicle's specification needs it
+  -- and the alternative is a second request per truck.
+  v.fuel_tank_liters,
   t.id            AS tracker_id,
   t.imei          AS tracker_imei,
   COALESCE(dc.vss_device_id, '') AS camera_device_id
@@ -437,19 +447,20 @@ WHERE v.status <> 'archive'
 `
 
 type ListLiveViewVehiclesRow struct {
-	VehicleID          int64   `json:"vehicle_id"`
-	LicensePlate       string  `json:"license_plate"`
-	VehicleType        *string `json:"vehicle_type"`
-	Status             string  `json:"status"`
-	MasterDataID       *string `json:"master_data_id"`
-	FleetGroupName     *string `json:"fleet_group_name"`
-	DriverID           *int64  `json:"driver_id"`
-	DriverName         *string `json:"driver_name"`
-	DriverPhone        *string `json:"driver_phone"`
-	DriverMasterDataID string  `json:"driver_master_data_id"`
-	TrackerID          *int64  `json:"tracker_id"`
-	TrackerImei        *string `json:"tracker_imei"`
-	CameraDeviceID     string  `json:"camera_device_id"`
+	VehicleID          int64    `json:"vehicle_id"`
+	LicensePlate       string   `json:"license_plate"`
+	VehicleType        *string  `json:"vehicle_type"`
+	Status             string   `json:"status"`
+	MasterDataID       *string  `json:"master_data_id"`
+	FleetGroupName     *string  `json:"fleet_group_name"`
+	DriverID           *int64   `json:"driver_id"`
+	DriverName         *string  `json:"driver_name"`
+	DriverPhone        *string  `json:"driver_phone"`
+	DriverMasterDataID string   `json:"driver_master_data_id"`
+	FuelTankLiters     *float64 `json:"fuel_tank_liters"`
+	TrackerID          *int64   `json:"tracker_id"`
+	TrackerImei        *string  `json:"tracker_imei"`
+	CameraDeviceID     string   `json:"camera_device_id"`
 }
 
 // Active vehicles that can be located: those with a tracker IMEI, OR a linked
@@ -478,6 +489,7 @@ func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64)
 			&i.DriverName,
 			&i.DriverPhone,
 			&i.DriverMasterDataID,
+			&i.FuelTankLiters,
 			&i.TrackerID,
 			&i.TrackerImei,
 			&i.CameraDeviceID,

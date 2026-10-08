@@ -2044,6 +2044,11 @@ definitions:
           heard from since). Omitted for camera-only positions and for rows
           written before the telemetry service kept it.
         type: string
+      tank_litres:
+        description: |-
+          TankLitres is the vehicle's fuel tank size, from the FMS vehicle
+          record (master data does not carry it). Nil when nobody has set it.
+        type: number
       tenant_id:
         description: |-
           Owning account — populated ONLY in the platform-admin cross-tenant list, so

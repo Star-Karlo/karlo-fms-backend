@@ -8869,6 +8869,10 @@
                     "description": "StateSince is when the current DriveState began, so a list can say\n\"idle for 40 min\" instead of a speed. Moving/idle/parking come from the\ntelemetry current-state row, which keeps the timestamp of the last\nclass change; for offline it is the last fix (the truck has not been\nheard from since). Omitted for camera-only positions and for rows\nwritten before the telemetry service kept it.",
                     "type": "string"
                 },
+                "tank_litres": {
+                    "description": "TankLitres is the vehicle's fuel tank size, from the FMS vehicle\nrecord (master data does not carry it). Nil when nobody has set it.",
+                    "type": "number"
+                },
                 "tenant_id": {
                     "description": "Owning account — populated ONLY in the platform-admin cross-tenant list, so\nthe operator (and the detail panel) knows which account a vehicle is in.",
                     "type": "integer"

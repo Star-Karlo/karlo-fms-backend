@@ -110,6 +110,9 @@ type VehicleLive struct {
 	// join fleet-wide, powers list filters without shipping metadata blobs.
 	BatteryV  *float64 `json:"battery_v"`
 	GsmSignal *float64 `json:"gsm_signal"`
+	// TankLitres is the vehicle's fuel tank size, from the FMS vehicle
+	// record (master data does not carry it). Nil when nobody has set it.
+	TankLitres *float64 `json:"tank_litres"`
 	// Maintenance context: km driven since the last recorded service. Nil when
 	// unknown; HasServiceRecord=false means no maintenance record exists yet.
 	KmSinceService   *float64 `json:"km_since_service"`

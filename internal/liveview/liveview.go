@@ -72,6 +72,7 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 			Driver:         Driver{ID: r.DriverID, Name: r.DriverName, Phone: r.DriverPhone, MasterDataID: r.DriverMasterDataID},
 			Tracker:        Tracker{ID: tid, IMEI: imei},
 			CameraDeviceID: r.CameraDeviceID,
+			TankLitres:     r.FuelTankLiters,
 			DriveState:     StateOffline,
 		})
 		if imei != "" {
@@ -282,6 +283,7 @@ func (s *Service) One(ctx context.Context, tenantID, vehicleID int64) (*VehicleL
 		Driver:         Driver{ID: row.DriverID, Name: row.DriverName, Phone: row.DriverPhone, MasterDataID: row.DriverMasterDataID},
 		Tracker:        Tracker{ID: tid, IMEI: imei},
 		CameraDeviceID: row.CameraDeviceID,
+		TankLitres:     row.FuelTankLiters,
 		DriveState:     StateOffline,
 	}
 	now := time.Now()

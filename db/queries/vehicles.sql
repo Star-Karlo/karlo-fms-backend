@@ -124,6 +124,10 @@ SELECT
   -- The driver's master-data id is what the K-Trip phone app reports its
   -- positions under: the third position source, after tracker and camera.
   COALESCE(e.master_data_id, '') AS driver_master_data_id,
+  -- Tank size: FMS's own field (master data does not hold it), published
+  -- here because every consumer showing a vehicle's specification needs it
+  -- and the alternative is a second request per truck.
+  v.fuel_tank_liters,
   t.id            AS tracker_id,
   t.imei          AS tracker_imei,
   COALESCE(dc.vss_device_id, '') AS camera_device_id
@@ -153,6 +157,10 @@ SELECT
   -- The driver's master-data id is what the K-Trip phone app reports its
   -- positions under: the third position source, after tracker and camera.
   COALESCE(e.master_data_id, '') AS driver_master_data_id,
+  -- Tank size: FMS's own field (master data does not hold it), published
+  -- here because every consumer showing a vehicle's specification needs it
+  -- and the alternative is a second request per truck.
+  v.fuel_tank_liters,
   t.id            AS tracker_id,
   t.imei          AS tracker_imei,
   COALESCE(dc.vss_device_id, '') AS camera_device_id
