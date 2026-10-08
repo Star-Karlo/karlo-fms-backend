@@ -165,6 +165,63 @@ func (q *Queries) AlertCountByType(ctx context.Context, arg AlertCountByTypePara
 	return items, nil
 }
 
+const alertCountByVehicleAndType = `-- name: AlertCountByVehicleAndType :many
+SELECT a.vehicle_id, v.license_plate, a.alert_code, count(*)::bigint AS count
+FROM alerts a
+JOIN vehicles v ON v.id = a.vehicle_id
+WHERE a.occurred_at >= $1 AND a.occurred_at <= $2
+GROUP BY a.vehicle_id, v.license_plate, a.alert_code
+ORDER BY a.vehicle_id, a.alert_code
+`
+
+type AlertCountByVehicleAndTypeParams struct {
+	From pgtype.Timestamptz `json:"from"`
+	To   pgtype.Timestamptz `json:"to"`
+}
+
+type AlertCountByVehicleAndTypeRow struct {
+	VehicleID    *int64  `json:"vehicle_id"`
+	LicensePlate string  `json:"license_plate"`
+	AlertCode    *string `json:"alert_code"`
+	Count        int64   `json:"count"`
+}
+
+// Per vehicle, per code, over a window — the counts a fleet-wide incident
+// panel needs without reading every row.
+//
+// Exists because the list endpoint caps at 500 rows and says nothing about
+// it, so a consumer counting rows client-side is correct on a quiet fleet
+// and silently short on a busy one. An aggregate has no such ceiling: the
+// database counts, and the answer is the same size whether the day held ten
+// incidents or ten thousand.
+//
+// Every alert in the window counts, checked or not: the question is what
+// happened, not what is still outstanding.
+func (q *Queries) AlertCountByVehicleAndType(ctx context.Context, arg AlertCountByVehicleAndTypeParams) ([]AlertCountByVehicleAndTypeRow, error) {
+	rows, err := q.db.Query(ctx, alertCountByVehicleAndType, arg.From, arg.To)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertCountByVehicleAndTypeRow{}
+	for rows.Next() {
+		var i AlertCountByVehicleAndTypeRow
+		if err := rows.Scan(
+			&i.VehicleID,
+			&i.LicensePlate,
+			&i.AlertCode,
+			&i.Count,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const alertHistoryForVehicle = `-- name: AlertHistoryForVehicle :many
 SELECT a.id, a.alert_code, a.alert_name, a.severity, a.occurred_at, a.lat, a.lon
 FROM alerts a
