@@ -102,6 +102,27 @@ definitions:
       output_tokens:
         type: integer
     type: object
+  alert.AlertSummary:
+    properties:
+      by_code:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: |-
+          ByCode is the fleet-wide tally, for a headline that does not need the
+          per-vehicle breakdown summed client-side.
+        type: object
+      from:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/alert.VehicleAlertCounts'
+        type: array
+      to:
+        type: string
+      total:
+        type: integer
+    type: object
   alert.AlertType:
     properties:
       code:
@@ -260,6 +281,24 @@ definitions:
         type: integer
       license_plate:
         type: string
+      vehicle_id:
+        type: integer
+    type: object
+  alert.VehicleAlertCounts:
+    properties:
+      counts:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: |-
+          Counts is keyed by ALERT CODE (OVERSPEED, HARSH_BRAKING, …), not by any
+          consumer's categories: a caller groups codes into its own kinds, and
+          this service does not inherit a vocabulary it cannot test.
+        type: object
+      license_plate:
+        type: string
+      total:
+        type: integer
       vehicle_id:
         type: integer
     type: object
@@ -3593,6 +3632,44 @@ paths:
       security:
       - BearerAuth: []
       summary: Alert analytics for the Safety dashboard
+      tags:
+      - alerts
+  /v1/alerts/summary:
+    get:
+      description: 'The fleet''s incidents for a window, counted in the database:
+        one entry per vehicle with a map of alert code to count, plus the fleet-wide
+        tally. Checked and unchecked alike — the question is what happened, not what
+        is outstanding. There is NO ROW LIMIT here, which is the point: /v1/alerts
+        caps at 500 rows, so counting that list is accurate only until a fleet has
+        a busy day. Scoped to the caller''s account (?account_id for platform staff)
+        exactly as /v1/alerts is. Covers alerts still in the database; anything aged
+        out to cold storage must be restored first.'
+      parameters:
+      - description: RFC3339 window start
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: RFC3339 window end (default now)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/alert.AlertSummary'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Alert counts per vehicle per code over a window
       tags:
       - alerts
   /v1/analytics/fleet:

@@ -450,6 +450,55 @@
                 }
             }
         },
+        "/v1/alerts/summary": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The fleet's incidents for a window, counted in the database: one entry per vehicle with a map of alert code to count, plus the fleet-wide tally. Checked and unchecked alike — the question is what happened, not what is outstanding. There is NO ROW LIMIT here, which is the point: /v1/alerts caps at 500 rows, so counting that list is accurate only until a fleet has a busy day. Scoped to the caller's account (?account_id for platform staff) exactly as /v1/alerts is. Covers alerts still in the database; anything aged out to cold storage must be restored first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "alerts"
+                ],
+                "summary": "Alert counts per vehicle per code over a window",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "RFC3339 window start",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339 window end (default now)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/alert.AlertSummary"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/alerts/{id}": {
             "get": {
                 "security": [
@@ -6151,6 +6200,34 @@
                 }
             }
         },
+        "alert.AlertSummary": {
+            "type": "object",
+            "properties": {
+                "by_code": {
+                    "description": "ByCode is the fleet-wide tally, for a headline that does not need the\nper-vehicle breakdown summed client-side.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "from": {
+                    "type": "string"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/alert.VehicleAlertCounts"
+                    }
+                },
+                "to": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "alert.AlertType": {
             "type": "object",
             "properties": {
@@ -6385,6 +6462,28 @@
                 },
                 "license_plate": {
                     "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "alert.VehicleAlertCounts": {
+            "type": "object",
+            "properties": {
+                "counts": {
+                    "description": "Counts is keyed by ALERT CODE (OVERSPEED, HARSH_BRAKING, …), not by any\nconsumer's categories: a caller groups codes into its own kinds, and\nthis service does not inherit a vocabulary it cannot test.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
                 },
                 "vehicle_id": {
                     "type": "integer"

@@ -119,6 +119,7 @@ func NewHandler(pool *db.Pool, cold *coldstore.Store, alertDays int) *Handler {
 func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/alert-taxonomy", h.taxonomy)
 	r.Get("/v1/alerts/analytics", h.analytics)
+	r.Get("/v1/alerts/summary", h.summary)
 	r.Get("/v1/alerts", h.list)
 	r.Get("/v1/alerts/{id}", h.get)
 	r.Group(func(mr chi.Router) {

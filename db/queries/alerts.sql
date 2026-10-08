@@ -126,3 +126,22 @@ SELECT count(*) FROM alerts
 WHERE tenant_id = @tenant_id AND vehicle_id = @vehicle_id
   AND alert_code = @alert_code
   AND occurred_at > now() - make_interval(mins => @cooldown_min::int);
+
+-- name: AlertCountByVehicleAndType :many
+-- Per vehicle, per code, over a window — the counts a fleet-wide incident
+-- panel needs without reading every row.
+--
+-- Exists because the list endpoint caps at 500 rows and says nothing about
+-- it, so a consumer counting rows client-side is correct on a quiet fleet
+-- and silently short on a busy one. An aggregate has no such ceiling: the
+-- database counts, and the answer is the same size whether the day held ten
+-- incidents or ten thousand.
+--
+-- Every alert in the window counts, checked or not: the question is what
+-- happened, not what is still outstanding.
+SELECT a.vehicle_id, v.license_plate, a.alert_code, count(*)::bigint AS count
+FROM alerts a
+JOIN vehicles v ON v.id = a.vehicle_id
+WHERE a.occurred_at >= sqlc.arg('from') AND a.occurred_at <= sqlc.arg('to')
+GROUP BY a.vehicle_id, v.license_plate, a.alert_code
+ORDER BY a.vehicle_id, a.alert_code;
