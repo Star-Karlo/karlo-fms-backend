@@ -158,7 +158,8 @@ func main() {
 	// Nil when there is no directory; mdwrite.CallerFor then refuses any staff
 	// write made via ?account_id rather than misfiling it upstream.
 	var companyDir mdwrite.CompanyResolver
-	var syncWakers []mdevents.Waker // the projections POST /v1/platform/sync refreshes
+	var syncWakers []mdevents.Waker         // the projections POST /v1/platform/sync refreshes
+	var trackerWakers []interface{ Wake() } // just the device projection, woken after a transfer
 	// Brand / truck body / truck head: FMS keeps names, master data keeps
 	// ids; the resolver translates at the write-through and the projection.
 	var cat *catalog.Resolver
@@ -224,6 +225,7 @@ func main() {
 				if ts := trackersync.New(pool, dir, mdConn, cfg.TrackerFittings); ts != nil {
 					go ts.Run(ctx, 2*time.Minute)
 					wakers = append(wakers, ts)
+					trackerWakers = append(trackerWakers, ts)
 					log.Printf("trackersync: projecting devices from %s (fittings: %v)", cfg.MDGRPCTarget, cfg.TrackerFittings)
 				}
 				mdevents.Follow(ctx, cfg.RedisAddr, wakers...)
@@ -256,7 +258,7 @@ func main() {
 	vehicleH := vehicle.NewHandler(vehicle.NewService(pool).WithMasterData(mdWriter).WithCatalog(cat, companyDir)).WithResolver(companyDir)
 	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool)).WithMasterData(mdWriter, companyDir)
 	driverH := driver.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
-	trackerH := tracker.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
+	trackerH := tracker.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(trackerWakers...)
 	tel := telemetry.NewClient(cfg.TelemetryBaseURL, cfg.TelemetryAPIKey, cfg.TelemetryTimeout)
 	liveSvc := liveview.NewService(pool, tel)
 	liveH := liveview.NewHandler(liveSvc)

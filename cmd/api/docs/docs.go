@@ -4894,6 +4894,122 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/trackers/{id}/transfer": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Moves ownership of a device. Master data owns the device register, so the authoritative write happens there; this service then takes the device off whatever truck it was on, marks its own row inactive, and lets the projection bring it in under the new account — which keeps the OLD account's fit history readable, so telemetry recorded while the device was theirs still resolves to their truck. The device appears for the new account within a minute (sooner on the master-data notice). Refuses if the device is not paired with master data, because an unpaired device cannot be moved anywhere that would stick.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "trackers"
+                ],
+                "summary": "Hand a tracker to another account (platform admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "tracker id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "destination account",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tracker.TransferRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/tracker.TransferResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "not paired with master data, or the destination has no company",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "master data refused the transfer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/trackers/{id}/unassign": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Clears the link from BOTH sides — the vehicle's tracker and the tracker's vehicle — and closes the open period in the fit history, so the device is free to fit elsewhere and the truck shows as untracked. The device itself is kept, with its history; deleting it is a different action. Mirrored to master data as an unfit. Does nothing (and answers 200) if the device is already unassigned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "trackers"
+                ],
+                "summary": "Take a tracker off its vehicle (keep the device)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "tracker id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/tracker.UnassignResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/tracking-links": {
             "get": {
                 "security": [
@@ -10264,6 +10380,89 @@ const docTemplate = `{
                 },
                 "vehicle_id": {
                     "type": "integer"
+                },
+                "vehicle_plate": {
+                    "description": "VehiclePlate is the truck this device is fitted to right now, nil when\nit is in stock. The id alone answers \"is it linked\"; the plate answers\n\"to what\", which is the question actually being asked.",
+                    "type": "string"
+                }
+            }
+        },
+        "tracker.TransferRequest": {
+            "type": "object",
+            "properties": {
+                "tenant_id": {
+                    "type": "integer",
+                    "example": 5
+                }
+            }
+        },
+        "tracker.TransferResponse": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "imei": {
+                    "type": "string"
+                },
+                "note": {
+                    "description": "Note explains what the caller should expect to see next.",
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                },
+                "tracker_id": {
+                    "type": "integer"
+                },
+                "unassigned_from_vehicle": {
+                    "description": "Unassigned is the vehicle it was taken off on the way out, if any.",
+                    "type": "integer"
+                }
+            }
+        },
+        "tracker.UnassignResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "imei": {
+                    "type": "string"
+                },
+                "is_demo": {
+                    "description": "IsDemo marks a copy of a device that really belongs to another account\n(shown here for a demo). Never paired with or written to master data.",
+                    "type": "boolean"
+                },
+                "phone_no": {
+                    "type": "string"
+                },
+                "previous_vehicle_id": {
+                    "description": "PreviousVehicleID is the truck it came off, so a caller can say what\nchanged rather than just that something did.",
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "description": "Owning account — set only in the platform-admin all-accounts list.",
+                    "type": "integer"
+                },
+                "tenant_name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                },
+                "vehicle_plate": {
+                    "description": "VehiclePlate is the truck this device is fitted to right now, nil when\nit is in stock. The id alone answers \"is it linked\"; the plate answers\n\"to what\", which is the question actually being asked.",
+                    "type": "string"
                 }
             }
         },

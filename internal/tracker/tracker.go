@@ -28,6 +28,10 @@ type DTO struct {
 	PhoneNo    *string `json:"phone_no"`
 	VehicleID  *int64  `json:"vehicle_id"`
 	Status     string  `json:"status"`
+	// VehiclePlate is the truck this device is fitted to right now, nil when
+	// it is in stock. The id alone answers "is it linked"; the plate answers
+	// "to what", which is the question actually being asked.
+	VehiclePlate *string `json:"vehicle_plate"`
 	// IsDemo marks a copy of a device that really belongs to another account
 	// (shown here for a demo). Never paired with or written to master data.
 	IsDemo    bool       `json:"is_demo"`
@@ -58,6 +62,12 @@ func fromRow(t store.Tracker) DTO {
 	return DTO{ID: t.ID, Imei: t.Imei, PhoneNo: t.PhoneNo, VehicleID: t.VehicleID, Status: t.Status, IsDemo: t.IsDemo, CreatedAt: conv.Time(t.CreatedAt), UpdatedAt: conv.Time(t.UpdatedAt)}
 }
 
+// fromListRow is the same, plus the joined plate.
+func fromListRow(t store.ListTrackersRow) DTO {
+	return DTO{ID: t.ID, Imei: t.Imei, PhoneNo: t.PhoneNo, VehicleID: t.VehicleID, VehiclePlate: t.VehiclePlate,
+		Status: t.Status, IsDemo: t.IsDemo, CreatedAt: conv.Time(t.CreatedAt), UpdatedAt: conv.Time(t.UpdatedAt)}
+}
+
 func iface(s *string) interface{} {
 	if s == nil {
 		return nil
@@ -67,9 +77,10 @@ func iface(s *string) interface{} {
 
 // Handler exposes tracker endpoints.
 type Handler struct {
-	pool *db.Pool
-	md   *mdwrite.Client         // nil before cutover: writes stay local
-	dir  mdwrite.CompanyResolver // tenant -> company for the write-through's caller
+	pool   *db.Pool
+	md     *mdwrite.Client         // nil before cutover: writes stay local
+	dir    mdwrite.CompanyResolver // tenant -> company for the write-through's caller
+	wakers []interface{ Wake() }   // the device projection, woken after a transfer
 }
 
 // NewHandler builds the tracker handler.
@@ -121,6 +132,8 @@ func (h *Handler) Routes(r chi.Router) {
 		mr.Post("/v1/trackers", h.create)
 		mr.Put("/v1/trackers/{id}", h.update)
 		mr.Delete("/v1/trackers/{id}", h.del)
+		mr.Post("/v1/trackers/{id}/unassign", h.unassign)
+		mr.Post("/v1/trackers/{id}/transfer", h.transfer)
 	})
 }
 
@@ -167,7 +180,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		items = make([]DTO, 0, len(rows))
 		for _, t := range rows {
-			items = append(items, fromRow(t))
+			items = append(items, fromListRow(t))
 		}
 		total, err = q.CountTrackers(r.Context(), store.CountTrackersParams{Q: conv.StrPtr(p.Q), Status: conv.StrPtr(p.Status), VehicleID: veh})
 		return err
@@ -209,7 +222,7 @@ func (h *Handler) listAllAccounts(r *http.Request, p httpx.ListParams, veh *int6
 				return err
 			}
 			for _, tr := range trs {
-				d := fromRow(tr)
+				d := fromListRow(tr)
 				d.TenantID, d.TenantName = &tid, &name
 				out = append(out, d)
 			}

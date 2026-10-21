@@ -7,6 +7,8 @@ package store
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const clearOtherTrackersOnVehicle = `-- name: ClearOtherTrackersOnVehicle :exec
@@ -34,6 +36,15 @@ UPDATE trackers SET vehicle_id = NULL WHERE vehicle_id = $1
 // open period) — the bind path already syncs the tracker side, unbind did not.
 func (q *Queries) ClearTrackerByVehicle(ctx context.Context, vehicleID *int64) error {
 	_, err := q.db.Exec(ctx, clearTrackerByVehicle, vehicleID)
+	return err
+}
+
+const clearVehicleTracker = `-- name: ClearVehicleTracker :exec
+UPDATE vehicles SET tracker_id = NULL, updated_at = now() WHERE tracker_id = $1
+`
+
+func (q *Queries) ClearVehicleTracker(ctx context.Context, trackerID *int64) error {
+	_, err := q.db.Exec(ctx, clearVehicleTracker, trackerID)
 	return err
 }
 
@@ -100,6 +111,17 @@ func (q *Queries) CreateTracker(ctx context.Context, arg CreateTrackerParams) (T
 	return i, err
 }
 
+const deactivateTracker = `-- name: DeactivateTracker :exec
+UPDATE trackers SET status = 'inactive', vehicle_id = NULL, updated_at = now() WHERE id = $1
+`
+
+// A device handed to another company: kept here, inactive, so its fit
+// history (and the telemetry attributed through it) stays readable.
+func (q *Queries) DeactivateTracker(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deactivateTracker, id)
+	return err
+}
+
 const deleteTracker = `-- name: DeleteTracker :exec
 DELETE FROM trackers WHERE id = $1
 `
@@ -132,14 +154,59 @@ func (q *Queries) GetTracker(ctx context.Context, id int64) (Tracker, error) {
 	return i, err
 }
 
+const getTrackerWithVehicle = `-- name: GetTrackerWithVehicle :one
+SELECT t.id, t.tenant_id, t.imei, t.phone_no, t.vehicle_id, t.status, t.external_ref, t.master_data_id, t.is_demo, t.created_at, t.updated_at, v.license_plate AS vehicle_plate
+FROM trackers t
+LEFT JOIN vehicles v ON v.id = t.vehicle_id
+WHERE t.id = $1
+`
+
+type GetTrackerWithVehicleRow struct {
+	ID           int64              `json:"id"`
+	TenantID     int64              `json:"tenant_id"`
+	Imei         string             `json:"imei"`
+	PhoneNo      *string            `json:"phone_no"`
+	VehicleID    *int64             `json:"vehicle_id"`
+	Status       string             `json:"status"`
+	ExternalRef  *string            `json:"external_ref"`
+	MasterDataID *string            `json:"master_data_id"`
+	IsDemo       bool               `json:"is_demo"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	VehiclePlate *string            `json:"vehicle_plate"`
+}
+
+func (q *Queries) GetTrackerWithVehicle(ctx context.Context, id int64) (GetTrackerWithVehicleRow, error) {
+	row := q.db.QueryRow(ctx, getTrackerWithVehicle, id)
+	var i GetTrackerWithVehicleRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Imei,
+		&i.PhoneNo,
+		&i.VehicleID,
+		&i.Status,
+		&i.ExternalRef,
+		&i.MasterDataID,
+		&i.IsDemo,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.VehiclePlate,
+	)
+	return i, err
+}
+
 const listTrackers = `-- name: ListTrackers :many
-SELECT id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at FROM trackers
+SELECT t.id, t.tenant_id, t.imei, t.phone_no, t.vehicle_id, t.status, t.external_ref, t.master_data_id, t.is_demo, t.created_at, t.updated_at, v.license_plate AS vehicle_plate
+FROM trackers t
+LEFT JOIN vehicles v ON v.id = t.vehicle_id
 WHERE ($1::text IS NULL
-       OR imei ILIKE '%' || $1 || '%'
-       OR phone_no ILIKE '%' || $1 || '%')
-  AND ($2::text IS NULL OR status = $2)
-  AND ($3::bigint IS NULL OR vehicle_id = $3)
-ORDER BY created_at DESC
+       OR t.imei ILIKE '%' || $1 || '%'
+       OR t.phone_no ILIKE '%' || $1 || '%'
+       OR v.license_plate ILIKE '%' || $1 || '%')
+  AND ($2::text IS NULL OR t.status = $2)
+  AND ($3::bigint IS NULL OR t.vehicle_id = $3)
+ORDER BY t.created_at DESC
 LIMIT $5 OFFSET $4
 `
 
@@ -151,7 +218,25 @@ type ListTrackersParams struct {
 	Lim       int32   `json:"lim"`
 }
 
-func (q *Queries) ListTrackers(ctx context.Context, arg ListTrackersParams) ([]Tracker, error) {
+type ListTrackersRow struct {
+	ID           int64              `json:"id"`
+	TenantID     int64              `json:"tenant_id"`
+	Imei         string             `json:"imei"`
+	PhoneNo      *string            `json:"phone_no"`
+	VehicleID    *int64             `json:"vehicle_id"`
+	Status       string             `json:"status"`
+	ExternalRef  *string            `json:"external_ref"`
+	MasterDataID *string            `json:"master_data_id"`
+	IsDemo       bool               `json:"is_demo"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	VehiclePlate *string            `json:"vehicle_plate"`
+}
+
+// The plate comes along because "which truck is this device on" is the first
+// thing anyone asks of a device register, and an id answers it only for
+// somebody holding a second screen.
+func (q *Queries) ListTrackers(ctx context.Context, arg ListTrackersParams) ([]ListTrackersRow, error) {
 	rows, err := q.db.Query(ctx, listTrackers,
 		arg.Q,
 		arg.Status,
@@ -163,9 +248,9 @@ func (q *Queries) ListTrackers(ctx context.Context, arg ListTrackersParams) ([]T
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Tracker{}
+	items := []ListTrackersRow{}
 	for rows.Next() {
-		var i Tracker
+		var i ListTrackersRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.TenantID,
@@ -178,6 +263,7 @@ func (q *Queries) ListTrackers(ctx context.Context, arg ListTrackersParams) ([]T
 			&i.IsDemo,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.VehiclePlate,
 		); err != nil {
 			return nil, err
 		}
@@ -231,6 +317,35 @@ type StampTrackerMasterDataIDParams struct {
 func (q *Queries) StampTrackerMasterDataID(ctx context.Context, arg StampTrackerMasterDataIDParams) error {
 	_, err := q.db.Exec(ctx, stampTrackerMasterDataID, arg.ID, arg.MasterDataID)
 	return err
+}
+
+const unassignTracker = `-- name: UnassignTracker :one
+UPDATE trackers SET vehicle_id = NULL, updated_at = now()
+WHERE id = $1
+RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at
+`
+
+// Take the device off whatever truck it is on, keeping the device. Both
+// sides are cleared: vehicles.tracker_id is what the live map reads, and
+// trackers.vehicle_id is what the assignment-history trigger watches, so
+// clearing only one leaves the pair disagreeing.
+func (q *Queries) UnassignTracker(ctx context.Context, id int64) (Tracker, error) {
+	row := q.db.QueryRow(ctx, unassignTracker, id)
+	var i Tracker
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Imei,
+		&i.PhoneNo,
+		&i.VehicleID,
+		&i.Status,
+		&i.ExternalRef,
+		&i.MasterDataID,
+		&i.IsDemo,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateTracker = `-- name: UpdateTracker :one

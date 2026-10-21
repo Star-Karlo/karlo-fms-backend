@@ -345,6 +345,18 @@ func (c *Client) UpdateTracker(ctx context.Context, caller Caller, id string, t 
 	return c.do(ctx, caller, http.MethodPut, "/api/v1/trackers/"+id, t, nil)
 }
 
+// TransferTracker moves a device to another company upstream. Master data
+// owns the register, so this is the write that actually changes ownership;
+// everything FMS does locally is bookkeeping that follows it.
+//
+// Called as PLATFORM STAFF with no acting-for: a device leaving company A
+// for company B belongs to neither caller, and sending X-Acting-For would
+// file the change under one of them.
+func (c *Client) TransferTracker(ctx context.Context, caller Caller, id, companyID string) error {
+	caller.ActingFor = ""
+	return c.do(ctx, caller, http.MethodPut, "/api/v1/trackers/"+id, map[string]any{"companyId": companyID}, nil)
+}
+
 func (c *Client) DeleteTracker(ctx context.Context, caller Caller, id string) error {
 	return c.do(ctx, caller, http.MethodDelete, "/api/v1/trackers/"+id, nil, nil)
 }
