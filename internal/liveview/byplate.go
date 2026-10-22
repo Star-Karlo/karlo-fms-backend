@@ -100,7 +100,7 @@ func (h *Handler) resolvePlate(w http.ResponseWriter, r *http.Request) (int64, b
 //	@Param			plate		path		string	true	"nomor polisi, e.g. B 9012 UBC"
 //	@Param			from		query		string	true	"RFC3339"
 //	@Param			to			query		string	true	"RFC3339"
-//	@Param			max_points	query		int		false	"cap on returned points"
+//	@Param			max_points	query		int		false	"downsample to about this many points (default 2000). 0 returns EVERY fix."
 //	@Param			limit		query		number	false	"overspeed limit km/h for the over_limit flag (default 60)"
 //	@Param			source		query		string	false	"tracker | camera | both"
 //	@Success		200	{object}	httpx.List[liveview.TripPoint]
@@ -238,6 +238,24 @@ type SummaryRow struct {
 	// rest of the fleet still comes back, with this row saying why it did not.
 	Error  string             `json:"error,omitempty"`
 	Fields map[string]float64 `json:"fields"`
+
+	// How far to trust the figures above, per vehicle — because it varies per
+	// vehicle: two trucks over the same window can have very different
+	// reporting density, and one of them can be well sampled while the other
+	// is not.
+	//
+	// DistanceSource is "rollup" when distance and max speed were measured
+	// from every sample, "track" when they were walked along a downsampled
+	// path and are therefore UNDERSTATED.
+	DistanceSource string `json:"distance_source,omitempty"`
+	// SampleGapS is the median seconds between the samples behind the counts.
+	SampleGapS float64 `json:"sample_gap_s,omitempty"`
+	// EventsSampled marks overspeed_count, harsh_accel and harsh_brake as
+	// LOWER BOUNDS. Harsh detection compares consecutive fixes less than 30s
+	// apart; over a long window most pairs are further apart than that, so
+	// most of the period was never examined. A caller that sums these across
+	// a fleet without checking this flag is adding up floors.
+	EventsSampled bool `json:"events_sampled,omitempty"`
 }
 
 // SummaryResponse is the fleet summary.
@@ -280,7 +298,7 @@ const maxSummaryVehicles = 50
 // summary godoc
 //
 //	@Summary		Historical summary for several vehicles at once
-//	@Description	The figures from the history panel — distance, max speed, harsh events, idle — for a list of trucks named by plate or id, in ONE request. No track points come back; `fields` chooses which figures to compute, defaulting to the panel's own set. Up to 50 vehicles and 31 days per call. A vehicle whose telemetry cannot be read comes back as a row carrying `error`, so one dead tracker does not fail the batch.
+//	@Description	The figures from the history panel — distance, max speed, harsh events, idle — for a list of trucks named by plate or id, in ONE request. Plates are matched loosely, so "B 9012 UBC", "B9012UBC" and "b-9012-ubc" are one truck. Give neither list to get every tracked vehicle in the account. No track points come back; `fields` chooses which figures to compute, defaulting to the panel's own set. Up to 50 vehicles and 31 days per call. A vehicle whose telemetry cannot be read comes back as a row carrying `error`, so one dead tracker does not fail the batch. READ `distance_source` AND `events_sampled` ON EACH ROW: distance is measured from every sample when the window starts at a local midnight and ends at a day boundary or now, and walked along a downsampled track otherwise; the event counts are lower bounds whenever the samples behind them are more than 30s apart.
 //	@Tags			live-view
 //	@Security		BearerAuth
 //	@Accept			json
@@ -351,6 +369,9 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 		for _, f := range fields {
 			row.Fields[f] = summaryFields[f](&res.Summary)
 		}
+		row.DistanceSource = res.Summary.DistanceSource
+		row.SampleGapS = res.Summary.SampleGapS
+		row.EventsSampled = res.Summary.EventsSampled
 		out.Items = append(out.Items, row)
 	}
 	httpx.JSON(w, http.StatusOK, out)

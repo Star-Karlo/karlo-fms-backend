@@ -2106,11 +2106,30 @@ definitions:
     type: object
   liveview.SummaryRow:
     properties:
+      distance_source:
+        description: |-
+          How far to trust the figures above, per vehicle — because it varies per
+          vehicle: two trucks over the same window can have very different
+          reporting density, and one of them can be well sampled while the other
+          is not.
+
+          DistanceSource is "rollup" when distance and max speed were measured
+          from every sample, "track" when they were walked along a downsampled
+          path and are therefore UNDERSTATED.
+        type: string
       error:
         description: |-
           Error is set when this vehicle's figures could not be computed — the
           rest of the fleet still comes back, with this row saying why it did not.
         type: string
+      events_sampled:
+        description: |-
+          EventsSampled marks overspeed_count, harsh_accel and harsh_brake as
+          LOWER BOUNDS. Harsh detection compares consecutive fixes less than 30s
+          apart; over a long window most pairs are further apart than that, so
+          most of the period was never examined. A caller that sums these across
+          a fleet without checking this flag is adding up floors.
+        type: boolean
       fields:
         additionalProperties:
           format: float64
@@ -2118,6 +2137,10 @@ definitions:
         type: object
       license_plate:
         type: string
+      sample_gap_s:
+        description: SampleGapS is the median seconds between the samples behind the
+          counts.
+        type: number
       vehicle_id:
         type: integer
     type: object
@@ -7534,7 +7557,9 @@ paths:
         name: to
         required: true
         type: string
-      - description: cap on returned points
+      - description: shape-preserving downsample to about this many points (default
+          2000). 0 returns EVERY fix, paged internally — a month of 30-second reporting
+          is ~87,000 points.
         in: query
         name: max_points
         type: integer
@@ -7839,7 +7864,8 @@ paths:
         name: to
         required: true
         type: string
-      - description: cap on returned points
+      - description: downsample to about this many points (default 2000). 0 returns
+          EVERY fix.
         in: query
         name: max_points
         type: integer
@@ -7899,12 +7925,18 @@ paths:
     post:
       consumes:
       - application/json
-      description: The figures from the history panel — distance, max speed, harsh
+      description: 'The figures from the history panel — distance, max speed, harsh
         events, idle — for a list of trucks named by plate or id, in ONE request.
+        Plates are matched loosely, so "B 9012 UBC", "B9012UBC" and "b-9012-ubc" are
+        one truck. Give neither list to get every tracked vehicle in the account.
         No track points come back; `fields` chooses which figures to compute, defaulting
-        to the panel's own set. Up to 50 vehicles and 31 days per call. A vehicle
+        to the panel''s own set. Up to 50 vehicles and 31 days per call. A vehicle
         whose telemetry cannot be read comes back as a row carrying `error`, so one
-        dead tracker does not fail the batch.
+        dead tracker does not fail the batch. READ `distance_source` AND `events_sampled`
+        ON EACH ROW: distance is measured from every sample when the window starts
+        at a local midnight and ends at a day boundary or now, and walked along a
+        downsampled track otherwise; the event counts are lower bounds whenever the
+        samples behind them are more than 30s apart.'
       parameters:
       - description: vehicles, window and fields
         in: body

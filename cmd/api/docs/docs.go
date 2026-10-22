@@ -5817,7 +5817,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "cap on returned points",
+                        "description": "downsample to about this many points (default 2000). 0 returns EVERY fix.",
                         "name": "max_points",
                         "in": "query"
                     },
@@ -5902,7 +5902,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "The figures from the history panel — distance, max speed, harsh events, idle — for a list of trucks named by plate or id, in ONE request. No track points come back; ` + "`" + `fields` + "`" + ` chooses which figures to compute, defaulting to the panel's own set. Up to 50 vehicles and 31 days per call. A vehicle whose telemetry cannot be read comes back as a row carrying ` + "`" + `error` + "`" + `, so one dead tracker does not fail the batch.",
+                "description": "The figures from the history panel — distance, max speed, harsh events, idle — for a list of trucks named by plate or id, in ONE request. Plates are matched loosely, so \"B 9012 UBC\", \"B9012UBC\" and \"b-9012-ubc\" are one truck. Give neither list to get every tracked vehicle in the account. No track points come back; ` + "`" + `fields` + "`" + ` chooses which figures to compute, defaulting to the panel's own set. Up to 50 vehicles and 31 days per call. A vehicle whose telemetry cannot be read comes back as a row carrying ` + "`" + `error` + "`" + `, so one dead tracker does not fail the batch. READ ` + "`" + `distance_source` + "`" + ` AND ` + "`" + `events_sampled` + "`" + ` ON EACH ROW: distance is measured from every sample when the window starts at a local midnight and ends at a day boundary or now, and walked along a downsampled track otherwise; the event counts are lower bounds whenever the samples behind them are more than 30s apart.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6398,7 +6398,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "cap on returned points",
+                        "description": "shape-preserving downsample to about this many points (default 2000). 0 returns EVERY fix, paged internally — a month of 30-second reporting is ~87,000 points.",
                         "name": "max_points",
                         "in": "query"
                     },
@@ -9781,9 +9781,17 @@ const docTemplate = `{
         "liveview.SummaryRow": {
             "type": "object",
             "properties": {
+                "distance_source": {
+                    "description": "How far to trust the figures above, per vehicle — because it varies per\nvehicle: two trucks over the same window can have very different\nreporting density, and one of them can be well sampled while the other\nis not.\n\nDistanceSource is \"rollup\" when distance and max speed were measured\nfrom every sample, \"track\" when they were walked along a downsampled\npath and are therefore UNDERSTATED.",
+                    "type": "string"
+                },
                 "error": {
                     "description": "Error is set when this vehicle's figures could not be computed — the\nrest of the fleet still comes back, with this row saying why it did not.",
                     "type": "string"
+                },
+                "events_sampled": {
+                    "description": "EventsSampled marks overspeed_count, harsh_accel and harsh_brake as\nLOWER BOUNDS. Harsh detection compares consecutive fixes less than 30s\napart; over a long window most pairs are further apart than that, so\nmost of the period was never examined. A caller that sums these across\na fleet without checking this flag is adding up floors.",
+                    "type": "boolean"
                 },
                 "fields": {
                     "type": "object",
@@ -9794,6 +9802,10 @@ const docTemplate = `{
                 },
                 "license_plate": {
                     "type": "string"
+                },
+                "sample_gap_s": {
+                    "description": "SampleGapS is the median seconds between the samples behind the counts.",
+                    "type": "number"
                 },
                 "vehicle_id": {
                     "type": "integer"

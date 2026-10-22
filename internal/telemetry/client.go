@@ -142,25 +142,75 @@ func (c *Client) LiveOne(ctx context.Context, imei string) (*Position, error) {
 	return &p, nil
 }
 
-// History fetches a device's track over a time range (LTTB-downsampled upstream).
+// RawPageLimit is how many fixes one upstream page carries when nothing is
+// being downsampled. The endpoint's own maximum.
+const RawPageLimit = 10000
+
+// MaxRawPoints bounds an undownsampled fetch. A month of 30-second fixes is
+// ~87,000, so this holds a quarter of a year for one device; past it the
+// answer is truncated AND SAYS SO, rather than quietly becoming a prefix of
+// the truth.
+const MaxRawPoints = 400000
+
+// History fetches a device's track over a time range.
+//
+// maxPoints > 0 asks the service to LTTB-downsample the whole range to about
+// that many points, which comes back in one response and is what a map line
+// wants. maxPoints == 0 asks for EVERY fix, which the service pages — and
+// paging is why this loop exists: it used to read the first page and drop
+// next_cursor, so "give me the raw track" silently returned the first 1,000
+// fixes of however long a window was asked for, with nothing to say the rest
+// had been left behind.
+//
+// The bool reports whether the answer was cut short at MaxRawPoints.
 func (c *Client) History(ctx context.Context, imei string, from, to time.Time, fields []string, maxPoints int) ([]Position, error) {
-	q := url.Values{}
-	q.Set("from", from.UTC().Format(time.RFC3339))
-	q.Set("to", to.UTC().Format(time.RFC3339))
+	pts, _, err := c.HistoryAll(ctx, imei, from, to, fields, maxPoints)
+	return pts, err
+}
+
+// HistoryAll is History, also reporting whether the result was truncated.
+func (c *Client) HistoryAll(ctx context.Context, imei string, from, to time.Time, fields []string, maxPoints int) ([]Position, bool, error) {
+	base := url.Values{}
+	base.Set("from", from.UTC().Format(time.RFC3339))
+	base.Set("to", to.UTC().Format(time.RFC3339))
 	if len(fields) > 0 {
-		q.Set("fields", strings.Join(fields, ","))
+		base.Set("fields", strings.Join(fields, ","))
 	}
 	if maxPoints > 0 {
-		q.Set("max_points", fmt.Sprintf("%d", maxPoints))
+		base.Set("max_points", fmt.Sprintf("%d", maxPoints))
+	} else {
+		base.Set("limit", fmt.Sprintf("%d", RawPageLimit))
 	}
-	// The history endpoint returns {"points":[...],"next_cursor":...}.
-	var page struct {
-		Points []Position `json:"points"`
+
+	var out []Position
+	cursor := ""
+	for {
+		q := url.Values{}
+		for k, v := range base {
+			q[k] = v
+		}
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		// The history endpoint returns {"points":[...],"next_cursor":...}.
+		var page struct {
+			Points     []Position `json:"points"`
+			NextCursor string     `json:"next_cursor"`
+		}
+		if err := c.getJSONSlow(ctx, "/v1/history/"+url.PathEscape(imei)+"?"+q.Encode(), &page); err != nil {
+			return nil, false, err
+		}
+		out = append(out, page.Points...)
+		// Downsampling bypasses pagination upstream, so one page is the whole
+		// answer and a cursor would loop forever over the same range.
+		if maxPoints > 0 || page.NextCursor == "" || len(page.Points) == 0 {
+			return out, false, nil
+		}
+		if len(out) >= MaxRawPoints {
+			return out, true, nil
+		}
+		cursor = page.NextCursor
 	}
-	if err := c.getJSONSlow(ctx, "/v1/history/"+url.PathEscape(imei)+"?"+q.Encode(), &page); err != nil {
-		return nil, err
-	}
-	return page.Points, nil
 }
 
 // DashcamTrackPoint is one GPS fix from a dashcam's own GPS — the history

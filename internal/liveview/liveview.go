@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -889,7 +890,7 @@ func (s *Service) trueUpFromRollup(ctx context.Context, tenantID, vehicleID int6
 	if imei == "" {
 		return
 	}
-	days, err := s.tel.DailyStats(ctx, lo.Format("2006-01-02"), hi.Format("2006-01-02"))
+	days, err := s.dailyStats(ctx, lo.Format("2006-01-02"), hi.Format("2006-01-02"))
 	if err != nil {
 		return
 	}
@@ -914,6 +915,62 @@ func (s *Service) trueUpFromRollup(ctx context.Context, tenantID, vehicleID int6
 	}
 	res.Summary.DistanceSource = "rollup"
 }
+
+// dailyStats is DailyStats with a short cache, because the rollup is fetched
+// per vehicle but is not per vehicle.
+//
+// The upstream call is deliberately unfiltered — it returns every device's
+// days, ~2,000 rows a day — and the fleet summary endpoint asks for up to 50
+// vehicles in one request. Without this, a 52-day summary for 50 trucks would
+// pull the same ~100,000 rows fifty times over, turning a fix for a wrong
+// number into an outage. One fetch serves the whole request, and the next
+// one too.
+func (s *Service) dailyStats(ctx context.Context, from, to string) ([]telemetry.VehicleDay, error) {
+	key := from + ".." + to
+	if v := dailyCache.get(key); v != nil {
+		return v, nil
+	}
+	out, err := s.tel.DailyStats(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	dailyCache.put(key, out)
+	return out, nil
+}
+
+type dailyEntry struct {
+	at  time.Time
+	val []telemetry.VehicleDay
+}
+
+type dailyStatsCache struct {
+	mu sync.Mutex
+	m  map[string]dailyEntry
+}
+
+func (c *dailyStatsCache) get(k string) []telemetry.VehicleDay {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[k]
+	// Same window as the fleet-history cache: long enough to serve one
+	// request's worth of vehicles many times over, short enough that today's
+	// row keeps moving.
+	if !ok || time.Since(e.at) > historyTTL {
+		return nil
+	}
+	return e.val
+}
+
+func (c *dailyStatsCache) put(k string, v []telemetry.VehicleDay) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil {
+		c.m = map[string]dailyEntry{}
+	}
+	c.m[k] = dailyEntry{at: time.Now(), val: v}
+}
+
+var dailyCache = &dailyStatsCache{}
 
 // isEndOfDay accepts the last minute of a local day, however the caller
 // spelled it: the date picker sends 23:59:00, a hand-written range may send
@@ -1102,7 +1159,7 @@ func (s *Service) cameraHistory(ctx context.Context, deviceID string, from, to t
 //	@Param		vehicle_id	path		int		true	"vehicle id"
 //	@Param		from		query		string	true	"RFC3339"
 //	@Param		to			query		string	true	"RFC3339"
-//	@Param		max_points	query		int		false	"cap on returned points"
+//	@Param		max_points	query		int		false	"shape-preserving downsample to about this many points (default 2000). 0 returns EVERY fix, paged internally — a month of 30-second reporting is ~87,000 points."
 //	@Param		limit		query		number	false	"overspeed limit km/h for the over_limit flag (default 60)"
 //	@Param		source		query		string	false	"tracker | camera | both (default: tracker if fitted, else camera)"
 //	@Success	200	{object}	httpx.List[liveview.TripPoint]
@@ -1126,9 +1183,14 @@ func (h *Handler) historyFor(w http.ResponseWriter, r *http.Request, id int64) {
 		httpx.Error(w, http.StatusBadRequest, "from/to must be RFC3339")
 		return
 	}
+	// max_points=0 means EVERY fix, not "use the default". A caller checking
+	// the figures, or loading a month into a spreadsheet, wants the samples
+	// themselves; the default exists for drawing a line on a map.
 	maxPoints := 2000
-	if v, e := strconv.Atoi(q.Get("max_points")); e == nil && v > 0 {
-		maxPoints = v
+	if raw := q.Get("max_points"); raw != "" {
+		if v, e := strconv.Atoi(raw); e == nil && v >= 0 {
+			maxPoints = v
+		}
 	}
 	limit := 60.0
 	if v := q.Get("limit"); v != "" {
