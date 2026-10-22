@@ -77,6 +77,10 @@ var Taxonomy = []AlertType{
 	{"FUEL_GAIN", "Penambahan Bahan Bakar", "Fuel Gain", SourceGPS, SevInfo, false},
 	{"GEOFENCE_ENTER", "Masuk Geolokasi", "Entering Geofence", SourceGPS, SevInfo, false},
 	{"GEOFENCE_EXIT", "Keluar Geolokasi", "Exiting Geofence", SourceGPS, SevImportant, false},
+	// Still inside after the rule's threshold — a truck that arrived is normal,
+	// a truck that has not left is the one somebody has to ask about. Fires
+	// once per visit, not once per check.
+	{"GEOFENCE_DWELL", "Terlalu Lama di Geolokasi", "Too Long Inside Geofence", SourceGPS, SevImportant, false},
 	{"EXCEEDED_PARKING", "Melebihi Waktu Parkir", "Exceeded Parking Time", SourceGPS, SevImportant, true},
 	{"EXCEEDED_IDLE", "Melebihi Waktu Idle", "Exceeded Idle Time", SourceGPS, SevImportant, true},
 	{"HARSH_BRAKING", "Perlambatan Mendadak", "Harsh Braking / Sudden Deceleration", SourceGPS, SevInfo, true},

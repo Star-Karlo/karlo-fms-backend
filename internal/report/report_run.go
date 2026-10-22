@@ -17,6 +17,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/site"
 	"github.com/karlo/fms-backend/internal/store"
 	"github.com/karlo/fms-backend/internal/telemetry"
 )
@@ -45,10 +46,15 @@ type RunRequest struct {
 	// trucks", not one at a time, and re-running a report six times and pasting
 	// the output together is the manual work this removes.
 	VehicleIDs []int64 `json:"vehicle_ids,omitempty"`
-	From       string  `json:"from"`
-	To         string  `json:"to"`
-	AlertCode  string  `json:"alert_code"`
-	Limit      float64 `json:"limit"` // overspeed limit km/h (default 60)
+	// GeofenceIDs narrows the geofence movement report. Empty means every
+	// geofence — "what moved through my sites today" is the question people
+	// actually open that report with, and making them pick one site at a time
+	// turns one answer into eight.
+	GeofenceIDs []int64 `json:"geofence_ids,omitempty"`
+	From        string  `json:"from"`
+	To          string  `json:"to"`
+	AlertCode   string  `json:"alert_code"`
+	Limit       float64 `json:"limit"` // overspeed limit km/h (default 60)
 }
 
 // catalogColumns is every report's column set, declared once.
@@ -69,7 +75,7 @@ var catalogColumns = map[string][]Column{
 	"driver-management":          {{"employee_no", "Emp. No"}, {"full_name", "Name"}, {"phone", "Phone"}, {"license_no", "License"}, {"license_class", "Class"}, {"license_expiry", "Expiry"}, {"status", "Status"}},
 	"driver-operational-summary": {{"full_name", "Driver"}, {"license_no", "License"}, {"status", "Status"}},
 	"fuel-history":               {{"date", "Date"}, {"fuel_level", "Fuel %"}, {"event", "Event"}},
-	"geofence-inout":             {{"geofence", "Geofence"}, {"event", "Event"}, {"at", "At"}, {"dwell_min", "Dwell (min)"}},
+	"geofence-inout":             {{"at", "At"}, {"event", "Event"}, {"license_plate", "Plate"}, {"geofence", "Geofence"}, {"dwell_min", "Dwell (min)"}},
 	"gps-connection-history":     {{"offline_from", "Offline From"}, {"offline_to", "Back Online"}, {"duration_min", "Gap (min)"}, {"last_location", "Last Known Location"}, {"lat", "Lat"}, {"lon", "Lon"}},
 	"harsh-driving":              {{"date", "Date"}, {"license_plate", "Plate"}, {"event", "Event"}, {"speed", "Speed (km/h)"}, {"rate", "Δ km/h per s"}, {"location", "Location"}},
 	"pto-active-duration":        {{"started_at", "Started"}, {"ended_at", "Ended"}, {"duration_min", "Duration (min)"}},
@@ -348,7 +354,7 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		"vehicle-trip-history": true, "vehicle-trip-summary": true, "vehicle-usage-summary": true,
 		"vehicle-stop-history": true, "gps-connection-history": true, "speeding-violations": true,
 		"fuel-history": true, "temperature-history": true, "door-open-duration": true, "pto-active-duration": true,
-		"geofence-inout": true, "harsh-driving": true,
+		"harsh-driving": true,
 	}
 	if perVehicle[key] && req.VehicleID == nil {
 		return nil, fmt.Errorf("vehicle_id is required for this report")
@@ -513,13 +519,13 @@ func (s *Service) Run(ctx context.Context, tenantID int64, key string, req RunRe
 		res.Note = "No PTO-sensor data. Populates for units wired with a PTO input."
 	case "geofence-inout":
 		res.Columns = ColumnsFor(key)
-		rows, err := s.geofenceRows(ctx, tenantID, *req.VehicleID, from, to)
+		rows, err := s.geofenceRows(ctx, tenantID, req.VehicleID, req.GeofenceIDs, from, to)
 		if err != nil {
 			return nil, err
 		}
 		res.Rows = rows
 		if len(rows) == 0 {
-			res.Note = "No geofence events in this period. Create geofences (Live View → Geofences) and attach a GEOFENCE rule to the vehicle to record enter/exit."
+			res.Note = "Nothing entered or left these geofences in this period. Visits are recorded from the moment a geofence exists — if this window predates the one you are asking about, there is nothing to find."
 		}
 
 	case "harsh-driving":
@@ -893,45 +899,54 @@ func deref(s *string) string {
 	return *s
 }
 
-// geofenceRows builds Entry/Exit rows from GEOFENCE_ENTER/EXIT alerts written by
-// the telemetry collector, pairing an exit with its enter to compute dwell.
-func (s *Service) geofenceRows(ctx context.Context, tenantID, vehicleID int64, from, to time.Time) ([]map[string]any, error) {
-	rows := []map[string]any{}
+// geofenceRows is the movement log: one row per arrival and one per departure
+// across the chosen geofences, in time order.
+//
+// It reads site_visits, not alerts. The previous version paired rows by the
+// TEXT of enter/exit alerts ("Entered Gudang Semarang"), which recorded
+// nothing for a vehicle no rule was attached to and came apart the moment a
+// geofence was renamed. A visit knows its site by id and carries both
+// timestamps, so a stay still open at the end of the window shows its arrival
+// with no departure, which is the truthful answer rather than a missing row.
+func (s *Service) geofenceRows(ctx context.Context, tenantID int64, vehicleID *int64, geofenceIDs []int64, from, to time.Time) ([]map[string]any, error) {
+	var visits []site.Visit
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		rs, err := tx.Query(ctx, `
-			SELECT created_at, alert_code, COALESCE(alert_name, '')
-			FROM alerts
-			WHERE vehicle_id = $1 AND alert_code IN ('GEOFENCE_ENTER','GEOFENCE_EXIT')
-			  AND created_at >= $2 AND created_at <= $3
-			ORDER BY created_at`, vehicleID, from, to)
-		if err != nil {
-			return err
-		}
-		defer rs.Close()
-		enteredAt := map[string]time.Time{} // geofence name -> enter time
-		for rs.Next() {
-			var at time.Time
-			var code, name string
-			if err := rs.Scan(&at, &code, &name); err != nil {
-				return err
-			}
-			gf := strings.TrimPrefix(strings.TrimPrefix(name, "Entered "), "Exited ")
-			row := map[string]any{"geofence": gf, "at": ts(at), "dwell_min": any("—")}
-			if code == "GEOFENCE_ENTER" {
-				row["event"] = "Enter"
-				enteredAt[gf] = at
-			} else {
-				row["event"] = "Exit"
-				if in, ok := enteredAt[gf]; ok {
-					row["dwell_min"] = round1(at.Sub(in).Minutes())
-					delete(enteredAt, gf)
-				}
-			}
-			rows = append(rows, row)
-		}
-		return rs.Err()
+		var e error
+		visits, e = site.Window(ctx, tx, site.Geofence, geofenceIDs, from, to)
+		return e
 	})
-	return rows, err
+	if err != nil {
+		return nil, err
+	}
+	type ev struct {
+		at  time.Time
+		row map[string]any
+	}
+	evs := []ev{}
+	for _, v := range visits {
+		if vehicleID != nil && v.VehicleID != *vehicleID {
+			continue
+		}
+		// An arrival before the window started is context, not an event in it.
+		if !v.EnteredAt.Before(from) {
+			evs = append(evs, ev{v.EnteredAt, map[string]any{
+				"at": ts(v.EnteredAt), "event": "Enter", "license_plate": v.LicensePlate,
+				"geofence": v.SiteName, "dwell_min": any("—"),
+			}})
+		}
+		if v.ExitedAt != nil && !v.ExitedAt.After(to) {
+			evs = append(evs, ev{*v.ExitedAt, map[string]any{
+				"at": ts(*v.ExitedAt), "event": "Exit", "license_plate": v.LicensePlate,
+				"geofence": v.SiteName, "dwell_min": round1(v.DwellMin),
+			}})
+		}
+	}
+	sort.Slice(evs, func(i, j int) bool { return evs[i].at.Before(evs[j].at) })
+	rows := make([]map[string]any, 0, len(evs))
+	for _, e := range evs {
+		rows = append(rows, e.row)
+	}
+	return rows, nil
 }
 
 // run godoc

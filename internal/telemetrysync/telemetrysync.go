@@ -7,8 +7,11 @@
 //   - odometer sync  — copies telemetry "Total Odometer" into vehicles.odometer
 //     so km-based maintenance schedules advance by themselves
 //   - battery tamper — alerts on a sudden external-voltage drop or disconnect
-//   - geofence in/out — for vehicles attached to active GEOFENCE_ENTER/EXIT
-//     rules, detects circle-geofence transitions and writes alerts
+//   - site visits    — every vehicle's arrivals at and departures from the
+//     geofences and hangars of its account, recorded as rows in site_visits
+//     (internal/site): who is there now, since when, and for how long
+//   - geofence alerts — enter / exit / overstay, for the (vehicle, geofence)
+//     pairs an active notification rule actually asks about
 //
 // State lives in vehicle_telemetry_state (one row per tenant+vehicle), so the
 // accumulators survive restarts and transitions are edge-triggered.
@@ -31,6 +34,7 @@ import (
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/site"
 	"github.com/karlo/fms-backend/internal/store"
 	"github.com/karlo/fms-backend/internal/telemetry"
 )
@@ -118,6 +122,19 @@ type vehState struct {
 	inside       map[int64]bool
 }
 
+// alertWrite is one pending alert row. Package-level because the geofence
+// rules in geofencerules.go produce them too.
+type alertWrite struct {
+	vid      int64
+	code     string
+	name     string
+	severity string
+	lat, lon *float64
+	actual   *float64
+	limit    *float64
+	cooldown int32
+}
+
 type circleGf struct {
 	id       int64
 	name     string
@@ -130,6 +147,10 @@ func (c *Collector) syncTenant(ctx context.Context, tenantID int64) error {
 	states := map[int64]*vehState{} // vehicle id -> accumulator state
 	gfByID := map[int64]circleGf{}  // circle geofences by id
 	assigned := map[int64][]int64{} // vehicle id -> assigned geofence ids
+	// The same thing keyed for lookup: attaching a vehicle to a geofence has
+	// always meant "alert me about this pair", and that keeps working without
+	// anybody having to go and create a rule for what they already set up.
+	assignedSet := map[pair]bool{}
 	prevOdo := map[int64]*float64{} // vehicle id -> vehicles.odometer
 
 	if err := db.Tx(ctx, c.pool, tenantID, func(tx pgx.Tx) error {
@@ -226,11 +247,12 @@ func (c *Collector) syncTenant(ctx context.Context, tenantID int64) error {
 				return err
 			}
 			assigned[vid] = append(assigned[vid], gid)
+			assignedSet[pair{vid, gid}] = true
 		}
 		return rows.Err()
 	}); err != nil {
 		log.Printf("telemetrysync: tenant %d: geofence assignments unavailable (skipping geofence checks): %v", tenantID, err)
-		assigned = map[int64][]int64{}
+		assigned, assignedSet = map[int64][]int64{}, map[pair]bool{}
 	}
 
 	imeis := make([]string, 0, len(vehByIMEI))
@@ -254,17 +276,8 @@ func (c *Collector) syncTenant(ctx context.Context, tenantID int64) error {
 		lon    *float64
 	}
 	var writes []stateWrite
-	type alertWrite struct {
-		vid      int64
-		code     string
-		name     string
-		severity string
-		lat, lon *float64
-		actual   *float64
-		limit    *float64
-		cooldown int32
-	}
 	var alerts []alertWrite
+	var observations []site.Observation
 
 	for _, p := range positions {
 		vid, ok := vehByIMEI[p.IMEI]
@@ -335,29 +348,20 @@ func (c *Collector) syncTenant(ctx context.Context, tenantID int64) error {
 			st.lastGsm = g
 		}
 
-		// --- Geofence transitions (for the geofences this vehicle is assigned to).
-		if gfIDs := assigned[vid]; len(gfIDs) > 0 && p.Lat != nil && p.Lon != nil {
+		// --- Where it is, for the visit recorder below.
+		//
+		// Evaluated for EVERY geofence, not only the ones this vehicle is
+		// attached to: attachment decides who gets alerted, and deciding who
+		// is standing in a yard is a different question. inside_geofences
+		// keeps its meaning — the geofences this vehicle is inside right now.
+		if p.Lat != nil && p.Lon != nil {
+			observations = append(observations, site.Observation{
+				VehicleID: vid, Lat: *p.Lat, Lon: *p.Lon, At: sampleAt,
+			})
 			insideNow := map[int64]bool{}
-			for _, gid := range gfIDs {
-				g, ok := gfByID[gid]
-				if !ok {
-					continue
-				}
-				is := haversineKm(*p.Lat, *p.Lon, g.lat, g.lon)*1000 <= g.radiusM
-				if is {
+			for gid, g := range gfByID {
+				if haversineKm(*p.Lat, *p.Lon, g.lat, g.lon)*1000 <= g.radiusM {
 					insideNow[gid] = true
-				}
-				was := st.inside[gid]
-				if is && !was {
-					alerts = append(alerts, alertWrite{
-						vid: vid, code: "GEOFENCE_ENTER", name: "Entered " + g.name,
-						severity: "important", lat: p.Lat, lon: p.Lon, cooldown: geofenceCooldownMin,
-					})
-				} else if was && !is {
-					alerts = append(alerts, alertWrite{
-						vid: vid, code: "GEOFENCE_EXIT", name: "Exited " + g.name,
-						severity: "important", lat: p.Lat, lon: p.Lon, cooldown: geofenceCooldownMin,
-					})
 				}
 			}
 			st.inside = insideNow
@@ -420,6 +424,53 @@ func (c *Collector) syncTenant(ctx context.Context, tenantID int64) error {
 				}
 			}
 		}
+		// Site visits: arrivals and departures for every geofence and hangar,
+		// recorded whether or not anybody asked to be told about them. The
+		// presence panels and the movement report read these rows, so they
+		// must not depend on a notification rule existing.
+		if sites, err := site.LoadSites(ctx, tx); err != nil {
+			log.Printf("telemetrysync: tenant %d: sites unavailable (visits not recorded): %v", tenantID, err)
+		} else if trans, err := site.Apply(ctx, tx, tenantID, sites, observations); err != nil {
+			log.Printf("telemetrysync: tenant %d: recording visits: %v", tenantID, err)
+		} else {
+			gf, lerr := loadGeofenceRules(ctx, tx)
+			if lerr != nil {
+				log.Printf("telemetrysync: tenant %d: geofence rules unavailable: %v", tenantID, lerr)
+			}
+			alerts = append(alerts, gf.transitionAlerts(trans, assignedSet)...)
+			// Overstays: "still inside after N minutes", once per visit. The
+			// threshold is the rule's, not the geofence's — the same yard can
+			// be watched by a two-hour rule and an overnight one.
+			for _, rule := range gf.byCode("GEOFENCE_DWELL") {
+				mins := 60.0
+				if rule.threshold != nil && *rule.threshold > 0 {
+					mins = *rule.threshold
+				}
+				overs, err := site.Overstays(ctx, tx, mins)
+				if err != nil {
+					log.Printf("telemetrysync: tenant %d: overstay check: %v", tenantID, err)
+					break
+				}
+				var done []int64
+				for _, o := range overs {
+					if o.Kind != site.Geofence || !rule.covers(o.SiteID, o.VehicleID) {
+						continue
+					}
+					vid := o.VehicleID
+					dwell := o.DwellMin
+					alerts = append(alerts, alertWrite{
+						vid: vid, code: "GEOFENCE_DWELL",
+						name:     fmt.Sprintf("Still at %s after %s", o.SiteName, humanMinutes(dwell)),
+						severity: rule.urgency, actual: &dwell, limit: &mins, cooldown: 0,
+					})
+					done = append(done, o.VisitID)
+				}
+				if err := site.MarkOverstayAlerted(ctx, tx, done); err != nil {
+					return err
+				}
+			}
+		}
+
 		for _, a := range alerts {
 			vid, code, name, sev := a.vid, a.code, a.name, a.severity
 			n, err := q.CountRecentAlert(ctx, store.CountRecentAlertParams{

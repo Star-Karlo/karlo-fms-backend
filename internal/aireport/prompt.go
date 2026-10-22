@@ -105,8 +105,8 @@ type sourceEntry struct {
 var perVehicle = map[string]bool{
 	"vehicle-trip-history": true, "vehicle-trip-summary": true,
 	"vehicle-usage-summary": true, "vehicle-stop-history": true,
-	"gps-connection-history": true, "geofence-inout": true,
-	"speeding-violations": true, "harsh-driving": true,
+	"gps-connection-history": true,
+	"speeding-violations":    true, "harsh-driving": true,
 	"fuel-history": true, "temperature-history": true,
 	"door-open-duration": true, "pto-active-duration": true,
 }

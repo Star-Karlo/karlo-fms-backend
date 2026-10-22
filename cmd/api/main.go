@@ -317,15 +317,20 @@ func main() {
 	// Findings rather than figures: each vehicle compared with its own past,
 	// its peers, or a threshold. Reads the daily rollup through liveview.
 	insightH := insight.NewHandler(pool, liveSvc)
-	// Routing: OpenRouteService today, a self-hosted OSRM later. Nil when no
-	// provider is configured, which the route endpoint answers as 503.
+	// Routing. ROUTING_PROVIDER=mapid sends route requests through Karlo's own
+	// routing cache — the same engine and the same cached lanes TMS prices
+	// orders with — and is the one to use in production; the hosted providers
+	// remain for deployments without the cache. Nil when none is configured,
+	// which the route endpoint answers as 503.
 	router := routing.New(routing.Config{
-		Provider:     cfg.RoutingProvider,
-		GeoapifyKey:  cfg.GeoapifyAPIKey,
-		GeoapifyBase: cfg.GeoapifyBaseURL,
-		ORSKey:       cfg.ORSAPIKey,
-		ORSBase:      cfg.ORSBaseURL,
-		OSRMBase:     cfg.OSRMBaseURL,
+		Provider:      cfg.RoutingProvider,
+		RouteCacheURL: cfg.RouteCacheURL,
+		ServiceToken:  cfg.ServiceToken,
+		GeoapifyKey:   cfg.GeoapifyAPIKey,
+		GeoapifyBase:  cfg.GeoapifyBaseURL,
+		ORSKey:        cfg.ORSAPIKey,
+		ORSBase:       cfg.ORSBaseURL,
+		OSRMBase:      cfg.OSRMBaseURL,
 	})
 	if router == nil {
 		log.Printf("routing: no provider configured; routes and road snapping are disabled")

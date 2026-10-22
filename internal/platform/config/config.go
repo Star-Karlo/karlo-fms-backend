@@ -165,6 +165,10 @@ type Config struct {
 	// server but removes the quota and keeps fleet positions in-house. Empty
 	// leaves routing disabled and every other endpoint working.
 	RoutingProvider string
+	// RouteCacheURL is Karlo's routing cache (the routing endpoints on the
+	// geocode service), used by the "mapid" provider. FMS presents its
+	// platform service token; the MAPID key stays on that service.
+	RouteCacheURL   string
 	GeoapifyAPIKey  string
 	GeoapifyBaseURL string
 	ORSAPIKey       string
@@ -221,6 +225,7 @@ func Load() Config {
 			DrivingEventDays: EnvInt("RETENTION_DRIVING_EVENT_DAYS", 365), // 12 months
 		},
 		RoutingProvider: Env("ROUTING_PROVIDER", "geoapify"),
+		RouteCacheURL:   Env("ROUTE_CACHE_URL", ""),
 		GeoapifyAPIKey:  Env("GEOAPIFY_API_KEY", ""),
 		GeoapifyBaseURL: Env("GEOAPIFY_BASE_URL", ""),
 		ORSAPIKey:       Env("ORS_API_KEY", ""),

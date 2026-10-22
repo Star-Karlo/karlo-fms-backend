@@ -37,7 +37,7 @@ var Catalog = []Meta{
 	{"vehicle-usage-summary", "Vehicle Usage Summary", "Daily utilization per vehicle.", "Vehicle", "Trip", true},
 	{"vehicle-stop-history", "Vehicle Stop History", "Where and how long vehicles stopped.", "Vehicle", "Trip", true},
 	{"gps-connection-history", "GPS Offline/Connection History", "Device online/offline transitions.", "Vehicle", "Trip", true},
-	{"geofence-inout", "Geolocation Entry/Exit", "Geofence enter/exit and dwell time.", "Vehicle", "Geolocation", true},
+	{"geofence-inout", "Geolocation Entry/Exit", "Who entered and left which geofence, in time order, with how long they stayed. One vehicle or the whole fleet; one geofence or all of them.", "Fleet", "Geolocation", true},
 	{"vehicle-alerts-history", "Vehicle Alerts History", "All safety/telematics alerts over a period.", "Vehicle", "Alert", true},
 	{"vehicle-alerts-summary", "Vehicle Alerts Summary", "Alert counts by type and vehicle.", "Vehicle", "Alert", true},
 	{"speeding-violations", "Speeding Violations", "Overspeed events with actual vs limit.", "Vehicle", "Alert", true},

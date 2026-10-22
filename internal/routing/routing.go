@@ -268,12 +268,16 @@ func (o *OSRM) Route(ctx context.Context, from, to Point) (*Route, error) {
 
 // Config selects and configures a provider.
 type Config struct {
-	Provider     string // geoapify | ors | osrm
-	GeoapifyKey  string
-	GeoapifyBase string
-	ORSKey       string
-	ORSBase      string
-	OSRMBase     string
+	Provider string // mapid | geoapify | ors | osrm
+	// RouteCacheURL + ServiceToken drive the "mapid" provider: Karlo's own
+	// routing cache, which is also what TMS prices orders against.
+	RouteCacheURL string
+	ServiceToken  string
+	GeoapifyKey   string
+	GeoapifyBase  string
+	ORSKey        string
+	ORSBase       string
+	OSRMBase      string
 }
 
 // New picks a provider. Returns nil when none is set up, which callers surface
@@ -283,6 +287,13 @@ type Config struct {
 // permits commercial use on its free tier AND offers map matching.
 func New(c Config) Router {
 	switch c.Provider {
+	case "mapid":
+		// Through Karlo's routing cache, which already holds the lanes TMS
+		// priced — see mapid.go for why that is the point.
+		if c.RouteCacheURL == "" || c.ServiceToken == "" {
+			return nil
+		}
+		return NewMAPID(c.RouteCacheURL, c.ServiceToken)
 	case "osrm":
 		if c.OSRMBase == "" {
 			return nil

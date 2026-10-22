@@ -2630,13 +2630,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
+                "description": "` + "`" + `present` + "`" + ` counts vehicles currently inside (confirmed visits — a vehicle that only clipped the edge is not counted). ` + "`" + `watching` + "`" + ` is how many vehicles are attached for alerts; 0 means the whole fleet.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "geofences"
                 ],
-                "summary": "List geofences",
+                "summary": "List geofences, with how many vehicles are inside each one",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -2682,17 +2683,188 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/geofence.Geofence"
                         }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/geofences/visits": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every visit overlapping the window, oldest arrival first. Omit ` + "`" + `geofence_ids` + "`" + ` for all of them. A visit still open has a null ` + "`" + `exited_at` + "`" + ` and a ` + "`" + `dwell_min` + "`" + ` counted up to now.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "Movement log: who entered and left which geofence, in time order",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "comma-separated geofence ids (default: all)",
+                        "name": "geofence_ids",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/site.Visit"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
         },
         "/v1/geofences/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "One geofence",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "geofence id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/geofence.Geofence"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Moving a geofence or changing its radius ENDS every open visit at it: the stays recorded so far happened at the old circle, and leaving them open would attribute time to a place that is no longer where it was. Vehicles inside the new circle open a fresh visit on the next collector pass.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "Edit a geofence",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "geofence id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "geofence",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/geofence.UpsertRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/geofence.Geofence"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
             "delete": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
+                "description": "Its recorded visits go with it, so the movement report loses this site's history. Deactivating instead keeps the record and stops the watching.",
                 "tags": [
                     "geofences"
                 ],
@@ -2713,6 +2885,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/geofences/{id}/presence": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Longest stay first. ` + "`" + `dwell_min` + "`" + ` counts from the first fix inside, including the part before the arrival delay confirmed it. A vehicle that only clipped the edge never appears.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geofences"
+                ],
+                "summary": "Vehicles inside a geofence right now, and since when",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "geofence id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/site.Visit"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/geofences/{id}/vehicles": {
             "get": {
                 "security": [
@@ -2720,13 +2929,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
+                "description": "An empty list means the geofence watches every vehicle in the account. Attaching narrows it.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "geofences"
                 ],
-                "summary": "Vehicles assigned to a geofence (they get Enter/Exit alerts)",
+                "summary": "Vehicles attached to a geofence (they get Enter/Exit alerts)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -2759,7 +2969,7 @@ const docTemplate = `{
                 "tags": [
                     "geofences"
                 ],
-                "summary": "Assign a vehicle to a geofence (starts Enter/Exit alerts)",
+                "summary": "Attach a vehicle to a geofence (starts Enter/Exit alerts for it)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -2791,7 +3001,7 @@ const docTemplate = `{
                 "tags": [
                     "geofences"
                 ],
-                "summary": "Unassign a vehicle from a geofence",
+                "summary": "Detach a vehicle from a geofence",
                 "parameters": [
                     {
                         "type": "integer",
@@ -5263,6 +5473,171 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/vehicles/by-plate/{plate}/history": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Identical to /v1/vehicles/{vehicle_id}/history, with the plate in place of the id. Spacing, dashes and case are ignored, so \"B 9012 UBC\", \"B9012UBC\" and \"b-9012-ubc\" all resolve to the same truck.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Vehicle historical track, addressed by nomor polisi",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "nomor polisi, e.g. B 9012 UBC",
+                        "name": "plate",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "cap on returned points",
+                        "name": "max_points",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "overspeed limit km/h for the over_limit flag (default 60)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "tracker | camera | both",
+                        "name": "source",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-liveview_TripPoint"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/vehicles/by-plate/{plate}/live": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Live position and status, addressed by nomor polisi",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "nomor polisi",
+                        "name": "plate",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.VehicleLive"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/vehicles/history-summary": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The figures from the history panel — distance, max speed, harsh events, idle — for a list of trucks named by plate or id, in ONE request. No track points come back; ` + "`" + `fields` + "`" + ` chooses which figures to compute, defaulting to the panel's own set. Up to 50 vehicles and 31 days per call. A vehicle whose telemetry cannot be read comes back as a row carrying ` + "`" + `error` + "`" + `, so one dead tracker does not fail the batch.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Historical summary for several vehicles at once",
+                "parameters": [
+                    {
+                        "description": "vehicles, window and fields",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/liveview.SummaryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.SummaryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/vehicles/{id}": {
             "get": {
                 "security": [
@@ -7621,13 +7996,25 @@ const docTemplate = `{
         "geofence.CreateRequest": {
             "type": "object",
             "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "address": {
+                    "type": "string"
+                },
                 "lat": {
                     "type": "number"
                 },
                 "lon": {
                     "type": "number"
                 },
+                "min_dwell_min": {
+                    "type": "integer"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "notes": {
                     "type": "string"
                 },
                 "radius_m": {
@@ -7638,6 +8025,12 @@ const docTemplate = `{
         "geofence.Geofence": {
             "type": "object",
             "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "address": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -7650,7 +8043,51 @@ const docTemplate = `{
                 "lon": {
                     "type": "number"
                 },
+                "min_dwell_min": {
+                    "description": "MinDwellMin is how long a vehicle must stay inside before it counts as\nhaving arrived. 0 means the first fix inside counts, which is right for\na large site and wrong for a small one on a through road.",
+                    "type": "integer"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "present": {
+                    "description": "Present is how many vehicles are inside right now.",
+                    "type": "integer"
+                },
+                "radius_m": {
+                    "type": "number"
+                },
+                "watching": {
+                    "description": "Watching is how many vehicles are attached; 0 means the whole fleet.",
+                    "type": "integer"
+                }
+            }
+        },
+        "geofence.UpsertRequest": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "address": {
+                    "type": "string"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lon": {
+                    "type": "number"
+                },
+                "min_dwell_min": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "notes": {
                     "type": "string"
                 },
                 "radius_m": {
@@ -8060,11 +8497,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "distance_m": {
-                    "description": "DistanceM is how far away it is, so a no-show can be chased.",
+                    "description": "DistanceM is how far away it is, so a no-show can be chased. Only set\nfor vehicles that have NOT arrived.",
                     "type": "integer"
                 },
                 "due_at": {
                     "type": "string"
+                },
+                "dwell_min": {
+                    "type": "number"
                 },
                 "license_plate": {
                     "type": "string"
@@ -8072,6 +8512,10 @@ const docTemplate = `{
                 "present": {
                     "description": "Present is whether the vehicle is physically here right now, which is not\nthe same as being booked here.",
                     "type": "boolean"
+                },
+                "since": {
+                    "description": "Since and DwellMin are the arrival time and how long it has been here —\nthe difference between \"it is at the workshop\" and \"it has been at the\nworkshop for three days\".",
+                    "type": "string"
                 },
                 "status": {
                     "type": "string"
@@ -8908,6 +9352,110 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "provider": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "liveview.SummaryRequest": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "description": "Fields chooses what to compute and return. Empty means the default set\n(everything in the history panel). Unknown names are rejected rather\nthan ignored, because a typo that silently drops a column is found in\nproduction by the person reading the spreadsheet.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "distance_km",
+                        "max_speed"
+                    ]
+                },
+                "from": {
+                    "description": "From and To are RFC3339. A window longer than 31 days is refused: the\nfigures are computed from the raw track, and a year of forty trucks is\nnot a request, it is an outage.",
+                    "type": "string",
+                    "example": "2026-10-21T00:00:00+07:00"
+                },
+                "idle_threshold_min": {
+                    "description": "IdleThresholdMin is how long a stop must last to count as idle; default 5.",
+                    "type": "number",
+                    "example": 5
+                },
+                "overspeed_limit": {
+                    "description": "OverspeedLimit (km/h) decides what counts as overspeed; default 60.",
+                    "type": "number",
+                    "example": 60
+                },
+                "plates": {
+                    "description": "Plates and VehicleIDs both select vehicles; give either or both. Empty\nmeans every vehicle in the account that has a tracker — convenient, and\nslow enough on a large fleet that it is not the default anyone reaches\nfor by accident.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "B 9012 UBC",
+                        "B 9013 UBD"
+                    ]
+                },
+                "to": {
+                    "type": "string",
+                    "example": "2026-10-22T00:00:00+07:00"
+                },
+                "vehicle_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "liveview.SummaryResponse": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "from": {
+                    "type": "string"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.SummaryRow"
+                    }
+                },
+                "not_found": {
+                    "description": "NotFound lists plates that matched no vehicle, so a caller can tell a\ntypo from a quiet truck.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
+        "liveview.SummaryRow": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error is set when this vehicle's figures could not be computed — the\nrest of the fleet still comes back, with this row saying why it did not.",
+                    "type": "string"
+                },
+                "fields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "license_plate": {
                     "type": "string"
                 },
                 "vehicle_id": {
@@ -9965,6 +10513,13 @@ const docTemplate = `{
                 "from": {
                     "type": "string"
                 },
+                "geofence_ids": {
+                    "description": "GeofenceIDs narrows the geofence movement report. Empty means every\ngeofence — \"what moved through my sites today\" is the question people\nactually open that report with, and making them pick one site at a time\nturns one answer into eight.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "limit": {
                     "description": "overspeed limit km/h (default 60)",
                     "type": "number"
@@ -10209,6 +10764,54 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "weight": {
+                    "type": "integer"
+                }
+            }
+        },
+        "site.Kind": {
+            "type": "string",
+            "enum": [
+                "geofence",
+                "hangar"
+            ],
+            "x-enum-varnames": [
+                "Geofence",
+                "Hangar"
+            ]
+        },
+        "site.Visit": {
+            "type": "object",
+            "properties": {
+                "dwell_min": {
+                    "description": "DwellMin is the finished stay's length, or — while the vehicle is still\nthere — how long it has been there so far. The field a presence panel\nshows, computed here so every caller agrees on it.",
+                    "type": "number"
+                },
+                "entered_at": {
+                    "type": "string"
+                },
+                "exited_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "$ref": "#/definitions/site.Kind"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "open": {
+                    "description": "Open says whether the vehicle is still inside.",
+                    "type": "boolean"
+                },
+                "site_id": {
+                    "type": "integer"
+                },
+                "site_name": {
+                    "type": "string"
+                },
+                "vehicle_id": {
                     "type": "integer"
                 }
             }
