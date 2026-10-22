@@ -209,6 +209,46 @@ message Truck {
   // that wants a position already lists trucks, and a second round trip per
   // truck to turn an id into an IMEI is the query this field exists to avoid.
   string imei = 19;
+
+  // The six below are OPTIONAL, and that is the whole point of them.
+  //
+  // A proto3 scalar has no null: a plain `double fuel_tank_liters` arrives as
+  // 0 whether the tank holds nothing or nobody has ever recorded it. Those are
+  // different answers, and the consumer that matters cannot tell them apart —
+  // FMS projects master data over its own copy, so it has to distinguish "master
+  // data says 340" from "master data knows nothing, keep what the operator
+  // typed here". Flattened to 0, the first sync after this would write zeroes
+  // across every vehicle in the fleet.
+  //
+  // `optional` gives explicit presence and a pointer in Go, which matches the
+  // *float64 these already are in master data and in FMS. Nothing here is
+  // nullable by accident.
+  //
+  // They were modelled on both sides long before anything carried them between
+  // the two: master data has had fuelTankLiters and fuelRatioKmpl since the
+  // vehicle register was written, FMS has had the same two columns, and
+  // vehiclesync deliberately projected neither — "odometer, fuel figures,
+  // tracker link and notes are FMS's own". This contract is what lets that
+  // decision be revisited.
+
+  optional string color = 20;
+
+  // Lifetime counters. Read from the device in FMS, entered by hand in TMS,
+  // and the same number either way.
+  optional double odometer_km = 21;
+  optional double hourmeter_hours = 22;
+
+  // Tank size and configured efficiency.
+  //
+  // Tank size is the input a sensor-measured fuel figure cannot do without: a
+  // fuel probe reports a PERCENTAGE, and litres are that drop times the tank.
+  // The ratio is the fallback for a truck with no probe — and an OUTPUT where
+  // there is one, since distance divided by litres actually burned is the real
+  // figure and this is only the estimate.
+  optional double fuel_tank_liters = 23;
+  optional double fuel_ratio_kmpl = 24;
+
+  optional string notes = 25;
 }
 
 message GetTruckRequest {

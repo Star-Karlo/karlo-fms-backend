@@ -335,24 +335,62 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 			}
 			r.Inserted += int(ct.RowsAffected())
 
-			// 3. Keep the projected fields in step. Only the ones master data
-			//    owns: odometer, fuel figures, tracker link and notes are FMS's
-			//    own and are never touched by this.
+			// 3. Keep the projected fields in step.
+			//
+			//    Colour, the two lifetime counters, the two fuel figures and
+			//    notes were excluded here until the Truck contract could carry
+			//    them — this comment used to read "odometer, fuel figures,
+			//    tracker link and notes are FMS's own", which was true only
+			//    because there was no way to receive them. Master data has
+			//    held all six since the vehicle register was written, and FMS
+			//    has a column for each, so the fleet had two copies of every
+			//    one with nothing keeping them honest. The tracker link is
+			//    still FMS's; trackersync owns it, and the id spaces differ.
+			//
+			//    THE SIX ARE PROJECTED NON-DESTRUCTIVELY, and that is not a
+			//    nicety. Master data is empty for almost the whole fleet,
+			//    because until this week nothing in TMS could even enter a
+			//    tank size. A plain assignment would write those nulls over
+			//    every figure an FMS operator has typed, across every vehicle,
+			//    on the first pass, with no error anywhere. COALESCE means
+			//    master data wins where it HAS an opinion and FMS keeps what
+			//    it has where master data does not — so the authority moves
+			//    across as values are entered rather than all at once.
+			//
+			//    This relies on presence surviving the whole way: optional in
+			//    the proto, pointers through mdclient, NULL on the wire here.
+			//    Flatten it anywhere and a nil becomes 0.0, which COALESCE
+			//    treats as an opinion — and a zero-litre tank divides into
+			//    every fuel figure derived from it.
 			//
 			//    The WHERE clause makes this a no-op when nothing changed, so
 			//    the count means "actually differed" rather than "row visited"
 			//    — a sync that reports 1,988 updates every five minutes tells
 			//    nobody anything.
 			ct, err = tx.Exec(ctx, `
-				UPDATE vehicles SET license_plate = $2,
-				                    hull_no       = COALESCE(NULLIF($3,''), hull_no),
-				                    unit_year     = COALESCE(NULLIF($4,0)::int, unit_year),
-				                    updated_at    = now()
+				UPDATE vehicles SET license_plate    = $2,
+				                    hull_no          = COALESCE(NULLIF($3,''), hull_no),
+				                    unit_year        = COALESCE(NULLIF($4,0)::int, unit_year),
+				                    color            = COALESCE($5, color),
+				                    odometer         = COALESCE($6, odometer),
+				                    hourmeter        = COALESCE($7, hourmeter),
+				                    fuel_tank_liters = COALESCE($8, fuel_tank_liters),
+				                    fuel_ratio_kmpl  = COALESCE($9, fuel_ratio_kmpl),
+				                    notes            = COALESCE($10, notes),
+				                    updated_at       = now()
 				 WHERE master_data_id = $1
 				   AND (license_plate IS DISTINCT FROM $2
 				        OR (NULLIF($3,'') IS NOT NULL AND hull_no   IS DISTINCT FROM $3)
-				        OR (NULLIF($4,0)  IS NOT NULL AND unit_year IS DISTINCT FROM $4::int))`,
-				v.ID, plate, v.ChassisNumber, v.Year)
+				        OR (NULLIF($4,0)  IS NOT NULL AND unit_year IS DISTINCT FROM $4::int)
+				        OR ($5  IS NOT NULL AND color            IS DISTINCT FROM $5)
+				        OR ($6  IS NOT NULL AND odometer         IS DISTINCT FROM $6)
+				        OR ($7  IS NOT NULL AND hourmeter        IS DISTINCT FROM $7)
+				        OR ($8  IS NOT NULL AND fuel_tank_liters IS DISTINCT FROM $8)
+				        OR ($9  IS NOT NULL AND fuel_ratio_kmpl  IS DISTINCT FROM $9)
+				        OR ($10 IS NOT NULL AND notes            IS DISTINCT FROM $10))`,
+				v.ID, plate, v.ChassisNumber, v.Year,
+				v.Color, v.OdometerKm, v.HourmeterHours,
+				v.FuelTankLiters, v.FuelRatioKmpl, v.Notes)
 			if err != nil {
 				return err
 			}

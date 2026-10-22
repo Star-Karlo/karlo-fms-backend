@@ -247,6 +247,11 @@ func (s *Service) Create(ctx context.Context, tenantID int64, caller mdwrite.Cal
 	if s.md != nil {
 		mv := mdVehicle(req.LicensePlate, req.HullNo, req.UnitYear, req.Status)
 		mv.BrandID, mv.TruckBodyID, mv.TruckHeadID = s.catalogIDs(ctx, s.company(ctx, tenantID), req.Manufacturer, req.VehicleType, req.BoxType)
+		// So a truck added in FMS arrives upstream complete, rather than
+		// needing the same figures typed again on the other side.
+		mv.OdometerKm, mv.HourmeterHours = req.Odometer, req.Hourmeter
+		mv.FuelTankLiters, mv.FuelRatioKmpl = req.FuelTankLiters, req.FuelRatioKmpl
+		mv.Notes = req.Notes
 		id, err := s.md.CreateVehicle(ctx, caller, mv)
 		if err != nil {
 			return nil, err
@@ -352,8 +357,15 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 	// An UNPAIRED vehicle is skipped, not created: it predates write-through and
 	// belongs to the backfill, which handles the whole set deliberately rather
 	// than racing it one edit at a time.
+	// The six below join the list because master data now carries them. Until
+	// it did, an edit to a tank size here stayed here: vehiclesync could not
+	// receive the field, so the two products kept divergent copies of every
+	// one of them with nothing to reconcile them. An FMS edit is no longer a
+	// local fact.
 	touchesMD := req.LicensePlate != nil || req.HullNo != nil || req.UnitYear != nil || req.Status != nil ||
-		req.Manufacturer != nil || req.VehicleType != nil || req.BoxType != nil
+		req.Manufacturer != nil || req.VehicleType != nil || req.BoxType != nil ||
+		req.Odometer != nil || req.Hourmeter != nil ||
+		req.FuelTankLiters != nil || req.FuelRatioKmpl != nil || req.Notes != nil
 	if s.md != nil && mdID != nil && touchesMD {
 		v := mdwrite.Vehicle{}
 		v.BrandID, v.TruckBodyID, v.TruckHeadID = s.catalogIDs(ctx, s.company(ctx, tenantID), req.Manufacturer, req.VehicleType, req.BoxType)
@@ -369,6 +381,18 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 		if req.Status != nil {
 			v.Status = *req.Status
 		}
+		// Passed straight through as pointers: nil means the caller did not
+		// touch the field, and master data leaves an absent key alone. The
+		// request's own fields are already *T for the same reason.
+		//
+		// Colour is absent on purpose — FMS's own API never exposed it, on
+		// create or update, so there is nothing here to send. It therefore
+		// travels master data -> FMS only, which vehiclesync now does.
+		v.OdometerKm = req.Odometer
+		v.HourmeterHours = req.Hourmeter
+		v.FuelTankLiters = req.FuelTankLiters
+		v.FuelRatioKmpl = req.FuelRatioKmpl
+		v.Notes = req.Notes
 		if err := s.md.UpdateVehicle(ctx, caller, *mdID, v); err != nil {
 			// Local write is already committed and cannot be rolled back here,
 			// but the caller must learn it did not reach TMS.

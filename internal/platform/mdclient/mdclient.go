@@ -66,6 +66,24 @@ type Vehicle struct {
 	BrandID, TruckBodyID, TruckHeadID string
 	// TruckGroupID is the vehicle group (FMS: fleet group); empty = none.
 	TruckGroupID string
+
+	/* POINTERS, where every field above is a value.
+
+	   The contract declares these `optional` and the difference is load
+	   bearing here, not upstream: vehiclesync projects master data over
+	   fms_app.vehicles, and it has to tell "master data says 340 litres" from
+	   "master data knows nothing about this truck's tank". Both arrive as 0.0
+	   if presence is dropped at this boundary, and the projection would then
+	   write zeroes over figures operators entered in FMS — across the whole
+	   fleet, on the first pass, silently.
+
+	   So nil means "upstream has no opinion, keep what is here". */
+	Color          *string
+	OdometerKm     *float64
+	HourmeterHours *float64
+	FuelTankLiters *float64
+	FuelRatioKmpl  *float64
+	Notes          *string
 }
 
 // DeviceAssignment is one stretch during which a vehicle carried a device.
@@ -218,6 +236,15 @@ func (c *Client) ListVehicles(ctx context.Context, companyID string) ([]Vehicle,
 				TruckBodyID:   t.GetTruckBodyId(),
 				TruckHeadID:   t.GetTruckHeadId(),
 				TruckGroupID:  t.GetTruckGroupId(),
+				// NOT GetX(): the generated getters return the zero value for
+				// an absent optional, which is exactly the distinction the
+				// field comments above exist to keep. Read the pointers.
+				Color:          t.Color,
+				OdometerKm:     t.OdometerKm,
+				HourmeterHours: t.HourmeterHours,
+				FuelTankLiters: t.FuelTankLiters,
+				FuelRatioKmpl:  t.FuelRatioKmpl,
+				Notes:          t.Notes,
 			})
 		}
 

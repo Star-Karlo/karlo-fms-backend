@@ -232,6 +232,23 @@ type Vehicle struct {
 	BrandID     string `json:"brandId,omitempty"`
 	TruckBodyID string `json:"truckBodyId,omitempty"`
 	TruckHeadID string `json:"truckHeadId,omitempty"`
+	/* The six fields both products hold, sent upstream so master data learns
+	   about an edit made here.
+
+	   POINTERS with omitempty, which together mean "send only what was
+	   touched". Master data applies a number whenever the KEY IS PRESENT and
+	   ignores a null, so a zero-valued field left in the payload would record
+	   a tank that holds nothing — and an omitted one correctly leaves the
+	   upstream value alone. A plain float64 cannot express that difference;
+	   `omitempty` on a 0 would also drop a genuine zero odometer, which is a
+	   real reading on a new truck. */
+	Color          *string  `json:"color,omitempty"`
+	OdometerKm     *float64 `json:"odometerKm,omitempty"`
+	HourmeterHours *float64 `json:"hourmeterHours,omitempty"`
+	FuelTankLiters *float64 `json:"fuelTankLiters,omitempty"`
+	FuelRatioKmpl  *float64 `json:"fuelRatioKmpl,omitempty"`
+	Notes          *string  `json:"notes,omitempty"`
+
 	// Attributes MERGE upstream rather than replace, so writing fmsVehicleId
 	// here does not erase whatever else the record carries.
 	Attributes map[string]any `json:"attributes,omitempty"`

@@ -771,9 +771,24 @@ type Truck struct {
 	// Carried on the truck rather than fetched separately because every caller
 	// that wants a position already lists trucks, and a second round trip per
 	// truck to turn an id into an IMEI is the query this field exists to avoid.
-	Imei          string `protobuf:"bytes,19,opt,name=imei,proto3" json:"imei,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Imei  string  `protobuf:"bytes,19,opt,name=imei,proto3" json:"imei,omitempty"`
+	Color *string `protobuf:"bytes,20,opt,name=color,proto3,oneof" json:"color,omitempty"`
+	// Lifetime counters. Read from the device in FMS, entered by hand in TMS,
+	// and the same number either way.
+	OdometerKm     *float64 `protobuf:"fixed64,21,opt,name=odometer_km,json=odometerKm,proto3,oneof" json:"odometer_km,omitempty"`
+	HourmeterHours *float64 `protobuf:"fixed64,22,opt,name=hourmeter_hours,json=hourmeterHours,proto3,oneof" json:"hourmeter_hours,omitempty"`
+	// Tank size and configured efficiency.
+	//
+	// Tank size is the input a sensor-measured fuel figure cannot do without: a
+	// fuel probe reports a PERCENTAGE, and litres are that drop times the tank.
+	// The ratio is the fallback for a truck with no probe — and an OUTPUT where
+	// there is one, since distance divided by litres actually burned is the real
+	// figure and this is only the estimate.
+	FuelTankLiters *float64 `protobuf:"fixed64,23,opt,name=fuel_tank_liters,json=fuelTankLiters,proto3,oneof" json:"fuel_tank_liters,omitempty"`
+	FuelRatioKmpl  *float64 `protobuf:"fixed64,24,opt,name=fuel_ratio_kmpl,json=fuelRatioKmpl,proto3,oneof" json:"fuel_ratio_kmpl,omitempty"`
+	Notes          *string  `protobuf:"bytes,25,opt,name=notes,proto3,oneof" json:"notes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Truck) Reset() {
@@ -935,6 +950,48 @@ func (x *Truck) GetUpdatedAt() *timestamppb.Timestamp {
 func (x *Truck) GetImei() string {
 	if x != nil {
 		return x.Imei
+	}
+	return ""
+}
+
+func (x *Truck) GetColor() string {
+	if x != nil && x.Color != nil {
+		return *x.Color
+	}
+	return ""
+}
+
+func (x *Truck) GetOdometerKm() float64 {
+	if x != nil && x.OdometerKm != nil {
+		return *x.OdometerKm
+	}
+	return 0
+}
+
+func (x *Truck) GetHourmeterHours() float64 {
+	if x != nil && x.HourmeterHours != nil {
+		return *x.HourmeterHours
+	}
+	return 0
+}
+
+func (x *Truck) GetFuelTankLiters() float64 {
+	if x != nil && x.FuelTankLiters != nil {
+		return *x.FuelTankLiters
+	}
+	return 0
+}
+
+func (x *Truck) GetFuelRatioKmpl() float64 {
+	if x != nil && x.FuelRatioKmpl != nil {
+		return *x.FuelRatioKmpl
+	}
+	return 0
+}
+
+func (x *Truck) GetNotes() string {
+	if x != nil && x.Notes != nil {
+		return *x.Notes
 	}
 	return ""
 }
@@ -2726,7 +2783,7 @@ const file_karlo_masterdata_v1_masterdata_proto_rawDesc = "" +
 	"company_id\x18\x02 \x01(\tR\tcompanyId\"m\n" +
 	"\x1aValidateReferencesResponse\x12\x14\n" +
 	"\x05valid\x18\x01 \x01(\bR\x05valid\x129\n" +
-	"\ainvalid\x18\x02 \x03(\v2\x1f.karlo.masterdata.v1.CatalogRefR\ainvalid\"\x9d\x05\n" +
+	"\ainvalid\x18\x02 \x03(\v2\x1f.karlo.masterdata.v1.CatalogRefR\ainvalid\"\xe4\a\n" +
 	"\x05Truck\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -2751,7 +2808,20 @@ const file_karlo_masterdata_v1_masterdata_proto_rawDesc = "" +
 	"created_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
 	"updated_at\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x12\n" +
-	"\x04imei\x18\x13 \x01(\tR\x04imei\"!\n" +
+	"\x04imei\x18\x13 \x01(\tR\x04imei\x12\x19\n" +
+	"\x05color\x18\x14 \x01(\tH\x00R\x05color\x88\x01\x01\x12$\n" +
+	"\vodometer_km\x18\x15 \x01(\x01H\x01R\n" +
+	"odometerKm\x88\x01\x01\x12,\n" +
+	"\x0fhourmeter_hours\x18\x16 \x01(\x01H\x02R\x0ehourmeterHours\x88\x01\x01\x12-\n" +
+	"\x10fuel_tank_liters\x18\x17 \x01(\x01H\x03R\x0efuelTankLiters\x88\x01\x01\x12+\n" +
+	"\x0ffuel_ratio_kmpl\x18\x18 \x01(\x01H\x04R\rfuelRatioKmpl\x88\x01\x01\x12\x19\n" +
+	"\x05notes\x18\x19 \x01(\tH\x05R\x05notes\x88\x01\x01B\b\n" +
+	"\x06_colorB\x0e\n" +
+	"\f_odometer_kmB\x12\n" +
+	"\x10_hourmeter_hoursB\x13\n" +
+	"\x11_fuel_tank_litersB\x12\n" +
+	"\x10_fuel_ratio_kmplB\b\n" +
+	"\x06_notes\"!\n" +
 	"\x0fGetTruckRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"D\n" +
 	"\x10GetTruckResponse\x120\n" +
@@ -3097,6 +3167,7 @@ func file_karlo_masterdata_v1_masterdata_proto_init() {
 	if File_karlo_masterdata_v1_masterdata_proto != nil {
 		return
 	}
+	file_karlo_masterdata_v1_masterdata_proto_msgTypes[10].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
