@@ -214,6 +214,90 @@ func (q *Queries) CreateVehicle(ctx context.Context, arg CreateVehicleParams) (V
 	return i, err
 }
 
+const deleteVehicle = `-- name: DeleteVehicle :execrows
+DELETE FROM vehicles WHERE id = $1
+`
+
+func (q *Queries) DeleteVehicle(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteVehicle, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteVehicleAlerts = `-- name: DeleteVehicleAlerts :execrows
+
+DELETE FROM alerts WHERE vehicle_id = $1
+`
+
+// Hard delete, the second step of a two-stage delete: a truck already
+// archived is removed for good. The FMS rows that name it have to go first —
+// alerts, service schedules and score events reference it with no ON DELETE
+// clause, so they would block the delete, and sop_runs and documents carry no
+// foreign key at all and would be left pointing at an id that no longer
+// exists. The rest the database handles itself: telemetry state, geofence
+// membership, rule attachments and the tracker fit history cascade away;
+// dashcams, video clips and driving events keep their row and lose the link.
+//
+// Telemetry (positions, trips) lives in the other database keyed by IMEI and
+// is NOT touched by any of this.
+func (q *Queries) DeleteVehicleAlerts(ctx context.Context, vehicleID *int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteVehicleAlerts, vehicleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteVehicleDocuments = `-- name: DeleteVehicleDocuments :execrows
+DELETE FROM documents WHERE owner_type = 'vehicle' AND owner_id = $1
+`
+
+func (q *Queries) DeleteVehicleDocuments(ctx context.Context, ownerID int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteVehicleDocuments, ownerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteVehicleScoreEvents = `-- name: DeleteVehicleScoreEvents :execrows
+DELETE FROM driver_score_events WHERE vehicle_id = $1
+`
+
+func (q *Queries) DeleteVehicleScoreEvents(ctx context.Context, vehicleID *int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteVehicleScoreEvents, vehicleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteVehicleServiceSchedules = `-- name: DeleteVehicleServiceSchedules :execrows
+DELETE FROM service_schedules WHERE vehicle_id = $1
+`
+
+func (q *Queries) DeleteVehicleServiceSchedules(ctx context.Context, vehicleID *int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteVehicleServiceSchedules, vehicleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteVehicleSopRuns = `-- name: DeleteVehicleSopRuns :execrows
+DELETE FROM sop_runs WHERE vehicle_id = $1
+`
+
+func (q *Queries) DeleteVehicleSopRuns(ctx context.Context, vehicleID int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteVehicleSopRuns, vehicleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getLiveViewVehicle = `-- name: GetLiveViewVehicle :one
 SELECT
   v.id            AS vehicle_id,
@@ -469,6 +553,10 @@ type ListLiveViewVehiclesRow struct {
 // endpoint enriches each with a position — the tracker fix, else the camera
 // fix, else the assigned driver's phone.
 // At most one camera per vehicle stands in for GPS; pick the lowest-id device.
+// Retired trucks are off the map. 'repair' stays on it: a truck in the
+// workshop is still a truck somebody drives there and back, and the registry
+// status travels with the row so the panel can say why it is not working.
+// Only 'archive' means deleted.
 func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64) ([]ListLiveViewVehiclesRow, error) {
 	rows, err := q.db.Query(ctx, listLiveViewVehicles, fleetGroupID)
 	if err != nil {

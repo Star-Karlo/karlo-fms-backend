@@ -3287,6 +3287,22 @@ definitions:
       vehicle_type:
         type: string
     type: object
+  vehicle.RemoveResult:
+    properties:
+      archived:
+        description: Archived is true for the first step, Deleted for the second.
+        type: boolean
+      deleted:
+        type: boolean
+      removed:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: |-
+          Removed counts the dependent FMS rows a hard delete destroyed, by kind,
+          so the answer can say what was lost rather than just "ok".
+        type: object
+    type: object
   vehicle.UpdateRequest:
     properties:
       box_type:
@@ -6752,18 +6768,43 @@ paths:
       - vehicles
   /v1/vehicles/{id}:
     delete:
+      description: 'Two steps, because "delete" means two things. On an active vehicle
+        this archives it: out of live view and the registry''s default list, still
+        there to explain past trips, and retired in master data so the projection
+        does not restore it. Called again on a vehicle that is ALREADY archived, it
+        deletes the row for good, together with the FMS records that name it (alerts,
+        service schedules, score events, SOP runs, documents) and, by cascade, its
+        telemetry state, geofence membership, rule attachments and tracker fit history.
+        Telemetry itself — positions and trips — lives in the other database keyed
+        by IMEI and is not touched. The response says which step ran.'
       parameters:
       - description: vehicle id
         in: path
         name: id
         required: true
         type: integer
+      produces:
+      - application/json
       responses:
-        "204":
-          description: No Content
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vehicle.RemoveResult'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: master data would not retire it, so nothing was changed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       security:
       - BearerAuth: []
-      summary: Archive (soft-delete) a vehicle
+      summary: Delete a vehicle — archive first, remove on the second call
       tags:
       - vehicles
     get:

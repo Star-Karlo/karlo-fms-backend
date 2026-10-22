@@ -5353,10 +5353,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
+                "description": "Two steps, because \"delete\" means two things. On an active vehicle this archives it: out of live view and the registry's default list, still there to explain past trips, and retired in master data so the projection does not restore it. Called again on a vehicle that is ALREADY archived, it deletes the row for good, together with the FMS records that name it (alerts, service schedules, score events, SOP runs, documents) and, by cascade, its telemetry state, geofence membership, rule attachments and tracker fit history. Telemetry itself — positions and trips — lives in the other database keyed by IMEI and is not touched. The response says which step ran.",
+                "produces": [
+                    "application/json"
+                ],
                 "tags": [
                     "vehicles"
                 ],
-                "summary": "Archive (soft-delete) a vehicle",
+                "summary": "Delete a vehicle — archive first, remove on the second call",
                 "parameters": [
                     {
                         "type": "integer",
@@ -5367,8 +5371,29 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/vehicle.RemoveResult"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "master data would not retire it, so nothing was changed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
@@ -10787,6 +10812,26 @@ const docTemplate = `{
                 },
                 "vehicle_type": {
                     "type": "string"
+                }
+            }
+        },
+        "vehicle.RemoveResult": {
+            "type": "object",
+            "properties": {
+                "archived": {
+                    "description": "Archived is true for the first step, Deleted for the second.",
+                    "type": "boolean"
+                },
+                "deleted": {
+                    "type": "boolean"
+                },
+                "removed": {
+                    "description": "Removed counts the dependent FMS rows a hard delete destroyed, by kind,\nso the answer can say what was lost rather than just \"ok\".",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
                 }
             }
         },

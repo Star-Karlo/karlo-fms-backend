@@ -299,6 +299,19 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 	if err := validFuel(req.FuelTankLiters, req.FuelRatioKmpl); err != nil {
 		return nil, err
 	}
+	// Status in and out of 'archive' is a retirement, not a field edit, and
+	// master data has to agree about it: the projection restores any local row
+	// master data still lists as live, so an archive set only here goes back to
+	// 'active' within minutes — and the truck reappears on the live map with
+	// nothing to explain it. Routed through the same retire the delete uses.
+	if req.Status != nil {
+		switch moved, err := s.retireIfStatusMoved(ctx, tenantID, id, caller, *req.Status); {
+		case err != nil:
+			return nil, err
+		case moved:
+			req.Status = nil // already applied by Archive, and not for the mirror below
+		}
+	}
 	var dto DTO
 	var mdID *string
 	var group *string
@@ -369,30 +382,162 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 	return &dto, nil
 }
 
-// Archive soft-deletes a vehicle (status = archive).
-func (s *Service) Archive(ctx context.Context, tenantID, id int64, caller mdwrite.Caller) error {
-	var mdID *string
-	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		q := store.New(tx)
-		if before, err := q.GetVehicleRow(ctx, id); err == nil {
-			mdID = before.MasterDataID
-		}
-		return q.ArchiveVehicle(ctx, id)
-	})
-	if err != nil {
-		return err
-	}
-	// Retire it upstream too. Without this vehiclesync un-archives it on the
-	// next pass — step 3b restores any local row master data still lists as
-	// live — so the truck would reappear minutes after being archived, with no
-	// indication why.
-	if s.md != nil && mdID != nil {
-		if err := s.md.DeleteVehicle(ctx, caller, *mdID); err != nil {
-			log.Printf("vehicle %d: archived locally, master data %s still lists it live: %v", id, *mdID, err)
+// retireIfStatusMoved applies a status edit that crosses the archive line, and
+// reports whether it did. Into 'archive' it archives (master data first, so a
+// refusal changes nothing). Out of 'archive' it refuses: master data owns the
+// register and offers no un-delete, so FMS turning the row back to 'active'
+// would be undone by the next sweep — better to say where the restore belongs
+// than to accept an edit that quietly reverts.
+func (s *Service) retireIfStatusMoved(ctx context.Context, tenantID, id int64, caller mdwrite.Caller, next string) (bool, error) {
+	var before string
+	var paired bool
+	if err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		row, err := store.New(tx).GetVehicleRow(ctx, id)
+		if err != nil {
 			return err
 		}
+		before, paired = row.Status, row.MasterDataID != nil
+		return nil
+	}); err != nil {
+		return false, err
 	}
-	return nil
+	switch {
+	case next == before:
+		return false, nil
+	case next == "archive":
+		return true, s.Archive(ctx, tenantID, id, caller)
+	case before == "archive" && paired && s.md != nil:
+		return false, fmt.Errorf("this vehicle is retired in master data; restore it there and the next sync brings it back — setting it %s here would be reversed within minutes", next)
+	}
+	return false, nil
+}
+
+// Deleting a truck happens in two steps, because "delete" means two
+// different things to the person clicking it.
+//
+// The first click retires it: status = 'archive', out of live view, out of
+// reports, but still there to explain last month's trips. The second click,
+// on a truck already retired, removes it for good. Anything irreversible is
+// therefore behind a deliberate second decision, taken on a row that already
+// shows as retired.
+
+// RemoveResult says which of the two steps ran, and what the second one took
+// with it.
+type RemoveResult struct {
+	// Archived is true for the first step, Deleted for the second.
+	Archived bool `json:"archived"`
+	Deleted  bool `json:"deleted"`
+	// Removed counts the dependent FMS rows a hard delete destroyed, by kind,
+	// so the answer can say what was lost rather than just "ok".
+	Removed map[string]int64 `json:"removed,omitempty"`
+}
+
+// Remove archives a vehicle, or — if it is already archived — deletes it.
+func (s *Service) Remove(ctx context.Context, tenantID, id int64, caller mdwrite.Caller) (RemoveResult, error) {
+	var status string
+	var mdID *string
+	if err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		before, err := store.New(tx).GetVehicleRow(ctx, id)
+		if err != nil {
+			return err
+		}
+		status, mdID = before.Status, before.MasterDataID
+		return nil
+	}); err != nil {
+		return RemoveResult{}, err
+	}
+	if status == "archive" {
+		return s.hardDelete(ctx, tenantID, id, mdID, caller)
+	}
+	return RemoveResult{Archived: true}, s.Archive(ctx, tenantID, id, caller)
+}
+
+// Archive soft-deletes a vehicle (status = archive).
+//
+// Master data goes FIRST, and a refusal leaves nothing changed. The order
+// matters more here than it looks: vehiclesync restores any local row master
+// data still lists as live, so archiving locally while the upstream retire
+// fails does not leave a half-done delete — it leaves a truck that comes back
+// as 'active' minutes later, on the live map, with nothing to say why. The
+// earlier order (local first) made exactly that outcome the failure mode.
+func (s *Service) Archive(ctx context.Context, tenantID, id int64, caller mdwrite.Caller) error {
+	var mdID *string
+	if err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		before, err := store.New(tx).GetVehicleRow(ctx, id)
+		if err != nil {
+			return err
+		}
+		mdID = before.MasterDataID
+		return nil
+	}); err != nil {
+		return err
+	}
+	if s.md != nil && mdID != nil {
+		if err := s.md.DeleteVehicle(ctx, caller, *mdID); err != nil {
+			return fmt.Errorf("master data would not retire this vehicle, so it has been left active (it would otherwise be restored by the next sync): %w", err)
+		}
+	}
+	return db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return store.New(tx).ArchiveVehicle(ctx, id)
+	})
+}
+
+// hardDelete removes an archived vehicle and the FMS rows that name it.
+//
+// Upstream is retired again first, not because it should not already be —
+// archiving did it — but because a row archived by the projection sweep, or
+// by a hand-edited status, may never have been retired there, and a delete
+// that leaves master data holding the truck would see it re-created here on
+// the next pass as a brand-new vehicle.
+func (s *Service) hardDelete(ctx context.Context, tenantID, id int64, mdID *string, caller mdwrite.Caller) (RemoveResult, error) {
+	if s.md != nil && mdID != nil {
+		if err := s.md.DeleteVehicle(ctx, caller, *mdID); err != nil {
+			log.Printf("vehicle %d: master data %s would not retire it before the hard delete: %v", id, *mdID, err)
+			return RemoveResult{}, fmt.Errorf("master data still lists this vehicle, so deleting it here would only bring it back on the next sync: %w", err)
+		}
+	}
+	out := RemoveResult{Deleted: true, Removed: map[string]int64{}}
+	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		// The tracker first: trackers.vehicle_id has no ON DELETE clause, so
+		// it would block the delete, and clearing it closes the open fitting
+		// period (which the cascade then takes away with the rest).
+		if err := q.ClearTrackerByVehicle(ctx, &id); err != nil {
+			return err
+		}
+		// Nullable vehicle_id on the historical tables, hence the pointer.
+		for _, step := range []struct {
+			kind string
+			fn   func() (int64, error)
+		}{
+			{"alerts", func() (int64, error) { return q.DeleteVehicleAlerts(ctx, &id) }},
+			{"service_schedules", func() (int64, error) { return q.DeleteVehicleServiceSchedules(ctx, &id) }},
+			{"score_events", func() (int64, error) { return q.DeleteVehicleScoreEvents(ctx, &id) }},
+			{"sop_runs", func() (int64, error) { return q.DeleteVehicleSopRuns(ctx, id) }},
+			{"documents", func() (int64, error) { return q.DeleteVehicleDocuments(ctx, id) }},
+		} {
+			n, err := step.fn()
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				out.Removed[step.kind] = n
+			}
+		}
+		n, err := q.DeleteVehicle(ctx, id)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return pgx.ErrNoRows
+		}
+		return nil
+	})
+	if err != nil {
+		return RemoveResult{}, err
+	}
+	log.Printf("vehicle %d hard-deleted from tenant %d: %v", id, tenantID, out.Removed)
+	return out, nil
 }
 
 // AssignTracker binds/unbinds a tracker, keeping both sides of the link in sync.

@@ -76,6 +76,36 @@ UPDATE vehicles SET current_driver_id = sqlc.narg('current_driver_id') WHERE id 
 -- name: ArchiveVehicle :exec
 UPDATE vehicles SET status = 'archive' WHERE id = $1;
 
+-- Hard delete, the second step of a two-stage delete: a truck already
+-- archived is removed for good. The FMS rows that name it have to go first —
+-- alerts, service schedules and score events reference it with no ON DELETE
+-- clause, so they would block the delete, and sop_runs and documents carry no
+-- foreign key at all and would be left pointing at an id that no longer
+-- exists. The rest the database handles itself: telemetry state, geofence
+-- membership, rule attachments and the tracker fit history cascade away;
+-- dashcams, video clips and driving events keep their row and lose the link.
+--
+-- Telemetry (positions, trips) lives in the other database keyed by IMEI and
+-- is NOT touched by any of this.
+
+-- name: DeleteVehicleAlerts :execrows
+DELETE FROM alerts WHERE vehicle_id = $1;
+
+-- name: DeleteVehicleServiceSchedules :execrows
+DELETE FROM service_schedules WHERE vehicle_id = $1;
+
+-- name: DeleteVehicleScoreEvents :execrows
+DELETE FROM driver_score_events WHERE vehicle_id = $1;
+
+-- name: DeleteVehicleSopRuns :execrows
+DELETE FROM sop_runs WHERE vehicle_id = $1;
+
+-- name: DeleteVehicleDocuments :execrows
+DELETE FROM documents WHERE owner_type = 'vehicle' AND owner_id = $1;
+
+-- name: DeleteVehicle :execrows
+DELETE FROM vehicles WHERE id = $1;
+
 -- name: ListVehicles :many
 SELECT
   v.*,
@@ -139,6 +169,10 @@ LEFT JOIN LATERAL (
 ) dc ON true
 LEFT JOIN fleet_groups fg ON fg.id = v.fleet_group_id
 LEFT JOIN employees e     ON e.id = v.current_driver_id
+-- Retired trucks are off the map. 'repair' stays on it: a truck in the
+-- workshop is still a truck somebody drives there and back, and the registry
+-- status travels with the row so the panel can say why it is not working.
+-- Only 'archive' means deleted.
 WHERE v.status <> 'archive'
   AND (t.imei IS NOT NULL OR dc.vss_device_id IS NOT NULL OR e.master_data_id IS NOT NULL)
   AND (sqlc.narg('fleet_group_id')::bigint IS NULL OR v.fleet_group_id = sqlc.narg('fleet_group_id'));

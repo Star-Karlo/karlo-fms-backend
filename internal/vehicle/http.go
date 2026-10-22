@@ -1,10 +1,12 @@
 package vehicle
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
@@ -205,12 +207,16 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 
 // archive godoc
 //
-//	@Summary	Archive (soft-delete) a vehicle
-//	@Tags		vehicles
-//	@Security	BearerAuth
-//	@Param		id	path	int	true	"vehicle id"
-//	@Success	204
-//	@Router		/v1/vehicles/{id} [delete]
+//	@Summary		Delete a vehicle — archive first, remove on the second call
+//	@Description	Two steps, because "delete" means two things. On an active vehicle this archives it: out of live view and the registry's default list, still there to explain past trips, and retired in master data so the projection does not restore it. Called again on a vehicle that is ALREADY archived, it deletes the row for good, together with the FMS records that name it (alerts, service schedules, score events, SOP runs, documents) and, by cascade, its telemetry state, geofence membership, rule attachments and tracker fit history. Telemetry itself — positions and trips — lives in the other database keyed by IMEI and is not touched. The response says which step ran.
+//	@Tags			vehicles
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			id	path		int	true	"vehicle id"
+//	@Success		200	{object}	vehicle.RemoveResult
+//	@Failure		404	{object}	map[string]string
+//	@Failure		502	{object}	map[string]string	"master data would not retire it, so nothing was changed"
+//	@Router			/v1/vehicles/{id} [delete]
 func (h *Handler) archive(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r)
 	if !ok {
@@ -221,11 +227,18 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.Archive(r.Context(), auth.EffectiveTenant(r), id, caller); err != nil {
-		httpx.Error(w, http.StatusInternalServerError, err.Error())
+	res, err := h.svc.Remove(r.Context(), auth.EffectiveTenant(r), id, caller)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.Error(w, http.StatusNotFound, "vehicle not found")
+			return
+		}
+		// A refusal from master data is the usual failure, and it means
+		// nothing changed here — say so with a status that is not ours.
+		httpx.Error(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.JSON(w, http.StatusOK, res)
 }
 
 // assignTracker godoc
