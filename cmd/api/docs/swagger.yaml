@@ -1634,6 +1634,27 @@ definitions:
         type: number
       distance_km:
         type: number
+      distance_source:
+        description: |-
+          How much of the track these figures were actually derived from.
+
+          The panel offers windows up to "custom", and the track is capped at
+          5,000 points however long the window is. Over a day that is 17-second
+          resolution and everything below is exact; over 52 days it is one point
+          every 15 minutes, and walking THAT recovers about a quarter of the real
+          distance while counting almost no harsh events — silently, with the
+          same confident tiles. These fields are what let the answer say so.
+
+          DistanceSource is "rollup" when distance and max speed came from the
+          telemetry service's per-sample daily aggregate instead of the sampled
+          track, which is the only way those two can be right over a long window.
+        type: string
+      events_sampled:
+        description: |-
+          EventsSampled says the overspeed and harsh counts are a LOWER BOUND:
+          harsh detection needs consecutive samples within 30s, and at this gap
+          most pairs were skipped.
+        type: boolean
       harsh_accel:
         type: integer
       harsh_brake:
@@ -1659,6 +1680,11 @@ definitions:
         type: integer
       points:
         type: integer
+      sample_gap_s:
+        description: |-
+          SampleGapS is the median seconds between the points the event counts
+          were derived from.
+        type: number
       total_idle_min:
         description: summed dwell of those stops
         type: number

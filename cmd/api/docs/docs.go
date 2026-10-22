@@ -9207,6 +9207,14 @@ const docTemplate = `{
                 "distance_km": {
                     "type": "number"
                 },
+                "distance_source": {
+                    "description": "How much of the track these figures were actually derived from.\n\nThe panel offers windows up to \"custom\", and the track is capped at\n5,000 points however long the window is. Over a day that is 17-second\nresolution and everything below is exact; over 52 days it is one point\nevery 15 minutes, and walking THAT recovers about a quarter of the real\ndistance while counting almost no harsh events — silently, with the\nsame confident tiles. These fields are what let the answer say so.\n\nDistanceSource is \"rollup\" when distance and max speed came from the\ntelemetry service's per-sample daily aggregate instead of the sampled\ntrack, which is the only way those two can be right over a long window.",
+                    "type": "string"
+                },
+                "events_sampled": {
+                    "description": "EventsSampled says the overspeed and harsh counts are a LOWER BOUND:\nharsh detection needs consecutive samples within 30s, and at this gap\nmost pairs were skipped.",
+                    "type": "boolean"
+                },
                 "harsh_accel": {
                     "type": "integer"
                 },
@@ -9237,6 +9245,10 @@ const docTemplate = `{
                 },
                 "points": {
                     "type": "integer"
+                },
+                "sample_gap_s": {
+                    "description": "SampleGapS is the median seconds between the points the event counts\nwere derived from.",
+                    "type": "number"
                 },
                 "total_idle_min": {
                     "description": "summed dwell of those stops",

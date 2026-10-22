@@ -538,6 +538,27 @@ type BehaviorSummary struct {
 	// classifyStop). "loading" and "traffic" are the job; "rest" and "unknown"
 	// are what a fleet manager can actually act on.
 	IdleByReason map[string]float64 `json:"idle_by_reason"`
+
+	// How much of the track these figures were actually derived from.
+	//
+	// The panel offers windows up to "custom", and the track is capped at
+	// 5,000 points however long the window is. Over a day that is 17-second
+	// resolution and everything below is exact; over 52 days it is one point
+	// every 15 minutes, and walking THAT recovers about a quarter of the real
+	// distance while counting almost no harsh events — silently, with the
+	// same confident tiles. These fields are what let the answer say so.
+	//
+	// DistanceSource is "rollup" when distance and max speed came from the
+	// telemetry service's per-sample daily aggregate instead of the sampled
+	// track, which is the only way those two can be right over a long window.
+	DistanceSource string `json:"distance_source"`
+	// SampleGapS is the median seconds between the points the event counts
+	// were derived from.
+	SampleGapS float64 `json:"sample_gap_s"`
+	// EventsSampled says the overspeed and harsh counts are a LOWER BOUND:
+	// harsh detection needs consecutive samples within 30s, and at this gap
+	// most pairs were skipped.
+	EventsSampled bool `json:"events_sampled"`
 }
 
 // IdleStop is a place the vehicle sat longer than the idle threshold.
@@ -807,7 +828,117 @@ func (s *Service) Behavior(ctx context.Context, tenantID, vehicleID int64, from,
 	res.Summary.TotalIdleMin = math.Round(res.Summary.TotalIdleMin*10) / 10
 
 	res.FuelRatioKmpl, res.FuelTankLiters = s.fuelConfig(ctx, tenantID, vehicleID)
+	s.trueUpFromRollup(ctx, tenantID, vehicleID, from, to, pts, &res)
 	return &res, nil
+}
+
+// trueUpFromRollup replaces the two figures a sampled track cannot measure.
+//
+// Distance walked over a downsampled track is a straight line between points
+// that were minutes apart, so it cuts every corner and every detour: measured
+// against the rollup for one truck over 52 days, the track recovered 1,504 km
+// of 6,647 — 23%. The panel then contradicted itself, reporting 24 km/h
+// average moving speed (taken from the speed readings, and right) beside a
+// distance that implies 7. Max speed is understated the same way: the fastest
+// moment is unlikely to be one of the surviving samples.
+//
+// The daily rollup is derived from every sample with jump filtering and
+// capped durations, so it is strictly better for both — but it is per DAY,
+// so it can only answer for whole days. A window that starts or ends
+// mid-day keeps the track's own figures rather than mixing two bases, which
+// would make the same period report differently depending on the hour it was
+// asked about.
+//
+// Everything else stays as the track computed it. Stop clustering and harsh
+// events have no rollup equivalent; they are labelled instead.
+func (s *Service) trueUpFromRollup(ctx context.Context, tenantID, vehicleID int64, from, to time.Time, pts []TripPoint, res *BehaviorResult) {
+	res.Summary.DistanceSource = "track"
+	res.Summary.SampleGapS = medianGapS(pts)
+	// Harsh detection skips pairs more than 30s apart (see maxGapSec), so
+	// beyond that the counts are a floor, not a measurement.
+	res.Summary.EventsSampled = res.Summary.SampleGapS > 30
+
+	if s.tel == nil {
+		return
+	}
+	// The rollup buckets in Asia/Jakarta, and its rows cover whole local days
+	// — except the last, which covers midnight until now. So it answers for
+	// this window exactly when the window starts at a local midnight and runs
+	// either to the end of a day or up to now.
+	//
+	// "Midnight yesterday to midday today" is the case it must refuse: the
+	// rollup's row for today holds the whole day so far and would overstate.
+	// Refusing leaves the track's figure, which is understated — but a
+	// wrong-and-labelled figure beats a wrong one presented as exact.
+	wib := time.FixedZone("WIB", 7*3600)
+	lo, hi := from.In(wib), to.In(wib)
+	if h, m, sec := lo.Clock(); h != 0 || m != 0 || sec != 0 {
+		return
+	}
+	if !isEndOfDay(hi) && hi.Before(time.Now().In(wib).Add(-5*time.Minute)) {
+		return
+	}
+	var imei string
+	_ = db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		row, err := store.New(tx).GetLiveViewVehicle(ctx, vehicleID)
+		if err == nil && row.TrackerImei != nil {
+			imei = *row.TrackerImei
+		}
+		return nil
+	})
+	if imei == "" {
+		return
+	}
+	days, err := s.tel.DailyStats(ctx, lo.Format("2006-01-02"), hi.Format("2006-01-02"))
+	if err != nil {
+		return
+	}
+	var km, maxSpeed float64
+	var found bool
+	for _, d := range days {
+		if d.IMEI != imei {
+			continue
+		}
+		found = true
+		km += d.DistanceKm
+		if d.MaxSpeed != nil && *d.MaxSpeed > maxSpeed {
+			maxSpeed = *d.MaxSpeed
+		}
+	}
+	if !found {
+		return
+	}
+	res.Summary.DistanceKm = math.Round(km*10) / 10
+	if maxSpeed > res.Summary.MaxSpeed {
+		res.Summary.MaxSpeed = maxSpeed
+	}
+	res.Summary.DistanceSource = "rollup"
+}
+
+// isEndOfDay accepts the last instant of a local day, however the caller
+// spelled it: 23:59:59, 23:59:59.999 or the next midnight.
+func isEndOfDay(t time.Time) bool {
+	h, m, sec := t.Clock()
+	return (h == 23 && m == 59 && sec >= 59) || (h == 0 && m == 0 && sec == 0)
+}
+
+// medianGapS is the typical spacing of the returned track, which is what
+// decides whether the event counts mean anything.
+func medianGapS(pts []TripPoint) float64 {
+	if len(pts) < 2 {
+		return 0
+	}
+	gaps := make([]float64, 0, len(pts)-1)
+	for i := 1; i < len(pts); i++ {
+		if d := pts[i].Time.Sub(pts[i-1].Time).Seconds(); d > 0 {
+			gaps = append(gaps, d)
+		}
+	}
+	if len(gaps) == 0 {
+		return 0
+	}
+	sort.Float64s(gaps)
+	return math.Round(gaps[len(gaps)/2]*10) / 10
 }
 
 // TripPoint is one point of a vehicle's historical track.
