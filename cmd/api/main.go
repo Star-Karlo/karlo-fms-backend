@@ -46,6 +46,7 @@ import (
 	"github.com/karlo/fms-backend/internal/fleetgroup"
 	"github.com/karlo/fms-backend/internal/fuel"
 	"github.com/karlo/fms-backend/internal/fuelanalysis"
+	"github.com/karlo/fms-backend/internal/geocodeproxy"
 	"github.com/karlo/fms-backend/internal/geofence"
 	"github.com/karlo/fms-backend/internal/groupsync"
 	"github.com/karlo/fms-backend/internal/hangar"
@@ -312,6 +313,9 @@ func main() {
 	// AI notification-rule composition (same Bedrock model, same disable-on-503).
 	aiRuleH := airule.NewHandler(ctx, cfg.AWSRegion, cfg.BedrockModelID)
 	geofenceH := geofence.NewHandler(pool)
+	// Place search / reverse lookup for the map forms, relayed with FMS's own
+	// service token because a browser cannot hold one.
+	geocodeH := geocodeproxy.NewHandler(cfg.RouteCacheURL, cfg.ServiceToken)
 	fuelH := fuel.NewHandler(pool)
 	fuelAnalysisH := fuelanalysis.NewHandler(pool, liveSvc)
 	// Findings rather than figures: each vehicle compared with its own past,
@@ -427,6 +431,7 @@ func main() {
 		webhookH.Routes(pr)
 		dashboardH.Routes(pr)
 		gated(pr, chain(featureH.RequireFeature("geofence"), rolesH.RequireRW("geofence.view", "geofence.manage")), geofenceH.Routes)
+		geocodeH.Routes(pr)
 		fuelH.Routes(pr)
 		fuelAnalysisH.Routes(pr)
 		insightH.Routes(pr)
