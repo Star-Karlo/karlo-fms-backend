@@ -313,6 +313,13 @@ definitions:
         type: string
       id:
         type: integer
+      issued_here:
+        description: |-
+          IssuedHere distinguishes a key FMS minted and verifies itself from one
+          the shared auth service owns. It decides where revoking actually has to
+          happen, so the list can say so instead of letting someone revoke a copy
+          and wonder why the key still works.
+        type: boolean
       last_used_at:
         type: string
       name:
@@ -324,6 +331,19 @@ definitions:
         type: string
       token_prefix:
         type: string
+    type: object
+  apitoken.RemoveResult:
+    properties:
+      deleted:
+        description: 'Deleted is the second: the row goes too.'
+        type: boolean
+      name:
+        type: string
+      revoked:
+        description: |-
+          Revoked is the first step: the key stops working, the row stays so the
+          list still shows what it was and when it was last used.
+        type: boolean
     type: object
   auth.ChangePasswordRequest:
     properties:
@@ -4040,18 +4060,35 @@ paths:
       - api-tokens
   /v1/api-tokens/{id}:
     delete:
+      description: 'Two steps, like deleting a vehicle. On a live token this REVOKES
+        it: the key stops working immediately, and the row stays so the list can still
+        say what it was called and when it was last used — which is how you find out
+        whether anything was still calling with it. Called again on a token that is
+        already revoked, it DELETES the row. The answer says which step ran. A key
+        owned by the shared auth service can be deleted from this list, but revoking
+        it there is what stops it working.'
       parameters:
       - description: id
         in: path
         name: id
         required: true
         type: integer
+      produces:
+      - application/json
       responses:
-        "204":
-          description: No Content
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/apitoken.RemoveResult'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       security:
       - BearerAuth: []
-      summary: Revoke an API token (admin)
+      summary: Revoke an API token, and delete it on the second call (admin)
       tags:
       - api-tokens
   /v1/auth/change-password:

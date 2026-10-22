@@ -24,12 +24,17 @@ import (
 
 // DTO is a token's metadata (never the secret, except once on create).
 type DTO struct {
-	ID          int64      `json:"id"`
-	Name        string     `json:"name"`
-	TokenPrefix string     `json:"token_prefix"`
-	Revoked     bool       `json:"revoked"`
-	LastUsedAt  *time.Time `json:"last_used_at"`
-	CreatedAt   *time.Time `json:"created_at"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	TokenPrefix string `json:"token_prefix"`
+	Revoked     bool   `json:"revoked"`
+	// IssuedHere distinguishes a key FMS minted and verifies itself from one
+	// the shared auth service owns. It decides where revoking actually has to
+	// happen, so the list can say so instead of letting someone revoke a copy
+	// and wonder why the key still works.
+	IssuedHere bool       `json:"issued_here"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	CreatedAt  *time.Time `json:"created_at"`
 	// Token is populated ONLY in the create response (shown once).
 	Token string `json:"token,omitempty"`
 }
@@ -40,7 +45,11 @@ type CreateRequest struct {
 }
 
 func fromRow(t store.ApiToken) DTO {
-	return DTO{ID: t.ID, Name: t.Name, TokenPrefix: t.TokenPrefix, Revoked: t.RevokedAt.Valid, LastUsedAt: conv.Time(t.LastUsedAt), CreatedAt: conv.Time(t.CreatedAt)}
+	return DTO{
+		ID: t.ID, Name: t.Name, TokenPrefix: t.TokenPrefix,
+		Revoked: t.RevokedAt.Valid, IssuedHere: t.LocalAuth,
+		LastUsedAt: conv.Time(t.LastUsedAt), CreatedAt: conv.Time(t.CreatedAt),
+	}
 }
 
 // Handler exposes API-token endpoints (admin only).
@@ -63,7 +72,7 @@ func (h *Handler) Routes(r chi.Router) {
 		ar.Use(auth.RequireRole(auth.RoleAdmin))
 		ar.Get("/v1/api-tokens", h.list)
 		ar.Post("/v1/api-tokens", h.create)
-		ar.Delete("/v1/api-tokens/{id}", h.revoke)
+		ar.Delete("/v1/api-tokens/{id}", h.remove)
 	})
 }
 
@@ -75,7 +84,24 @@ func (h *Handler) Routes(r chi.Router) {
 // unscoped (SystemTx) because the tenant isn't known until the token resolves —
 // api_tokens uses the system-permitting RLS policy so this read is allowed.
 func (h *Handler) Authenticator() func(http.Handler) http.Handler {
+	return h.AuthenticatorOr(nil)
+}
+
+// AuthenticatorOr is the same, but hands a request that is NOT carrying an API
+// token to another authenticator — in practice the user JWT one.
+//
+// Integration endpoints are reached two ways and both are legitimate: a
+// machine presenting its account's key, and a signed-in person trying the
+// same call from the API docs page. Without this they are mutually exclusive,
+// and the symptom is the confusing one — a key minted a minute ago answering
+// "invalid or expired token", because the request never reached the API-token
+// middleware at all.
+func (h *Handler) AuthenticatorOr(fallback func(http.Handler) http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
+		var fell http.Handler
+		if fallback != nil {
+			fell = fallback(next)
+		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw := r.Header.Get("X-Api-Key")
 			if raw == "" {
@@ -85,22 +111,38 @@ func (h *Handler) Authenticator() func(http.Handler) http.Handler {
 			}
 			raw = strings.TrimSpace(raw)
 			if !strings.HasPrefix(raw, "fms_") {
+				if fell != nil {
+					fell.ServeHTTP(w, r) // not a key — let the JWT path judge it
+					return
+				}
 				httpx.Error(w, http.StatusUnauthorized, "missing or malformed API token")
 				return
 			}
-			// The shared authentication service holds the key when one is
-			// configured. It is authoritative there — the importer copied every
-			// key's hash into karlo_auth.api_keys pointed at a read-only role —
-			// so checking the local table as well would let a key REVOKED
-			// upstream keep working here for as long as the old row survives.
+			// Two stores, and each key belongs to exactly one of them.
 			//
-			// A key resolves to a principal exactly as a user token does, which
-			// is why this ends with the same auth.Claims: one way to establish
-			// a caller, not two, and the permission middleware downstream does
-			// not care which produced it.
+			// The shared authentication service owns the keys the importer
+			// copied into karlo_auth.api_keys at the cutover. It is
+			// authoritative for those, and a local row is only a copy — which
+			// is why FindLocalApiToken cannot see them: matching the stale
+			// copy would let a key REVOKED upstream keep working here.
+			//
+			// FMS owns the keys it issues itself (local_auth, see 0054).
+			// Those are unknown upstream, so asking there alone meant every
+			// key minted in FMS settings since the cutover was refused the
+			// moment it was used — and refused with "revoked", which reads
+			// like somebody cancelled it rather than it never having been
+			// registered anywhere.
+			//
+			// Either way a key resolves to the same auth.Claims a user token
+			// produces: one way to establish a caller, not two, and the
+			// permission middleware downstream does not care which made it.
 			if h.iam != nil {
 				p, err := h.iam.ValidateToken(r.Context(), raw)
 				if err != nil {
+					if claims, ok := h.localClaims(r, raw); ok {
+						next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), claims)))
+						return
+					}
 					httpx.Error(w, http.StatusUnauthorized, "invalid or revoked API token")
 					return
 				}
@@ -118,28 +160,35 @@ func (h *Handler) Authenticator() func(http.Handler) http.Handler {
 				return
 			}
 
-			sum := sha256.Sum256([]byte(raw))
-
-			var tid, id int64
-			err := db.SystemTx(r.Context(), h.pool, func(tx pgx.Tx) error {
-				return tx.QueryRow(r.Context(),
-					`SELECT id, tenant_id FROM api_tokens WHERE token_hash = $1 AND revoked_at IS NULL`,
-					sum[:]).Scan(&id, &tid)
-			})
-			if err != nil {
+			claims, ok := h.localClaims(r, raw)
+			if !ok {
 				httpx.Error(w, http.StatusUnauthorized, "invalid or revoked API token")
 				return
 			}
-			// Best-effort last-used stamp; never blocks the request.
-			_ = db.SystemTx(r.Context(), h.pool, func(tx pgx.Tx) error {
-				_, e := tx.Exec(r.Context(), `UPDATE api_tokens SET last_used_at = now() WHERE id = $1`, id)
-				return e
-			})
-
-			claims := &auth.Claims{TenantID: tid, Role: auth.RoleOperator}
 			next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), claims)))
 		})
 	}
+}
+
+// localClaims resolves a key FMS issued itself. The lookup runs unscoped
+// (SystemTx) because the tenant is not known until the key resolves —
+// api_tokens uses the system-permitting RLS policy so this read is allowed.
+func (h *Handler) localClaims(r *http.Request, raw string) (*auth.Claims, bool) {
+	sum := sha256.Sum256([]byte(raw))
+	var row store.FindLocalApiTokenRow
+	if err := db.SystemTx(r.Context(), h.pool, func(tx pgx.Tx) error {
+		var e error
+		row, e = store.New(tx).FindLocalApiToken(r.Context(), sum[:])
+		return e
+	}); err != nil {
+		return nil, false
+	}
+	// Best-effort last-used stamp; never blocks the request.
+	_ = db.SystemTx(r.Context(), h.pool, func(tx pgx.Tx) error {
+		_, e := tx.Exec(r.Context(), `UPDATE api_tokens SET last_used_at = now() WHERE id = $1`, row.ID)
+		return e
+	})
+	return &auth.Claims{TenantID: row.TenantID, Role: auth.RoleOperator}, true
 }
 
 // list godoc
@@ -214,26 +263,58 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, dto)
 }
 
-// revoke godoc
+// RemoveResult says which of the two steps ran.
+type RemoveResult struct {
+	// Revoked is the first step: the key stops working, the row stays so the
+	// list still shows what it was and when it was last used.
+	Revoked bool `json:"revoked"`
+	// Deleted is the second: the row goes too.
+	Deleted bool   `json:"deleted"`
+	Name    string `json:"name"`
+}
+
+// remove godoc
 //
-//	@Summary	Revoke an API token (admin)
-//	@Tags		api-tokens
-//	@Security	BearerAuth
-//	@Param		id	path	int	true	"id"
-//	@Success	204
-//	@Router		/v1/api-tokens/{id} [delete]
-func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
+//	@Summary		Revoke an API token, and delete it on the second call (admin)
+//	@Description	Two steps, like deleting a vehicle. On a live token this REVOKES it: the key stops working immediately, and the row stays so the list can still say what it was called and when it was last used — which is how you find out whether anything was still calling with it. Called again on a token that is already revoked, it DELETES the row. The answer says which step ran. A key owned by the shared auth service can be deleted from this list, but revoking it there is what stops it working.
+//	@Tags			api-tokens
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			id	path		int	true	"id"
+//	@Success		200	{object}	apitoken.RemoveResult
+//	@Failure		404	{object}	map[string]string
+//	@Router			/v1/api-tokens/{id} [delete]
+func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	var out RemoveResult
 	e := db.Tx(r.Context(), h.pool, auth.TenantID(r.Context()), func(tx pgx.Tx) error {
-		return store.New(tx).RevokeApiToken(r.Context(), id)
+		q := store.New(tx)
+		before, err := q.GetApiToken(r.Context(), id)
+		if err != nil {
+			return err
+		}
+		out.Name = before.Name
+		if !before.RevokedAt.Valid {
+			out.Revoked = true
+			return q.RevokeApiToken(r.Context(), id)
+		}
+		n, err := q.DeleteApiToken(r.Context(), id)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return pgx.ErrNoRows
+		}
+		out.Deleted = true
+		return nil
 	})
 	if e != nil {
-		httpx.Error(w, http.StatusInternalServerError, e.Error())
+		httpx.Error(w, http.StatusNotFound, "token not found")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.JSON(w, http.StatusOK, out)
 }

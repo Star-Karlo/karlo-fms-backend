@@ -263,6 +263,9 @@ CREATE TABLE api_tokens (
   created_by   bigint REFERENCES users(id),
   last_used_at timestamptz,
   revoked_at   timestamptz,
+  -- true: FMS issued this key and verifies it itself. false: the shared auth
+  -- service owns it (see 0054).
+  local_auth   boolean NOT NULL DEFAULT true,
   created_at   timestamptz NOT NULL DEFAULT now()
 );
 

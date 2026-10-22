@@ -19,6 +19,14 @@ import (
 // an integrator uses the identifier it already shares with the tracking service.
 func (h *Handler) IntegrationRoutes(r chi.Router) {
 	r.Get("/v1/integration/vehicles/{imei}/analytics", h.integrationAnalytics)
+	// Addressed by nomor polisi rather than by IMEI or by this system's id —
+	// the number an outside system actually has. Mounted here, not in the
+	// JWT group, because the callers are integrations holding an API key;
+	// the group accepts a signed-in user too, so the API docs page still
+	// works (see apitoken.AuthenticatorOr).
+	r.Get("/v1/vehicles/by-plate/{plate}/history", h.historyByPlate)
+	r.Get("/v1/vehicles/by-plate/{plate}/live", h.liveByPlate)
+	r.Post("/v1/vehicles/history-summary", h.summary)
 }
 
 // integrationAnalytics godoc

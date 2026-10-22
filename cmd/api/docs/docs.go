@@ -750,10 +750,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
+                "description": "Two steps, like deleting a vehicle. On a live token this REVOKES it: the key stops working immediately, and the row stays so the list can still say what it was called and when it was last used — which is how you find out whether anything was still calling with it. Called again on a token that is already revoked, it DELETES the row. The answer says which step ran. A key owned by the shared auth service can be deleted from this list, but revoking it there is what stops it working.",
+                "produces": [
+                    "application/json"
+                ],
                 "tags": [
                     "api-tokens"
                 ],
-                "summary": "Revoke an API token (admin)",
+                "summary": "Revoke an API token, and delete it on the second call (admin)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -764,8 +768,20 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/apitoken.RemoveResult"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
@@ -7136,6 +7152,10 @@ const docTemplate = `{
                 "id": {
                     "type": "integer"
                 },
+                "issued_here": {
+                    "description": "IssuedHere distinguishes a key FMS minted and verifies itself from one\nthe shared auth service owns. It decides where revoking actually has to\nhappen, so the list can say so instead of letting someone revoke a copy\nand wonder why the key still works.",
+                    "type": "boolean"
+                },
                 "last_used_at": {
                     "type": "string"
                 },
@@ -7151,6 +7171,22 @@ const docTemplate = `{
                 },
                 "token_prefix": {
                     "type": "string"
+                }
+            }
+        },
+        "apitoken.RemoveResult": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "description": "Deleted is the second: the row goes too.",
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "revoked": {
+                    "description": "Revoked is the first step: the key stops working, the row stays so the\nlist still shows what it was and when it was last used.",
+                    "type": "boolean"
                 }
             }
         },

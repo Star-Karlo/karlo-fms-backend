@@ -44,6 +44,7 @@ type ApiToken struct {
 	CreatedBy   *int64             `json:"created_by"`
 	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	LocalAuth   bool               `json:"local_auth"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 

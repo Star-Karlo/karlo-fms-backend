@@ -12,7 +12,7 @@ import (
 const createApiToken = `-- name: CreateApiToken :one
 INSERT INTO api_tokens (tenant_id, name, token_prefix, token_hash, created_by)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, tenant_id, name, token_prefix, token_hash, created_by, last_used_at, revoked_at, created_at
+RETURNING id, tenant_id, name, token_prefix, token_hash, created_by, last_used_at, revoked_at, local_auth, created_at
 `
 
 type CreateApiTokenParams struct {
@@ -41,13 +41,73 @@ func (q *Queries) CreateApiToken(ctx context.Context, arg CreateApiTokenParams) 
 		&i.CreatedBy,
 		&i.LastUsedAt,
 		&i.RevokedAt,
+		&i.LocalAuth,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const deleteApiToken = `-- name: DeleteApiToken :execrows
+DELETE FROM api_tokens WHERE id = $1
+`
+
+// Deleting is the second step, for a key that is already revoked: the row goes
+// and the name with it. Revoking alone leaves a growing list of dead keys that
+// nobody dares tidy up, and "is this one still in use?" gets harder to answer
+// every month.
+func (q *Queries) DeleteApiToken(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteApiToken, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const findLocalApiToken = `-- name: FindLocalApiToken :one
+SELECT id, tenant_id FROM api_tokens
+WHERE token_hash = $1 AND local_auth AND revoked_at IS NULL
+`
+
+type FindLocalApiTokenRow struct {
+	ID       int64 `json:"id"`
+	TenantID int64 `json:"tenant_id"`
+}
+
+// The authenticator's own lookup, for keys FMS issued and therefore verifies.
+// An imported key (local_auth = false) is deliberately invisible here: the
+// shared auth service is authoritative for those, and matching a stale local
+// copy would let a key revoked upstream keep working.
+func (q *Queries) FindLocalApiToken(ctx context.Context, tokenHash []byte) (FindLocalApiTokenRow, error) {
+	row := q.db.QueryRow(ctx, findLocalApiToken, tokenHash)
+	var i FindLocalApiTokenRow
+	err := row.Scan(&i.ID, &i.TenantID)
+	return i, err
+}
+
+const getApiToken = `-- name: GetApiToken :one
+SELECT id, tenant_id, name, token_prefix, token_hash, created_by, last_used_at, revoked_at, local_auth, created_at FROM api_tokens WHERE id = $1
+`
+
+func (q *Queries) GetApiToken(ctx context.Context, id int64) (ApiToken, error) {
+	row := q.db.QueryRow(ctx, getApiToken, id)
+	var i ApiToken
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.TokenPrefix,
+		&i.TokenHash,
+		&i.CreatedBy,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.LocalAuth,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listApiTokens = `-- name: ListApiTokens :many
-SELECT id, tenant_id, name, token_prefix, token_hash, created_by, last_used_at, revoked_at, created_at FROM api_tokens ORDER BY created_at DESC LIMIT $2 OFFSET $1
+SELECT id, tenant_id, name, token_prefix, token_hash, created_by, last_used_at, revoked_at, local_auth, created_at FROM api_tokens ORDER BY created_at DESC LIMIT $2 OFFSET $1
 `
 
 type ListApiTokensParams struct {
@@ -73,6 +133,7 @@ func (q *Queries) ListApiTokens(ctx context.Context, arg ListApiTokensParams) ([
 			&i.CreatedBy,
 			&i.LastUsedAt,
 			&i.RevokedAt,
+			&i.LocalAuth,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

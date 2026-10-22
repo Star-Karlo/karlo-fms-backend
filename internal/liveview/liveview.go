@@ -335,11 +335,6 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/live-view", h.list)
 	r.Get("/v1/live-view/{vehicle_id}", h.one)
 	r.Get("/v1/vehicles/{vehicle_id}/history", h.history)
-	// Addressed by nomor polisi, for callers that have the number on the
-	// truck and not this system's id (see byplate.go).
-	r.Get("/v1/vehicles/by-plate/{plate}/history", h.historyByPlate)
-	r.Get("/v1/vehicles/by-plate/{plate}/live", h.liveByPlate)
-	r.Post("/v1/vehicles/history-summary", h.summary)
 	r.Get("/v1/vehicles/{vehicle_id}/history/snapped", h.snapHistory)
 	r.Get("/v1/analytics/history", h.fleetHistory)
 	r.Get("/v1/analytics/fleet", h.fleetAnalytics)

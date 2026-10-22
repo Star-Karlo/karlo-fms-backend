@@ -461,11 +461,16 @@ func main() {
 		platformH.Routes(pr)
 	})
 
-	// External integration API: authenticated by a per-tenant API token (not a
-	// user JWT), read-only, keyed by IMEI. Its own group so it never inherits the
-	// JWT authenticator. RLS still scopes every query to the token's tenant.
+	// External integration API: read-only, addressed the way an outside system
+	// addresses a truck — by IMEI, or by the number painted on it.
+	//
+	// Authenticated by a per-tenant API token OR a user JWT. Both, because
+	// both happen: the TMS presents its account's key, and a person trying the
+	// same call from the API docs page is signed in. Its own group so these
+	// endpoints never inherit anything else the JWT group applies, and RLS
+	// still scopes every query to the resolved tenant either way.
 	r.Group(func(ir chi.Router) {
-		ir.Use(apiTokenH.Authenticator())
+		ir.Use(apiTokenH.AuthenticatorOr(auth.AuthenticatorWith(tm, sso, tenantDir)))
 		liveH.IntegrationRoutes(ir)
 	})
 
