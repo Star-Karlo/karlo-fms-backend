@@ -26,6 +26,9 @@ func (h *Handler) IntegrationRoutes(r chi.Router) {
 	// works (see apitoken.AuthenticatorOr).
 	r.Get("/v1/vehicles/by-plate/{plate}/history", h.historyByPlate)
 	r.Get("/v1/vehicles/by-plate/{plate}/live", h.liveByPlate)
+	r.Get("/v1/vehicles/by-plate/{plate}/behavior", h.behaviorByPlate)
+	r.Get("/v1/vehicles/by-plate/{plate}/fuel-trip", h.fuelTripByPlate)
+	r.Get("/v1/vehicles/by-plate/{plate}/driving-events", h.drivingEventsByPlate)
 	r.Post("/v1/vehicles/history-summary", h.summary)
 }
 

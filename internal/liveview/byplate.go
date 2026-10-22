@@ -137,6 +137,71 @@ func (h *Handler) liveByPlate(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, v)
 }
 
+// behaviorByPlate godoc
+//
+//	@Summary		Driving behaviour for a window, addressed by nomor polisi
+//	@Description	Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored.
+//	@Tags			live-view
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			plate			path		string	true	"nomor polisi, e.g. B 9012 UBC"
+//	@Param			from			query		string	true	"RFC3339"
+//	@Param			to				query		string	true	"RFC3339"
+//	@Param			limit			query		number	false	"overspeed limit km/h (default 60)"
+//	@Param			idle_threshold	query		number	false	"minutes a stop must exceed to count as idle (default 120)"
+//	@Success		200	{object}	liveview.BehaviorResult
+//	@Failure		404	{object}	map[string]string
+//	@Router			/v1/vehicles/by-plate/{plate}/behavior [get]
+func (h *Handler) behaviorByPlate(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.resolvePlate(w, r)
+	if !ok {
+		return
+	}
+	h.behaviorFor(w, r, id)
+}
+
+// fuelTripByPlate godoc
+//
+//	@Summary		Fuel and operating cost for a window, addressed by nomor polisi
+//	@Description	Identical to /v1/vehicles/{vehicle_id}/fuel-trip, with the plate in place of the id: litres used, refuels, suspected thefts, cost and engine/idle/moving hours. Measured from the tank sensor where a vehicle has one, estimated from its configured km/L where it does not — the response says which.
+//	@Tags			live-view
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			plate	path		string	true	"nomor polisi"
+//	@Param			from	query		string	true	"RFC3339"
+//	@Param			to		query		string	true	"RFC3339"
+//	@Success		200	{object}	liveview.FuelTrip
+//	@Failure		404	{object}	map[string]string
+//	@Router			/v1/vehicles/by-plate/{plate}/fuel-trip [get]
+func (h *Handler) fuelTripByPlate(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.resolvePlate(w, r)
+	if !ok {
+		return
+	}
+	h.fuelTripFor(w, r, id)
+}
+
+// drivingEventsByPlate godoc
+//
+//	@Summary		Accelerometer harsh-driving events, addressed by nomor polisi
+//	@Description	Identical to /v1/vehicles/{vehicle_id}/driving-events, with the plate in place of the id. These come from the device's accelerometer, so only Karlo-fitted trackers report them: an empty list means NOT MEASURED on this vehicle, not clean driving.
+//	@Tags			live-view
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			plate	path		string	true	"nomor polisi"
+//	@Param			from	query		string	true	"RFC3339"
+//	@Param			to		query		string	true	"RFC3339"
+//	@Success		200	{object}	liveview.DrivingHistory
+//	@Failure		404	{object}	map[string]string
+//	@Router			/v1/vehicles/by-plate/{plate}/driving-events [get]
+func (h *Handler) drivingEventsByPlate(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.resolvePlate(w, r)
+	if !ok {
+		return
+	}
+	h.drivingEventsFor(w, r, id)
+}
+
 // ---------------------------------------------------------------------------
 // Fleet summary
 // ---------------------------------------------------------------------------

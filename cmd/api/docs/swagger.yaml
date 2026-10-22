@@ -7664,6 +7664,134 @@ paths:
         battery)
       tags:
       - live-view
+  /v1/vehicles/by-plate/{plate}/behavior:
+    get:
+      description: 'Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate
+        in place of the id: overspeed events, harsh acceleration and braking, idle
+        stops and distance, derived from the GPS track. Spacing, dashes and case in
+        the plate are ignored.'
+      parameters:
+      - description: nomor polisi, e.g. B 9012 UBC
+        in: path
+        name: plate
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: overspeed limit km/h (default 60)
+        in: query
+        name: limit
+        type: number
+      - description: minutes a stop must exceed to count as idle (default 120)
+        in: query
+        name: idle_threshold
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/liveview.BehaviorResult'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Driving behaviour for a window, addressed by nomor polisi
+      tags:
+      - live-view
+  /v1/vehicles/by-plate/{plate}/driving-events:
+    get:
+      description: 'Identical to /v1/vehicles/{vehicle_id}/driving-events, with the
+        plate in place of the id. These come from the device''s accelerometer, so
+        only Karlo-fitted trackers report them: an empty list means NOT MEASURED on
+        this vehicle, not clean driving.'
+      parameters:
+      - description: nomor polisi
+        in: path
+        name: plate
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/liveview.DrivingHistory'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Accelerometer harsh-driving events, addressed by nomor polisi
+      tags:
+      - live-view
+  /v1/vehicles/by-plate/{plate}/fuel-trip:
+    get:
+      description: 'Identical to /v1/vehicles/{vehicle_id}/fuel-trip, with the plate
+        in place of the id: litres used, refuels, suspected thefts, cost and engine/idle/moving
+        hours. Measured from the tank sensor where a vehicle has one, estimated from
+        its configured km/L where it does not — the response says which.'
+      parameters:
+      - description: nomor polisi
+        in: path
+        name: plate
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/liveview.FuelTrip'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Fuel and operating cost for a window, addressed by nomor polisi
+      tags:
+      - live-view
   /v1/vehicles/by-plate/{plate}/history:
     get:
       description: Identical to /v1/vehicles/{vehicle_id}/history, with the plate

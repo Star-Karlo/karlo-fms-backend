@@ -5595,6 +5595,189 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/vehicles/by-plate/{plate}/behavior": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Driving behaviour for a window, addressed by nomor polisi",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "nomor polisi, e.g. B 9012 UBC",
+                        "name": "plate",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "overspeed limit km/h (default 60)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "minutes a stop must exceed to count as idle (default 120)",
+                        "name": "idle_threshold",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.BehaviorResult"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/vehicles/by-plate/{plate}/driving-events": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Identical to /v1/vehicles/{vehicle_id}/driving-events, with the plate in place of the id. These come from the device's accelerometer, so only Karlo-fitted trackers report them: an empty list means NOT MEASURED on this vehicle, not clean driving.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Accelerometer harsh-driving events, addressed by nomor polisi",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "nomor polisi",
+                        "name": "plate",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.DrivingHistory"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/vehicles/by-plate/{plate}/fuel-trip": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Identical to /v1/vehicles/{vehicle_id}/fuel-trip, with the plate in place of the id: litres used, refuels, suspected thefts, cost and engine/idle/moving hours. Measured from the tank sensor where a vehicle has one, estimated from its configured km/L where it does not — the response says which.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Fuel and operating cost for a window, addressed by nomor polisi",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "nomor polisi",
+                        "name": "plate",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.FuelTrip"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/vehicles/by-plate/{plate}/history": {
             "get": {
                 "security": [

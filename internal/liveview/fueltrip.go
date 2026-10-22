@@ -334,6 +334,12 @@ func (h *Handler) fuelTrip(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid vehicle_id")
 		return
 	}
+	h.fuelTripFor(w, r, id)
+}
+
+// fuelTripFor is the body of the endpoint, shared with the by-plate route so the
+// two cannot drift apart in their parameters or their output.
+func (h *Handler) fuelTripFor(w http.ResponseWriter, r *http.Request, id int64) {
 	q := r.URL.Query()
 	from, err1 := time.Parse(time.RFC3339, q.Get("from"))
 	to, err2 := time.Parse(time.RFC3339, q.Get("to"))
