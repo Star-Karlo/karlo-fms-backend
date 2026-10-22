@@ -915,11 +915,15 @@ func (s *Service) trueUpFromRollup(ctx context.Context, tenantID, vehicleID int6
 	res.Summary.DistanceSource = "rollup"
 }
 
-// isEndOfDay accepts the last instant of a local day, however the caller
-// spelled it: 23:59:59, 23:59:59.999 or the next midnight.
+// isEndOfDay accepts the last minute of a local day, however the caller
+// spelled it: the date picker sends 23:59:00, a hand-written range may send
+// 23:59:59, and the next midnight means the same thing. Requiring the seconds
+// made the standard range — the one the calendar produces for any past
+// period — fall back to the sampled track, which is precisely the case the
+// rollup exists to answer.
 func isEndOfDay(t time.Time) bool {
 	h, m, sec := t.Clock()
-	return (h == 23 && m == 59 && sec >= 59) || (h == 0 && m == 0 && sec == 0)
+	return (h == 23 && m == 59) || (h == 0 && m == 0 && sec == 0)
 }
 
 // medianGapS is the typical spacing of the returned track, which is what

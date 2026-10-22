@@ -43,10 +43,13 @@ func TestIsEndOfDay(t *testing.T) {
 		want bool
 	}{
 		{time.Date(2026, 10, 22, 23, 59, 59, 0, wib), true},
+		// What the date picker actually sends for "to the end of this day".
+		{time.Date(2026, 10, 22, 23, 59, 0, 0, wib), true},
 		{time.Date(2026, 10, 22, 23, 59, 59, 999e6, wib), true},
 		{time.Date(2026, 10, 23, 0, 0, 0, 0, wib), true},
 		{time.Date(2026, 10, 22, 14, 42, 0, 0, wib), false},
 		{time.Date(2026, 10, 22, 23, 58, 0, 0, wib), false},
+		{time.Date(2026, 10, 22, 0, 0, 1, 0, wib), false},
 	}
 	for _, c := range cases {
 		if got := isEndOfDay(c.t); got != c.want {
