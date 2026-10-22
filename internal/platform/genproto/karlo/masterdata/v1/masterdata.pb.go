@@ -997,10 +997,27 @@ func (x *Truck) GetNotes() string {
 }
 
 type GetTruckRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// Include a soft-deleted record instead of reporting it missing.
+	//
+	// OPT-IN, because the default is load-bearing. business-service refuses to
+	// assign a driver whose lookup fails — "driver %s not found" is how a
+	// deleted driver is kept off an order — so widening the default would let
+	// one be assigned. A deleted driver can still carry status "active", so the
+	// status check behind it would not catch them either.
+	//
+	// What the default costs is the other question: a HISTORICAL order names the
+	// driver who drove it, and once that driver is deleted the lookup fails and
+	// the name renders blank. The id is still stored, so nothing is lost — it
+	// simply is not shown, and a past order stops saying who drove it.
+	//
+	// So: the paths that decide who MAY drive keep the default, and the paths
+	// that report who DID set this. The response carries `deleted` either way,
+	// so a caller can tell which it got.
+	IncludeDeleted bool `protobuf:"varint,2,opt,name=include_deleted,json=includeDeleted,proto3" json:"include_deleted,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetTruckRequest) Reset() {
@@ -1038,6 +1055,13 @@ func (x *GetTruckRequest) GetId() string {
 		return x.Id
 	}
 	return ""
+}
+
+func (x *GetTruckRequest) GetIncludeDeleted() bool {
+	if x != nil {
+		return x.IncludeDeleted
+	}
+	return false
 }
 
 type GetTruckResponse struct {
@@ -1207,10 +1231,27 @@ func (x *ListDriversResponse) GetTotal() int64 {
 }
 
 type GetDriverRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// Include a soft-deleted record instead of reporting it missing.
+	//
+	// OPT-IN, because the default is load-bearing. business-service refuses to
+	// assign a driver whose lookup fails — "driver %s not found" is how a
+	// deleted driver is kept off an order — so widening the default would let
+	// one be assigned. A deleted driver can still carry status "active", so the
+	// status check behind it would not catch them either.
+	//
+	// What the default costs is the other question: a HISTORICAL order names the
+	// driver who drove it, and once that driver is deleted the lookup fails and
+	// the name renders blank. The id is still stored, so nothing is lost — it
+	// simply is not shown, and a past order stops saying who drove it.
+	//
+	// So: the paths that decide who MAY drive keep the default, and the paths
+	// that report who DID set this. The response carries `deleted` either way,
+	// so a caller can tell which it got.
+	IncludeDeleted bool `protobuf:"varint,2,opt,name=include_deleted,json=includeDeleted,proto3" json:"include_deleted,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetDriverRequest) Reset() {
@@ -1248,6 +1289,13 @@ func (x *GetDriverRequest) GetId() string {
 		return x.Id
 	}
 	return ""
+}
+
+func (x *GetDriverRequest) GetIncludeDeleted() bool {
+	if x != nil {
+		return x.IncludeDeleted
+	}
+	return false
 }
 
 type GetDriverResponse struct {
@@ -2821,9 +2869,10 @@ const file_karlo_masterdata_v1_masterdata_proto_rawDesc = "" +
 	"\x10_hourmeter_hoursB\x13\n" +
 	"\x11_fuel_tank_litersB\x12\n" +
 	"\x10_fuel_ratio_kmplB\b\n" +
-	"\x06_notes\"!\n" +
+	"\x06_notes\"J\n" +
 	"\x0fGetTruckRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"D\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
+	"\x0finclude_deleted\x18\x02 \x01(\bR\x0eincludeDeleted\"D\n" +
 	"\x10GetTruckResponse\x120\n" +
 	"\x05truck\x18\x01 \x01(\v2\x1a.karlo.masterdata.v1.TruckR\x05truck\"\xa5\x01\n" +
 	"\x12ListDriversRequest\x12\x1d\n" +
@@ -2834,9 +2883,10 @@ const file_karlo_masterdata_v1_masterdata_proto_rawDesc = "" +
 	"\rupdated_since\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\fupdatedSince\"b\n" +
 	"\x13ListDriversResponse\x125\n" +
 	"\adrivers\x18\x01 \x03(\v2\x1b.karlo.masterdata.v1.DriverR\adrivers\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x03R\x05total\"\"\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\"K\n" +
 	"\x10GetDriverRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"H\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
+	"\x0finclude_deleted\x18\x02 \x01(\bR\x0eincludeDeleted\"H\n" +
 	"\x11GetDriverResponse\x123\n" +
 	"\x06driver\x18\x01 \x01(\v2\x1b.karlo.masterdata.v1.DriverR\x06driver\"\xfb\x03\n" +
 	"\x06Driver\x12\x0e\n" +

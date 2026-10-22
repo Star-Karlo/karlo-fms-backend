@@ -253,6 +253,24 @@ message Truck {
 
 message GetTruckRequest {
   string id = 1;
+
+  // Include a soft-deleted record instead of reporting it missing.
+  //
+  // OPT-IN, because the default is load-bearing. business-service refuses to
+  // assign a driver whose lookup fails — "driver %s not found" is how a
+  // deleted driver is kept off an order — so widening the default would let
+  // one be assigned. A deleted driver can still carry status "active", so the
+  // status check behind it would not catch them either.
+  //
+  // What the default costs is the other question: a HISTORICAL order names the
+  // driver who drove it, and once that driver is deleted the lookup fails and
+  // the name renders blank. The id is still stored, so nothing is lost — it
+  // simply is not shown, and a past order stops saying who drove it.
+  //
+  // So: the paths that decide who MAY drive keep the default, and the paths
+  // that report who DID set this. The response carries `deleted` either way,
+  // so a caller can tell which it got.
+  bool include_deleted = 2;
 }
 
 message GetTruckResponse {
@@ -275,6 +293,24 @@ message ListDriversResponse {
 
 message GetDriverRequest {
   string id = 1;
+
+  // Include a soft-deleted record instead of reporting it missing.
+  //
+  // OPT-IN, because the default is load-bearing. business-service refuses to
+  // assign a driver whose lookup fails — "driver %s not found" is how a
+  // deleted driver is kept off an order — so widening the default would let
+  // one be assigned. A deleted driver can still carry status "active", so the
+  // status check behind it would not catch them either.
+  //
+  // What the default costs is the other question: a HISTORICAL order names the
+  // driver who drove it, and once that driver is deleted the lookup fails and
+  // the name renders blank. The id is still stored, so nothing is lost — it
+  // simply is not shown, and a past order stops saying who drove it.
+  //
+  // So: the paths that decide who MAY drive keep the default, and the paths
+  // that report who DID set this. The response carries `deleted` either way,
+  // so a caller can tell which it got.
+  bool include_deleted = 2;
 }
 
 message GetDriverResponse {
