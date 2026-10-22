@@ -137,6 +137,12 @@ type visitKey struct {
 	vehicleID int64
 }
 
+// siteRef identifies a site without a vehicle attached to it.
+type siteRef struct {
+	kind Kind
+	id   int64
+}
+
 // Apply reconciles the open visits with what the collector just observed, and
 // returns the confirmed arrivals and departures.
 //
@@ -193,18 +199,31 @@ func Apply(ctx context.Context, tx pgx.Tx, tenantID int64, sites []Site, obs []O
 		return nil, err
 	}
 
-	siteByKey := map[visitKey]Site{}
+	// Keyed by the site, not by (site, vehicle): the same twenty sites times
+	// two thousand vehicles would be forty thousand map entries built and
+	// thrown away on every pass.
+	byRef := map[siteRef]Site{}
 	for _, s := range sites {
-		for vid := range seen {
-			siteByKey[visitKey{s.Kind, s.ID, vid}] = s
-		}
+		byRef[siteRef{s.Kind, s.ID}] = s
+	}
+	siteFor := func(k visitKey) (Site, bool) {
+		s, ok := byRef[siteRef{k.kind, k.siteID}]
+		return s, ok
 	}
 
 	var out []Transition
 
 	// Arrivals and continuations.
+	//
+	// The continuations are batched into one statement. A depot with two
+	// hundred trucks parked in it produces two hundred of them on EVERY pass,
+	// for the rest of the time those trucks are there, and a round trip each
+	// would make the quiet case — nothing happening — the expensive one.
+	var touchIDs []int64
+	var touchAt []time.Time
+	var touchConfirm []bool
 	for k := range byKey {
-		s, ok := siteByKey[k]
+		s, ok := siteFor(k)
 		if !ok {
 			continue
 		}
@@ -231,49 +250,62 @@ func Apply(ctx context.Context, tx pgx.Tx, tenantID int64, sites []Site, obs []O
 			}
 			continue
 		}
-		// An existing stay: always move the watermark, and confirm it once it
-		// has lasted long enough.
 		confirmNow := v.confirmedAt == nil && now.Sub(v.enteredAt) >= time.Duration(s.MinDwellMin)*time.Minute
-		if _, err := tx.Exec(ctx, `
-			UPDATE site_visits
-			   SET last_seen_at = $2,
-			       confirmed_at = CASE WHEN $3::boolean THEN $2 ELSE confirmed_at END,
-			       updated_at   = now()
-			 WHERE id = $1`, v.id, now, confirmNow); err != nil {
-			return nil, err
-		}
+		touchIDs = append(touchIDs, v.id)
+		touchAt = append(touchAt, now)
+		touchConfirm = append(touchConfirm, confirmNow)
 		if confirmNow {
 			out = append(out, Transition{Site: s, VehicleID: k.vehicleID, Entered: true, At: now})
 		}
 	}
+	if len(touchIDs) > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE site_visits v
+			   SET last_seen_at = u.at,
+			       confirmed_at = COALESCE(v.confirmed_at, CASE WHEN u.confirm THEN u.at END),
+			       updated_at   = now()
+			  FROM unnest($1::bigint[], $2::timestamptz[], $3::boolean[]) AS u(id, at, confirm)
+			 WHERE v.id = u.id`, touchIDs, touchAt, touchConfirm); err != nil {
+			return nil, err
+		}
+	}
 
 	// Departures: an open stay whose vehicle reported this pass, from outside.
+	var closeIDs []int64
 	for k, v := range open {
 		if byKey[k] || !seen[k.vehicleID] {
 			continue
 		}
+		closeIDs = append(closeIDs, v.id)
+		if v.confirmedAt == nil {
+			continue // provisional: it drove through, and nobody needs to know
+		}
 		// Closed at the LAST FIX INSIDE, not at the first fix outside. A
-		// vehicle reporting every two minutes would otherwise be credited with
-		// two minutes of standing on the far side of the fence.
+		// vehicle reporting every two minutes would otherwise be credited
+		// with two minutes of standing on the far side of the fence.
 		dwell := v.lastSeenAt.Sub(v.enteredAt).Minutes()
 		if dwell < 0 {
 			dwell = 0
 		}
+		s, ok := siteFor(k)
+		if !ok {
+			s = Site{Kind: k.kind, ID: k.siteID}
+		}
+		out = append(out, Transition{
+			Site: s, VehicleID: k.vehicleID, Exited: true,
+			At: v.lastSeenAt, DwellMin: round1(dwell),
+		})
+	}
+	if len(closeIDs) > 0 {
+		// dwell_min is computed in SQL from the row's own timestamps, so the
+		// stored figure cannot disagree with the two times beside it.
 		if _, err := tx.Exec(ctx, `
 			UPDATE site_visits
-			   SET exited_at = $2, dwell_min = $3, updated_at = now()
-			 WHERE id = $1 AND exited_at IS NULL`, v.id, v.lastSeenAt, round1(dwell)); err != nil {
+			   SET exited_at  = last_seen_at,
+			       dwell_min  = round((EXTRACT(EPOCH FROM (last_seen_at - entered_at)) / 60)::numeric, 1),
+			       updated_at = now()
+			 WHERE id = ANY($1) AND exited_at IS NULL`, closeIDs); err != nil {
 			return nil, err
-		}
-		if v.confirmedAt != nil {
-			s, ok := siteByKey[k]
-			if !ok {
-				s = Site{Kind: k.kind, ID: k.siteID}
-			}
-			out = append(out, Transition{
-				Site: s, VehicleID: k.vehicleID, Exited: true,
-				At: v.lastSeenAt, DwellMin: round1(dwell),
-			})
 		}
 	}
 	return out, nil
