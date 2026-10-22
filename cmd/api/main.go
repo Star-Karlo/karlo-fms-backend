@@ -321,11 +321,20 @@ func main() {
 	// Findings rather than figures: each vehicle compared with its own past,
 	// its peers, or a threshold. Reads the daily rollup through liveview.
 	insightH := insight.NewHandler(pool, liveSvc)
-	// Routing. ROUTING_PROVIDER=mapid sends route requests through Karlo's own
-	// routing cache — the same engine and the same cached lanes TMS prices
-	// orders with — and is the one to use in production; the hosted providers
-	// remain for deployments without the cache. Nil when none is configured,
-	// which the route endpoint answers as 503.
+	// Routing — two capabilities that happen to come from the same kind of
+	// provider, and must be chosen separately.
+	//
+	// A ROUTE is point to point: "get this truck to that hangar".
+	// ROUTING_PROVIDER picks who answers that, and "mapid" sends it through
+	// Karlo's own routing cache — the same engine and the same already-paid-for
+	// lanes TMS prices orders with.
+	//
+	// MATCHING is a different question: snap a recorded GPS trace onto the
+	// roads it was actually driven on. Only Geoapify offers it here (ORS has
+	// no such endpoint, and MAPID is not asked for one), so it is wired from
+	// the Geoapify key INDEPENDENTLY of the routing choice. Tying the two
+	// together is how choosing a better router for hangars would have quietly
+	// turned off road snapping on every history page.
 	router := routing.New(routing.Config{
 		Provider:      cfg.RoutingProvider,
 		RouteCacheURL: cfg.RouteCacheURL,
@@ -337,14 +346,20 @@ func main() {
 		OSRMBase:      cfg.OSRMBaseURL,
 	})
 	if router == nil {
-		log.Printf("routing: no provider configured; routes and road snapping are disabled")
-	} else if m, ok := routing.AsMatcher(router); ok {
-		// Matching is optional per provider — ORS has no such endpoint — so it
-		// is attached only when the chosen one actually supports it.
-		liveH.WithMatcher(m)
-		log.Printf("routing: using %s (with road snapping)", router.Name())
+		log.Printf("routing: no provider configured; hangar routes are disabled")
 	} else {
-		log.Printf("routing: using %s (no road snapping — provider has no map matching)", router.Name())
+		log.Printf("routing: routes via %s", router.Name())
+	}
+	switch m, ok := routing.AsMatcher(router); {
+	case ok:
+		liveH.WithMatcher(m)
+		log.Printf("routing: road snapping via %s", router.Name())
+	case cfg.GeoapifyAPIKey != "":
+		// The chosen router cannot match, but a matcher is available.
+		liveH.WithMatcher(routing.NewGeoapify(cfg.GeoapifyAPIKey, cfg.GeoapifyBaseURL))
+		log.Printf("routing: road snapping via geoapify (the route provider has none)")
+	default:
+		log.Printf("routing: no road snapping — no provider here offers map matching")
 	}
 	hangarH := hangar.NewHandler(pool, liveSvc).WithRouter(router)
 	// Document upload/download. An empty DOCUMENTS_BUCKET disables just
