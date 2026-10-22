@@ -168,8 +168,88 @@ func (c *Client) History(ctx context.Context, imei string, from, to time.Time, f
 	return pts, err
 }
 
+// historyChunk is the longest window asked of the service in one request.
+//
+// One query over a long range is not just slow, it is UNBOUNDEDLY slow: the
+// service reads every fix in the range before downsampling, and a range that
+// reaches past the hot window pulls the rest out of Athena. A 52-day request
+// in production blew the 55-second budget and returned nothing at all — no
+// partial track, no useful error, just a client timeout after the user had
+// waited a minute.
+//
+// A week scans a bounded amount whether it lands hot or cold, and the chunks
+// are fetched concurrently, so the whole window costs roughly one chunk of
+// wall-clock instead of the sum.
+const historyChunk = 7 * 24 * time.Hour
+
+// historyConcurrency bounds how many chunks are in flight. Eight weeks at once
+// is plenty of parallelism for any window a person asks for, and keeps a
+// single browser request from monopolising the telemetry service.
+const historyConcurrency = 8
+
 // HistoryAll is History, also reporting whether the result was truncated.
 func (c *Client) HistoryAll(ctx context.Context, imei string, from, to time.Time, fields []string, maxPoints int) ([]Position, bool, error) {
+	if to.Sub(from) <= historyChunk {
+		return c.historyWindow(ctx, imei, from, to, fields, maxPoints)
+	}
+
+	// Split on whole chunks, and give each a share of the point budget in
+	// proportion to its length. Downsampling each chunk separately rather
+	// than the whole range makes the returned track evenly dense, which is
+	// what a map wants anyway — LTTB over a 52-day range spends most of its
+	// points on whichever week moved most.
+	type span struct{ lo, hi time.Time }
+	var spans []span
+	for t := from; t.Before(to); t = t.Add(historyChunk) {
+		hi := t.Add(historyChunk)
+		if hi.After(to) {
+			hi = to
+		}
+		spans = append(spans, span{t, hi})
+	}
+	total := to.Sub(from).Seconds()
+
+	results := make([][]Position, len(spans))
+	cut := make([]bool, len(spans))
+	errs := make([]error, len(spans))
+	sem := make(chan struct{}, historyConcurrency)
+	var wg sync.WaitGroup
+	for i := range spans {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			share := 0
+			if maxPoints > 0 {
+				share = int(float64(maxPoints) * spans[i].hi.Sub(spans[i].lo).Seconds() / total)
+				if share < 100 {
+					share = 100 // a chunk with a handful of points is a broken line
+				}
+			}
+			results[i], cut[i], errs[i] = c.historyWindow(ctx, imei, spans[i].lo, spans[i].hi, fields, share)
+		}(i)
+	}
+	wg.Wait()
+
+	// One failed chunk fails the request. A track silently missing a week in
+	// the middle is worse than an error: it reads as a truck that did not
+	// move, and every figure derived from it is wrong by that week.
+	var out []Position
+	truncated := false
+	for i := range spans {
+		if errs[i] != nil {
+			return nil, false, fmt.Errorf("history %s..%s: %w",
+				spans[i].lo.Format(time.RFC3339), spans[i].hi.Format(time.RFC3339), errs[i])
+		}
+		out = append(out, results[i]...)
+		truncated = truncated || cut[i]
+	}
+	return out, truncated, nil
+}
+
+// historyWindow fetches one window, paging it when nothing is downsampled.
+func (c *Client) historyWindow(ctx context.Context, imei string, from, to time.Time, fields []string, maxPoints int) ([]Position, bool, error) {
 	base := url.Values{}
 	base.Set("from", from.UTC().Format(time.RFC3339))
 	base.Set("to", to.UTC().Format(time.RFC3339))
