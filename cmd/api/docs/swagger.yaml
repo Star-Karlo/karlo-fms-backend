@@ -5241,6 +5241,78 @@ paths:
       summary: National fuel-price catalogue (newest first per fuel type)
       tags:
       - fuel
+  /v1/geocode/reverse:
+    get:
+      parameters:
+      - description: Latitude
+        example: -6.1751
+        in: query
+        name: lat
+        required: true
+        type: number
+      - description: Longitude
+        example: 106.8272
+        in: query
+        name: lon
+        required: true
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Name the point a pin was dropped on
+      tags:
+      - geocode
+  /v1/geocode/search:
+    get:
+      description: Relays to the platform geocoder, which searches Indonesian road
+        and administrative-area data — roads first, then kelurahan / kecamatan / kabupaten.
+        Not house-number precise. Answers 503 when this deployment has no geocoder
+        configured, which the map forms treat as "type the coordinates".
+      parameters:
+      - description: at least 3 characters
+        example: Jl. Raya Bekasi, Cikarang
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: max candidates (default 10)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Find a place by name, to drop a pin on it
+      tags:
+      - geocode
   /v1/geofences:
     get:
       description: '`present` counts vehicles currently inside (confirmed visits —
