@@ -62,6 +62,45 @@ Roles are hierarchical: `admin ⊇ manager ⊇ operator`. Reads require any
 authenticated user; master-data writes require `manager+`. Access tokens are
 short-lived JWTs; refresh tokens rotate on use with reuse detection.
 
+### Machine callers: how an inbound API token resolves
+
+The external integration group (`liveview.IntegrationRoutes` — by IMEI, or by
+the plate painted on the truck) accepts a per-tenant API token **or** a user
+JWT, because both happen: the TMS presents its account's key, and a person
+trying the same call from the Swagger page is signed in.
+`apitoken.AuthenticatorOr` decides which, and the order matters, because two of
+the three steps refuse in a way that names the wrong thing.
+
+1. **The prefix is the only discriminator.** The credential is read from
+   `X-Api-Key`, or from `Authorization: Bearer …`, and anything not starting
+   with the literal `fms_` is handed to the JWT authenticator — so a key
+   without the prefix is refused as *missing bearer token* and neither key
+   store is ever consulted. The test runs **before** any call to the shared
+   auth service, which is why keys minted in `karlo_auth` carry an `fms_`
+   prefix of their own: it is what lets one tenant use one key in both
+   products.
+2. **The shared authentication service is asked first** when `WithIAM` is
+   configured. It owns the keys the importer copied into `karlo_auth.api_keys`
+   and is authoritative for them — deliberately, since matching a stale local
+   copy would let a key revoked upstream keep working here. A key it accepts
+   comes back with the company's FMS entitlements and its `fms_tenant_id`,
+   which becomes the request's `TenantID`, so RLS scopes every query exactly as
+   it would for a signed-in user of that account.
+3. **Otherwise the local `api_tokens` table** (`localClaims`). This service
+   still issues its own keys from *Settings > API Service*; those are unknown
+   upstream, and asking upstream alone refused every one of them — as
+   "revoked", which reads as a cancellation rather than a key that was never
+   registered anywhere.
+
+The two stores are **disjoint**, with one operational consequence worth stating
+plainly: Karlo's *Integrasi Eksternal (API)* switch
+(`companies.settings.externalApiEnabled`) refuses a company's keys in
+`karlo_auth` and has no effect on a key this service issued itself. To keep one
+switch in charge of the link, mint a tenant's key from Karlo admin and revoke
+any FMS-local key for that tenant here. `issued_here` on the token list says
+which is which, and deleting a shared-auth row from this list does not stop
+that key working — revoking it in Karlo does.
+
 ## Multi-tenancy
 
 Every table carries `tenant_id` and is protected by RLS. The API connects as the
