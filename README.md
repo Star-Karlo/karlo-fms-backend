@@ -54,7 +54,26 @@ internal/
 ```bash
 make sqlc      # regenerate internal/store from db/schema.sql + db/queries
 make swagger   # regenerate cmd/api/docs from handler annotations
+make proto     # buf lint + buf generate for the shared gRPC contracts
 ```
+
+`make proto` **did nothing at all until 23 Oct 2026**: there was no such
+target, so make matched the `proto/` *directory*, decided it was up to date and
+printed `make: Nothing to be done for 'proto'.` — which reads exactly like
+success. The four TMS services all document `make proto` as the way to
+regenerate, so anyone carrying that habit here believed they had regenerated
+and committed stale bindings; it was caught while adding
+`CompanySettings.external_api_enabled`. The target now matches theirs and is in
+`.PHONY`, which is the part whose absence caused the silence. Its equivalent by
+hand is `cd proto && buf generate`.
+
+The contracts in `proto/` are **hand-copied** from the TMS repos — five copies
+of each file, with nothing in any pipeline comparing them. The one script that
+does is `authentication-service/scripts/check-proto-sync.sh`; run it from there,
+with `FMS_REPO` pointing here if the repos are not side by side. This repo's
+copies currently sit *behind* their owners on `auth.proto` and
+`notification.proto`, which proto3 handles safely by ignoring fields it cannot
+see.
 
 ## Auth & roles
 
@@ -90,16 +109,57 @@ the three steps refuse in a way that names the wrong thing.
    still issues its own keys from *Settings > API Service*; those are unknown
    upstream, and asking upstream alone refused every one of them — as
    "revoked", which reads as a cancellation rather than a key that was never
-   registered anywhere.
+   registered anywhere. **The company's API grant is applied on this path
+   too** — see below.
 
-The two stores are **disjoint**, with one operational consequence worth stating
-plainly: Karlo's *Integrasi Eksternal (API)* switch
-(`companies.settings.externalApiEnabled`) refuses a company's keys in
-`karlo_auth` and has no effect on a key this service issued itself. To keep one
-switch in charge of the link, mint a tenant's key from Karlo admin and revoke
-any FMS-local key for that tenant here. `issued_here` on the token list says
-which is which, and deleting a shared-auth row from this list does not stop
-that key working — revoking it in Karlo does.
+The two stores remain **disjoint** by design: the local lookup cannot see the
+keys the importer copied into `karlo_auth.api_keys`, because matching a stale
+local copy would let a key revoked upstream keep working here. `issued_here` on
+the token list says which is which, and deleting a shared-auth row from this
+list does not stop that key working — revoking it in Karlo does.
+
+### The Karlo API switch applies to locally issued keys
+
+Until 23 Oct 2026 it did not, and that was the two products disagreeing about
+whether a customer had API access: Karlo's *Integrasi Eksternal (API)* switch
+(`companies.settings.externalApiEnabled`) is checked upstream in
+`validateAPIKey`, so cutting a link stopped every key held there and left every
+FMS-issued one working — the half nobody could turn off. The fallback at step 3
+is deliberate and stays; what was missing is that it consulted no grant at all.
+
+The grant now arrives on the wire as `CompanySettings.external_api_enabled`
+(tag 11, `optional` — absent means **enabled**, because key authentication
+predates the switch and a plain `bool` would read every undecided company as
+cut off). It is resolved once, in `iamclient`, where only the pointer separates
+an unset field from an explicit `false`; carried as
+`iamclient.Company.APIEnabled` → `tenantdir.Tenant.APIEnabled`; and answered by
+`tenantdir.Directory.APIEnabledForTenant`, which returns `(enabled, known)`.
+The directory is cached with the rest of the tenant list and invalidated by the
+same company notice `tenantsync` already listens for, so flipping the switch in
+Karlo admin takes effect here immediately in practice and within the one-minute
+TTL at worst.
+
+`apitoken.grantWithdrawn` states the rule in one place and `localClaims` calls
+it rather than repeating it — a test against its own copy of the logic passes
+while the real path is wrong. **Three cases, and only the first refuses:**
+
+- **known and disabled** → refuse, and *after* the row is found, so the answer
+  still distinguishes a key that does not exist from one whose company's access
+  was withdrawn;
+- **known and enabled** → allow;
+- **not known** → **allow.** The directory being unreachable, or the tenant not
+  being an FMS company upstream, is not grounds to refuse a key that resolves
+  against a real local row. Reading unknown as forbidden would stop every
+  integration in the fleet during an outage of a service that is not even in
+  the request path.
+
+A nil resolver — `WithDirectory` never called — leaves local keys exactly as
+they were, which is the state of a deployment that has not cut over. Either
+side may be deployed first: a field this service does not yet receive arrives
+nil and defaults to enabled, which is the old behaviour.
+
+Four tests in `internal/apitoken/grant_test.go`. The Karlo-side treatment is
+`MICROSERVICES/docs/authentication/API_KEYS.md` §7.
 
 ## Multi-tenancy
 
@@ -107,3 +167,19 @@ Every table carries `tenant_id` and is protected by RLS. The API connects as the
 non-owner `fms_app` role; each request runs inside a transaction that sets
 `app.current_tenant` (see `internal/platform/db`). Login is the one pre-tenant
 lookup (permitted by a bootstrap RLS policy).
+
+## Checks: what CI runs, and what it does not
+
+`.github/workflows/ci.yml` builds, vets and tests. It runs **no lint**, and
+there is no `.golangci.yml` and no `make lint` here either — the only lint in
+the Makefile is `buf lint` inside `proto`. Running golangci-lint against this
+module by hand on 23 Oct 2026 reports **46 issues**: 22 `errcheck`, 16
+`unused`, 8 `staticcheck`. All pre-existing, and none of them has ever gated
+anything, which is the part worth writing down rather than the number. The four
+TMS services share a byte-identical config and report 0, so adopting it here
+means either clearing 46 findings or starting from a `//nolint` baseline — a
+decision nobody has made, so this is a gap rather than a policy.
+
+Deploying is `workflow_dispatch` only: Actions → **deploy-api** → Run workflow,
+tick the checklist, type `DEPLOY`. That click is the approval, and it is the
+gate — a push to `main` runs CI and ships nothing.
