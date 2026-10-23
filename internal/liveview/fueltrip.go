@@ -588,9 +588,23 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 		}
 	}
 
+	// The note has to distinguish "nothing happened" from "the sum failed",
+	// because the clamp above makes them look identical and they are not.
+	//
+	// Observed on K-9467-BF, 20-21 October: the balance came out NEGATIVE — the
+	// level rose 46 points over a refuel the sensor sampled in pieces, and
+	// refuels + thefts outweighed the fall — so used clamped to 0 and the panel
+	// reported "0 L, Rp 0, fuel level did not change measurably" for a truck
+	// that had driven 74 km and burned 26.6 L by its own CAN counter. Every
+	// part of that sentence was wrong, and it read as reassurance.
 	switch {
 	case tank == nil || *tank == 0:
 		out.Note = "Set a Fuel Tank (L) on the vehicle to convert % used into litres and km/L."
+	case usedPct == 0 && (refuelPct > 0 || theftPct > 0):
+		out.Note = "Fuel used could not be worked out for this period: the tank balance " +
+			"(level fall + refuels − suspected losses) came out at or below zero, which means " +
+			"one of those three is wrong — usually a refuel the sensor reported in several " +
+			"steps. The distance and the level readings are still good; the litres and cost are not."
 	case usedPct == 0:
 		out.Note = "Fuel level did not change measurably this trip (coarse 1% sensor) — km/L needs a longer trip."
 	}
