@@ -243,11 +243,27 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	prefix := secret[:12]
 
 	tid := auth.TenantID(r.Context())
-	uid := auth.UserID(r.Context())
 	var dto DTO
 	e := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		// created_by is a foreign key into THIS database's users table, and
+		// the signed-in admin may not be in it: an SSO session carries the
+		// platform's user id from karlo_auth, which has no local row. Filling
+		// it blindly made every token creation by a platform or TMS admin fail
+		// with a foreign-key violation — the credential could not be issued at
+		// all, and the error named a constraint rather than the problem.
+		//
+		// Attribution is worth having and not worth blocking on, so it is
+		// recorded when the user is local and left null when they are not.
+		var createdBy *int64
+		if uid := auth.UserID(r.Context()); uid > 0 {
+			var exists bool
+			if err := tx.QueryRow(r.Context(),
+				`SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)`, uid).Scan(&exists); err == nil && exists {
+				createdBy = &uid
+			}
+		}
 		t, err := store.New(tx).CreateApiToken(r.Context(), store.CreateApiTokenParams{
-			TenantID: tid, Name: req.Name, TokenPrefix: prefix, TokenHash: sum[:], CreatedBy: &uid,
+			TenantID: tid, Name: req.Name, TokenPrefix: prefix, TokenHash: sum[:], CreatedBy: createdBy,
 		})
 		if err != nil {
 			return err
