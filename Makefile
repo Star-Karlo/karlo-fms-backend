@@ -1,4 +1,19 @@
-.PHONY: up up-app down migrate migrate-remote seed reset psql redis-cli logs run-api swagger sqlc tidy
+.PHONY: up up-app down migrate migrate-remote seed reset psql redis-cli logs run-api swagger sqlc tidy proto
+
+# Regenerate the gRPC bindings from proto/.
+#
+# PHONY, and that is not decoration. Without it make matches the proto/
+# DIRECTORY, concludes the target is already up to date, and prints
+#
+#     make: Nothing to be done for `proto'.
+#
+# which reads exactly like success. This repo had no proto target at all, so
+# anyone following the convention of the four TMS services — where `make proto`
+# is the documented way — believed they had regenerated and committed stale
+# bindings. Caught on 23 Oct 2026 while adding CompanySettings.external_api_enabled.
+proto:
+	cd proto && buf lint && buf generate
+	go mod tidy
 
 # Start local infra (Postgres/PostGIS + Redis)
 up:
