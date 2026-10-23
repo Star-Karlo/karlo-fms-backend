@@ -45,6 +45,24 @@ const (
 	theftMinLiters = 5.0  // litres lost in one transmission (needs a tank size)
 	theftMinPct    = 15.0 // fallback threshold when the vehicle has no tank size
 	theftMaxGapMin = 30.0
+
+	// A drop has to be big enough that the SENSOR could have meant it.
+	//
+	// These senders report whole percent, so one step on a 340 L tank is 3.4 L
+	// — and the 5 L floor above is less than two of them. K-9467-BF's sender
+	// wanders in a 54-58% band while parked, and every downward wobble in that
+	// band cleared the bar: four "thefts" in two days, 7 to 14 L each, none of
+	// them fuel. Three steps is the smallest move that is clearly the tank and
+	// not the quantiser.
+	theftMinSensorSteps = 3.0
+
+	// ...and slow enough that fuel could physically have left.
+	//
+	// Two of those four drained their litres in FOUR SECONDS and THREE. That is
+	// 200+ L/min; a forecourt pump manages about 40, and a hose and jerrycan far
+	// less. A drop faster than this is the sender changing its mind, whatever
+	// else it might be — nothing was siphoned.
+	theftMaxLitresPerMin = 60.0
 )
 
 // Demo fuel-theft: one clearly-flagged sample event for a specific truck +
@@ -92,7 +110,7 @@ var fuelPriceByProvince = map[string]float64{}
 // minutes that's too large + too fast to be consumption is flagged as theft.
 // mock tags the event when the underlying reading is fabricated (the detector
 // itself is identical either way).
-func detectTheft(dropPct, gapMin float64, pt telemetry.Position, tank *float64, mock bool) (TheftEvent, bool) {
+func detectTheft(dropPct, gapMin float64, prev, pt telemetry.Position, tank *float64, mock bool) (TheftEvent, bool) {
 	// One transmission, short gap — a drop spread over a long offline gap is
 	// consumption, not a siphon.
 	if gapMin < 0 || gapMin > theftMaxGapMin {
@@ -103,12 +121,37 @@ func detectTheft(dropPct, gapMin float64, pt telemetry.Position, tank *float64, 
 	if pt.Speed != nil && *pt.Speed > movingSpeed {
 		return TheftEvent{}, false
 	}
+	// ...and "stopped" means the TRUCK is still, not merely that its speed
+	// rounded to zero. K-9467-BF was shunted a few metres twice on 21 October:
+	// speed 0, Movement 1, position changed, fuel dipped three points and came
+	// back within ninety seconds. That is the tank sloshing, and it was being
+	// reported as a siphon.
+	for _, md := range []json.RawMessage{prev.Metadata, pt.Metadata} {
+		if moving, known := deviceMoving(md); known && moving {
+			return TheftEvent{}, false
+		}
+	}
+	// An ignition transition is not a loss either. The other two of those four
+	// landed exactly on the engine stopping: 58% with the engine running,
+	// 54% three seconds later with it off. The level the sender reports shifts
+	// with the engine state; the fuel does not.
+	if prev.Ignition != nil && pt.Ignition != nil && *prev.Ignition != *pt.Ignition {
+		return TheftEvent{}, false
+	}
 	hasTank := tank != nil && *tank > 0
 	var liters float64
 	if hasTank {
-		// Judge in litres: a single-transmission loss of more than theftMinLiters.
+		// Judge in litres: a single-transmission loss of more than
+		// theftMinLiters, and of at least three of the sensor's own steps so
+		// a 1%-resolution sender's wobble cannot raise the alarm.
 		liters = *tank * dropPct / 100
-		if liters < theftMinLiters {
+		if liters < theftMinLiters || liters < theftMinSensorSteps*(*tank)/100 {
+			return TheftEvent{}, false
+		}
+		// Could fuel have left this fast? Below a second of elapsed time the
+		// question is meaningless — two readings in the same moment — and the
+		// answer is the same either way: not a siphon.
+		if gapMin <= 0 || liters/gapMin > theftMaxLitresPerMin {
 			return TheftEvent{}, false
 		}
 	} else if dropPct < theftMinPct {
@@ -505,7 +548,7 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 		case d > 0:
 			// A big drop over a short interval is theft, not consumption — the
 			// SAME detector the mock runs through.
-			if te, ok := detectTheft(d, fp.p.Time.Sub(prevPt.Time).Minutes(), fp.p, tank, false); ok {
+			if te, ok := detectTheft(d, fp.p.Time.Sub(prevPt.Time).Minutes(), prevPt, fp.p, tank, false); ok {
 				out.Thefts = append(out.Thefts, te)
 			}
 			// An ordinary drop needs no tally — consumption comes from the balance.
@@ -629,6 +672,30 @@ func fuelLevelPct(md json.RawMessage) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// deviceMoving reads the tracker's own Movement flag.
+//
+// Distinct from speed, and that difference is the whole point: a truck being
+// shunted a few metres around a yard reports speed 0 with Movement 1, and the
+// fuel in its tank sloshes exactly as much as it would at 40 km/h. Judging
+// "is it stationary" by speed alone called that a theft.
+func deviceMoving(md json.RawMessage) (bool, bool) {
+	if len(md) == 0 {
+		return false, false
+	}
+	var m map[string]any
+	if err := json.Unmarshal(md, &m); err != nil {
+		return false, false
+	}
+	for _, k := range []string{"Movement", "movement"} {
+		if v, ok := m[k]; ok {
+			if f, ok := ioNum(v); ok {
+				return f > 0, true
+			}
+		}
+	}
+	return false, false
 }
 
 // fuelRate reads the ECU's instantaneous fuel consumption rate (litres/hour)
