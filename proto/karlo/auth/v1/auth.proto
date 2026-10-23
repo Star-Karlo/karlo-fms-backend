@@ -150,6 +150,21 @@ message CompanySettings {
   bool use_strict_agreement = 6;
   int32 max_driver_available_after_order_done = 7;
   bool access_tolls = 8;
+  // external_api_enabled is whether this company may be called with an API
+  // key at all. The company-wide grant, checked before any key resolves.
+  //
+  // OPTIONAL, and that is load-bearing: absent means ENABLED. API-key
+  // authentication predates the switch, so a plain bool would arrive as
+  // false for every company that never set it and read as "cut off" —
+  // silently refusing every integration already running. The nil case has to
+  // survive the wire, which in proto3 needs field presence.
+  //
+  // On the wire so FMS can honour the same switch. Without it FMS could only
+  // police the keys IT issued, and cutting a link in Karlo admin left those
+  // working — the two products disagreeing about whether a customer has API
+  // access. See karlo_auth CompanySettings.APIEnabled(), which is the one
+  // reader for the absent-means-enabled rule.
+  optional bool external_api_enabled = 11;
 }
 
 message ValidateTokenRequest {

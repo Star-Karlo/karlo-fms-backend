@@ -155,6 +155,7 @@ func main() {
 	// give a non-nil interface holding a nil pointer, and the nil check in
 	// actingFor would pass straight through to a method call on nil.
 	var tenantDir auth.TenantResolver
+	var apiGrantDir apitoken.APIGrantResolver
 	// The concrete directory, for the write-through's tenant -> company lookup.
 	// Nil when there is no directory; mdwrite.CallerFor then refuses any staff
 	// write made via ?account_id rather than misfiling it upstream.
@@ -175,6 +176,10 @@ func main() {
 		}
 		if dir := tenantdir.New(iamConn, time.Minute); dir != nil {
 			tenantDir = dir
+			// Kept with its concrete type as well: the API-token handler asks
+			// it a second question (the company's API grant) that
+			// TenantResolver does not carry.
+			apiGrantDir = dir
 			companyDir = dir
 			if sync := tenantsync.New(pool, dir); sync != nil {
 				go sync.Run(ctx, 5*time.Minute)
@@ -303,7 +308,7 @@ func main() {
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
 	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...).WithAuthUpstream(authUp).WithCatalog(cat).WithMasterDataClient(mdRead)
-	apiTokenH := apitoken.NewHandler(pool).WithIAM(iamConn)
+	apiTokenH := apitoken.NewHandler(pool).WithIAM(iamConn).WithDirectory(apiGrantDir)
 	webhookH := webhook.NewHandler(pool)
 	dashboardH := dashboard.NewHandler(pool)
 	// AI dashboard composition (Amazon Nova Pro on Bedrock). A missing or

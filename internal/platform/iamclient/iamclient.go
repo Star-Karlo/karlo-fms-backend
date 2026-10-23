@@ -61,6 +61,14 @@ type Company struct {
 	LegalName   string
 	FMSTenantID int64
 	IsSuspended bool
+	// APIEnabled is whether this company may be reached with an API key.
+	//
+	// Already resolved against the absent-means-ENABLED rule, so callers get a
+	// plain answer and cannot apply the default the wrong way round. The wire
+	// field has presence precisely so this decision happens once, here: key
+	// authentication predates the switch, and reading "never decided" as off
+	// would cut off every integration that was already running.
+	APIEnabled bool
 }
 
 // ListFMSCompanies returns every company holding an FMS tenant id.
@@ -90,12 +98,20 @@ func (c *Client) ListFMSCompanies(ctx context.Context) ([]Company, error) {
 			if co.GetFmsTenantId() == 0 {
 				continue
 			}
+			// GetExternalApiEnabled() returns false for BOTH an explicit
+			// false and an unset field, so the pointer is what distinguishes
+			// them. nil is "never decided", which means enabled.
+			apiEnabled := true
+			if set := co.GetSettings(); set != nil && set.ExternalApiEnabled != nil {
+				apiEnabled = *set.ExternalApiEnabled
+			}
 			out = append(out, Company{
 				ID:          co.GetId(),
 				Name:        co.GetName(),
 				LegalName:   co.GetLegalName(),
 				FMSTenantID: co.GetFmsTenantId(),
 				IsSuspended: co.GetIsSuspended(),
+				APIEnabled:  apiEnabled,
 			})
 		}
 		if len(resp.GetCompanies()) < pageSize || int64(len(out)) >= resp.GetTotal() {

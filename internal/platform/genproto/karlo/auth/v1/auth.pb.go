@@ -565,8 +565,23 @@ type CompanySettings struct {
 	UseStrictAgreement               bool                   `protobuf:"varint,6,opt,name=use_strict_agreement,json=useStrictAgreement,proto3" json:"use_strict_agreement,omitempty"`
 	MaxDriverAvailableAfterOrderDone int32                  `protobuf:"varint,7,opt,name=max_driver_available_after_order_done,json=maxDriverAvailableAfterOrderDone,proto3" json:"max_driver_available_after_order_done,omitempty"`
 	AccessTolls                      bool                   `protobuf:"varint,8,opt,name=access_tolls,json=accessTolls,proto3" json:"access_tolls,omitempty"`
-	unknownFields                    protoimpl.UnknownFields
-	sizeCache                        protoimpl.SizeCache
+	// external_api_enabled is whether this company may be called with an API
+	// key at all. The company-wide grant, checked before any key resolves.
+	//
+	// OPTIONAL, and that is load-bearing: absent means ENABLED. API-key
+	// authentication predates the switch, so a plain bool would arrive as
+	// false for every company that never set it and read as "cut off" —
+	// silently refusing every integration already running. The nil case has to
+	// survive the wire, which in proto3 needs field presence.
+	//
+	// On the wire so FMS can honour the same switch. Without it FMS could only
+	// police the keys IT issued, and cutting a link in Karlo admin left those
+	// working — the two products disagreeing about whether a customer has API
+	// access. See karlo_auth CompanySettings.APIEnabled(), which is the one
+	// reader for the absent-means-enabled rule.
+	ExternalApiEnabled *bool `protobuf:"varint,11,opt,name=external_api_enabled,json=externalApiEnabled,proto3,oneof" json:"external_api_enabled,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *CompanySettings) Reset() {
@@ -651,6 +666,13 @@ func (x *CompanySettings) GetMaxDriverAvailableAfterOrderDone() int32 {
 func (x *CompanySettings) GetAccessTolls() bool {
 	if x != nil {
 		return x.AccessTolls
+	}
+	return false
+}
+
+func (x *CompanySettings) GetExternalApiEnabled() bool {
+	if x != nil && x.ExternalApiEnabled != nil {
+		return *x.ExternalApiEnabled
 	}
 	return false
 }
@@ -1632,7 +1654,7 @@ const file_karlo_auth_v1_auth_proto_rawDesc = "" +
 	"\x04slug\x18\v \x01(\tR\x04slug\x12!\n" +
 	"\fis_suspended\x18\f \x01(\bR\visSuspended\x129\n" +
 	"\n" +
-	"updated_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xb6\x03\n" +
+	"updated_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\x86\x04\n" +
 	"\x0fCompanySettings\x120\n" +
 	"\x14cancel_with_validate\x18\x01 \x01(\bR\x12cancelWithValidate\x124\n" +
 	"\x16finish_with_geofencing\x18\x02 \x01(\bR\x14finishWithGeofencing\x12C\n" +
@@ -1641,7 +1663,9 @@ const file_karlo_auth_v1_auth_proto_rawDesc = "" +
 	"\x10pph23_percentage\x18\x05 \x01(\x01R\x0fpph23Percentage\x120\n" +
 	"\x14use_strict_agreement\x18\x06 \x01(\bR\x12useStrictAgreement\x12O\n" +
 	"%max_driver_available_after_order_done\x18\a \x01(\x05R maxDriverAvailableAfterOrderDone\x12!\n" +
-	"\faccess_tolls\x18\b \x01(\bR\vaccessTolls\",\n" +
+	"\faccess_tolls\x18\b \x01(\bR\vaccessTolls\x125\n" +
+	"\x14external_api_enabled\x18\v \x01(\bH\x00R\x12externalApiEnabled\x88\x01\x01B\x17\n" +
+	"\x15_external_api_enabled\",\n" +
 	"\x14ValidateTokenRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"\x9c\x01\n" +
 	"\x15ValidateTokenResponse\x12\x14\n" +
@@ -1808,6 +1832,7 @@ func file_karlo_auth_v1_auth_proto_init() {
 	if File_karlo_auth_v1_auth_proto != nil {
 		return
 	}
+	file_karlo_auth_v1_auth_proto_msgTypes[4].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

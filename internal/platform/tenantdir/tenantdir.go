@@ -52,6 +52,15 @@ type Tenant struct {
 	// UUIDs. Resolving it here means fms-backend still keys everything by the
 	// bigint, and translates once, at the edge.
 	CompanyID string
+	// APIEnabled is the company-wide API grant, as karlo_auth holds it.
+	//
+	// Carried here because it is the only way FMS can honour a link that was
+	// cut in Karlo admin for a key FMS issued ITSELF: such a key is unknown
+	// upstream, so nothing on the validate path would ever consult the switch.
+	// Cached with the rest of the directory and invalidated by the same
+	// company notice, so flipping the switch takes effect here within the TTL
+	// at worst and immediately in practice.
+	APIEnabled bool
 }
 
 // Directory lists the tenants this service knows about.
@@ -100,6 +109,29 @@ func (d *Directory) List(ctx context.Context) ([]Tenant, error) {
 	d.cached, d.cachedAt = got, time.Now()
 	d.mu.Unlock()
 	return got, nil
+}
+
+// APIEnabledForTenant reports whether this tenant's company may be reached
+// with an API key.
+//
+// The second return says whether the question could be ANSWERED. A caller must
+// not read "unknown" as "forbidden": if the directory cannot be reached, every
+// integration in the fleet would stop on an outage of a service that is not in
+// the request path. It also must not read it as "allowed" without saying so —
+// hence two values rather than a silent default here.
+func (d *Directory) APIEnabledForTenant(ctx context.Context, tenantID int64) (enabled bool, known bool) {
+	tenants, err := d.List(ctx)
+	if err != nil {
+		return false, false
+	}
+	for _, t := range tenants {
+		if t.ID == tenantID {
+			return t.APIEnabled, true
+		}
+	}
+	// Not an FMS tenant as far as karlo_auth is concerned. Unknown, not
+	// disabled: the local key still names a real tenant row in this database.
+	return false, false
 }
 
 // Invalidate drops the cached list so the next List refetches — a company
@@ -201,7 +233,9 @@ func (d *Directory) fetch(ctx context.Context) ([]Tenant, error) {
 	}
 	out := make([]Tenant, 0, len(companies))
 	for _, c := range companies {
-		out = append(out, Tenant{ID: c.FMSTenantID, Name: c.Name, CompanyID: c.ID})
+		out = append(out, Tenant{
+			ID: c.FMSTenantID, Name: c.Name, CompanyID: c.ID, APIEnabled: c.APIEnabled,
+		})
 	}
 	return out, nil
 }

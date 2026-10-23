@@ -2,6 +2,7 @@
 package apitoken
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -58,6 +59,47 @@ type Handler struct {
 	// iam, when set, is where API keys are checked. Nil leaves the local
 	// api_tokens table in use — the state before the cutover.
 	iam *iamclient.Client
+	// dir, when set, answers whether a tenant's company still has API access.
+	//
+	// Needed for LOCAL keys only. A key held in karlo_auth already has the
+	// switch applied upstream — validateAPIKey checks it before resolving
+	// anything — but a key FMS issued itself is unknown there, so without this
+	// nothing on its path ever consults the grant. That was the two products
+	// disagreeing: a link cut in Karlo admin stopped every upstream key and
+	// left every FMS-issued one working.
+	dir APIGrantResolver
+}
+
+// APIGrantResolver answers whether a tenant's company still has API access.
+//
+// A one-method interface, matching auth.TenantResolver: this package needs one
+// question answered and should not depend on the directory that answers it.
+// The second return says whether the question could be ANSWERED at all, which
+// the caller must not collapse into "no" — see localClaims.
+type APIGrantResolver interface {
+	APIEnabledForTenant(ctx context.Context, tenantID int64) (enabled bool, known bool)
+}
+
+// grantWithdrawn reports whether this tenant's company has had its API access
+// taken away. Three cases, and only the first refuses:
+//
+//   - known and disabled — the switch is off, so refuse;
+//   - known and enabled — allow;
+//   - NOT KNOWN — allow, and this is the one that matters. It means the
+//     directory could not answer: unreachable, or the tenant is not an FMS
+//     company upstream. Reading it as "forbidden" would stop every
+//     integration in the fleet during an outage of a service that is not even
+//     in the request path, and would refuse a local key that resolves against
+//     a real row in this database.
+//
+// A nil resolver is a deployment that has not cut over; local keys then behave
+// exactly as they did before.
+func grantWithdrawn(ctx context.Context, g APIGrantResolver, tenantID int64) bool {
+	if g == nil {
+		return false
+	}
+	enabled, known := g.APIEnabledForTenant(ctx, tenantID)
+	return known && !enabled
 }
 
 // NewHandler builds the handler.
@@ -65,6 +107,11 @@ func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
 
 // WithIAM points key validation at the shared authentication service.
 func (h *Handler) WithIAM(c *iamclient.Client) *Handler { h.iam = c; return h }
+
+// WithDirectory supplies the tenant directory, so a locally issued key can be
+// checked against its company's API grant. Without it local keys behave as
+// they did before: resolved on this database alone.
+func (h *Handler) WithDirectory(d APIGrantResolver) *Handler { h.dir = d; return h }
 
 // Routes mounts token endpoints — all require admin.
 func (h *Handler) Routes(r chi.Router) {
@@ -188,6 +235,22 @@ func (h *Handler) localClaims(r *http.Request, raw string) (*auth.Claims, bool) 
 		_, e := tx.Exec(r.Context(), `UPDATE api_tokens SET last_used_at = now() WHERE id = $1`, row.ID)
 		return e
 	})
+	// The company-wide grant, applied to a key karlo_auth has never heard of.
+	//
+	// Deliberately AFTER the row is found, so the refusal distinguishes a key
+	// that does not exist from one whose company's access was withdrawn — the
+	// same distinction ErrAPIDisabled draws upstream, and the reason an
+	// integrator is not sent hunting a credential problem that is not theirs.
+	//
+	// `known` false means the directory could not answer: either it is
+	// unreachable or this tenant is not an FMS company upstream. Neither is
+	// grounds to refuse a key that resolves against a real local row — an
+	// outage of a service outside the request path must not stop every
+	// integration in the fleet.
+	if grantWithdrawn(r.Context(), h.dir, row.TenantID) {
+		return nil, false
+	}
+
 	return &auth.Claims{TenantID: row.TenantID, Role: auth.RoleOperator}, true
 }
 
