@@ -12,12 +12,18 @@
 #           JAKARTA_TASK_NETWORK — the last is the JSON from
 #           `terraform output -raw migrate_network` in infra/jakarta.
 #
-# TWO TARGETS during the Jakarta relocation. `singapore` is the running stack
-# above. `jakarta` is FMS inside the platform VPC (karlo-fms-infra/infra/
-# jakarta): different region, the platform's ECR repo and cluster, and — the
-# part that is not a rename — migrations run as a one-off task INSIDE the VPC,
-# because the Jakarta RDS has no public address for a runner to reach. After
-# Singapore is torn down the default flips and the singapore steps go.
+# TWO TARGETS, and JAKARTA IS NOW THE DEFAULT. `jakarta` is FMS inside the
+# platform VPC: the platform's ECR repo and cluster in ap-southeast-3, and —
+# the part that is not a rename — migrations run as a one-off task INSIDE the
+# VPC, because the Jakarta RDS has no public address for a runner to reach.
+#
+# `singapore` is kept only so an old run can be reproduced. The cluster it
+# names is GONE: `aws ecs list-services --cluster karlo-fms --region
+# ap-southeast-1` answers ClusterNotFoundException. It stayed the default after
+# the relocation, which meant a plain dispatch pushed the image to ECR and then
+# failed updating a service that does not exist — a deploy that looks like it
+# half-worked and changes nothing. The steps can go once nobody needs the
+# history.
 name: deploy-api
 
 on:
@@ -38,8 +44,8 @@ on:
       target:
         description: 'Which stack to deploy'
         type: choice
-        options: [singapore, jakarta]
-        default: singapore
+        options: [jakarta, singapore]
+        default: jakarta
 
 permissions:
   id-token: write # for AWS OIDC
@@ -116,14 +122,40 @@ jobs:
           REPO: ${{ inputs.target == 'jakarta' && 'karlo/fms-api' || vars.ECR_REPO }}
           TAG: ${{ github.sha }}
         run: |
-          docker build --platform linux/amd64 --build-arg SERVICE=api \
-            -t "$REGISTRY/$REPO:$TAG" -t "$REGISTRY/$REPO:latest" .
-          docker push "$REGISTRY/$REPO:$TAG"
+          # Reuse the image if this commit has already been built.
+          #
+          # The platform's repositories have IMMUTABLE tags, and the tag is the
+          # commit sha — so re-dispatching a deploy of an unchanged commit
+          # pushes a tag that already exists and the whole run fails:
+          #
+          #   tag invalid: The image tag '...' already exists in
+          #   'karlo/fms-api' and cannot be overwritten because the tag is
+          #   immutable.
+          #
+          # That is exactly what happened on 22 October, and it reads like a
+          # broken deploy rather than "nothing to do". Redeploying the same
+          # commit is a legitimate thing to want — to pick up a changed task
+          # definition, or to roll back to it — so the same commit is the same
+          # image and this reuses it.
+          #
+          # batch-get-image rather than describe-images: it is the read this
+          # role already holds for pulling.
+          if aws ecr batch-get-image --repository-name "$REPO" \
+               --image-ids imageTag="$TAG" \
+               --query 'images[0].imageId.imageDigest' --output text 2>/dev/null | grep -q sha256; then
+            echo "already in ECR, reusing: $REGISTRY/$REPO:$TAG"
+          else
+            docker build --platform linux/amd64 --build-arg SERVICE=api \
+              -t "$REGISTRY/$REPO:$TAG" -t "$REGISTRY/$REPO:latest" .
+            docker push "$REGISTRY/$REPO:$TAG"
+          fi
           # The platform's repositories have IMMUTABLE tags: :latest is
           # whatever was pushed first and can never move. Jakarta deploys
           # therefore pin every task definition to the commit's tag below
           # and never push :latest; Singapore keeps its moving tag.
-          if [ "${{ inputs.target }}" != "jakarta" ]; then
+          # Only meaningful when a build actually happened; a reused image
+          # already has whatever :latest it was pushed with.
+          if [ "${{ inputs.target }}" != "jakarta" ] && docker image inspect "$REGISTRY/$REPO:latest" >/dev/null 2>&1; then
             docker push "$REGISTRY/$REPO:latest"
           fi
 
