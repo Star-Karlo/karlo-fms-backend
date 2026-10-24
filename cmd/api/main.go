@@ -373,6 +373,12 @@ func main() {
 		log.Printf("routing: no road snapping — no provider here offers map matching")
 	}
 	hangarH := hangar.NewHandler(pool, liveSvc).WithRouter(router)
+	// Dispatching a vehicle to a hangar for a due service answers the same
+	// question the hangar page does — "how far is the workshop from here" —
+	// so it uses the same two collaborators. Attached here rather than at
+	// construction because the router is built further down, after the config
+	// that selects a provider.
+	maintenanceH = maintenanceH.WithLive(liveSvc).WithRouter(router)
 	// Document upload/download. An empty DOCUMENTS_BUCKET disables just
 	// these endpoints (503) rather than failing startup.
 	documentH := document.NewHandler(ctx, pool, cfg.AWSRegion, cfg.DocumentsBucket)

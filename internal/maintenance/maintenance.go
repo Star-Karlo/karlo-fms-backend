@@ -10,9 +10,11 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/karlo/fms-backend/internal/auth"
+	"github.com/karlo/fms-backend/internal/liveview"
 	"github.com/karlo/fms-backend/internal/platform/conv"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/httpx"
+	"github.com/karlo/fms-backend/internal/routing"
 	"github.com/karlo/fms-backend/internal/store"
 )
 
@@ -79,7 +81,13 @@ func fromRow(s store.ListServiceSchedulesRow) DTO {
 }
 
 // Handler exposes maintenance endpoints.
-type Handler struct{ pool *db.Pool }
+type Handler struct {
+	pool *db.Pool
+	// Both optional, and both only used by dispatch: without them a schedule
+	// can still be sent to a hangar, it just cannot say how far away it is.
+	live   *liveview.Service
+	router routing.Router
+}
 
 // NewHandler builds the handler.
 func NewHandler(pool *db.Pool) *Handler { return &Handler{pool: pool} }
@@ -91,6 +99,8 @@ func (h *Handler) Routes(r chi.Router) {
 		mr.Use(auth.RequireRole(auth.RoleManager))
 		mr.Post("/v1/service-schedules", h.create)
 		mr.Delete("/v1/service-schedules/{id}", h.del)
+		mr.Post("/v1/service-schedules/{id}/dispatch", h.dispatch)
+		mr.Post("/v1/service-schedules/{id}/complete", h.complete)
 	})
 }
 
