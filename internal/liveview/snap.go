@@ -51,6 +51,27 @@ type SnappedHistory struct {
 	ChunksTotal   int    `json:"chunks_total"`
 	ChunksMatched int    `json:"chunks_matched"`
 	Provider      string `json:"provider"`
+
+	// StraightLineKm is the great-circle distance through the raw fixes: the
+	// shortest the journey could possibly have been.
+	//
+	// It exists because ChunksMatched == ChunksTotal does NOT mean the whole
+	// path was found. A matcher can return a SHORT answer for every chunk and
+	// report complete success — measured on Valhalla against a known route,
+	// reconstruction falls to 83% once fixes are ~1 km apart and 28% at
+	// ~1,5 km, with no error at any point. Our trackers report about every
+	// 50 s, which is comfortable in town and marginal at motorway speed, so
+	// this is the common case on long runs rather than an edge one.
+	StraightLineKm float64 `json:"straight_line_km"`
+	// Partial is set when the matched path is implausibly short against
+	// StraightLineKm. Roads cannot be shorter than the straight lines between
+	// their own points, so a matched distance well below it is arithmetically
+	// impossible for a complete path — which makes this detectable rather than
+	// something a reader has to notice.
+	//
+	// When true the line is a fragment: show it as incomplete, and do not use
+	// DistanceKm as a distance.
+	Partial bool `json:"partial"`
 }
 
 // snapHistory godoc
@@ -130,5 +151,12 @@ func (h *Handler) snapHistory(w http.ResponseWriter, r *http.Request) {
 		ChunksTotal:   matched.ChunksTotal,
 		ChunksMatched: matched.ChunksMatched,
 		Provider:      matched.Provider,
+
+		// Both come from the matcher. Geoapify leaves RawDistanceM at zero, so
+		// Partial stays false there — correct, since its failure mode is a
+		// failed chunk rather than a short one, and that is already reported
+		// through ChunksMatched.
+		StraightLineKm: float64(int(matched.RawDistanceM/100+0.5)) / 10,
+		Partial:        matched.Partial,
 	})
 }
