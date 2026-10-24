@@ -176,6 +176,9 @@ type Config struct {
 	OSRMBaseURL     string
 	// ValhallaBaseURL is Karlo's own routing engine. No API key: no vendor.
 	ValhallaBaseURL string
+	// ValhallaToken gates that engine. Required because it is published on a
+	// hostname; empty is correct only for a VPC-internal deployment.
+	ValhallaToken string
 
 	// CORSOrigins is the allowlist of browser origins (e.g. https://fms.karlo.id).
 	// Empty ⇒ reflect any origin (fine for local dev behind the Vite proxy).
@@ -234,6 +237,7 @@ func Load() Config {
 		ORSBaseURL:      Env("ORS_BASE_URL", ""),
 		OSRMBaseURL:     Env("OSRM_BASE_URL", ""),
 		ValhallaBaseURL: Env("VALHALLA_BASE_URL", ""),
+		ValhallaToken:   Env("VALHALLA_TOKEN", ""),
 		// Host ports 5433/6380 avoid clashing with the telemetry stack (5432/6379).
 		DatabaseURL: Env("DATABASE_URL", "postgres://fms_app:fms_app@localhost:5433/fms_app"),
 		RedisAddr:   Env("REDIS_ADDR", ""), // platform Redis in Jakarta; empty = no revocation feed

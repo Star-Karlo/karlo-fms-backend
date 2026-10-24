@@ -34,12 +34,13 @@ import (
 // should be read as pricing a gate.
 type Valhalla struct {
 	baseURL string
+	token   string
 	client  *http.Client
 	truck   *TruckOptions
 }
 
 // NewValhalla returns a router against a Valhalla HTTP service, e.g.
-// http://valhalla.internal:8002.
+// http://fms-routing.karlo.internal:5008.
 func NewValhalla(baseURL string) *Valhalla {
 	return &Valhalla{
 		baseURL: trimSlash(baseURL),
@@ -76,6 +77,22 @@ type TruckOptions struct {
 	// the fleet's behaviour and biasing the reference path would corrupt the
 	// very comparison this engine is being stood up to make.
 	UseTolls *float64 `json:"use_tolls,omitempty"`
+}
+
+// WithToken sets the bearer token the service expects.
+//
+// REQUIRED WHENEVER THE SERVICE HAS A PUBLIC HOSTNAME. It gates every routing
+// call there, because a routing engine reachable by name is free compute for
+// anyone who finds it. Without a token the service answers 401 — instantly,
+// and with no network symptom to suggest connectivity — which surfaced here as
+// "no part of the trace could be matched to roads" on an endpoint that had
+// never been reached at all.
+//
+// Empty when the service runs unauthenticated, which is correct for a
+// VPC-internal deployment with no hostname.
+func (v *Valhalla) WithToken(t string) *Valhalla {
+	v.token = t
+	return v
 }
 
 // WithTruck sets fleet-wide heavy-vehicle costing. Returns the receiver so it
@@ -208,6 +225,9 @@ func (v *Valhalla) post(ctx context.Context, path string, body any) (*valhallaRe
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if v.token != "" {
+		req.Header.Set("Authorization", "Bearer "+v.token)
+	}
 
 	resp, err := v.client.Do(req)
 	if err != nil {
@@ -224,6 +244,10 @@ func (v *Valhalla) post(ctx context.Context, path string, body any) (*valhallaRe
 			return nil, fmt.Errorf("routing provider returned %s", resp.Status)
 		}
 		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("routing service rejected our credentials (401): " +
+			"set VALHALLA_TOKEN to the value the service expects")
 	}
 	if out.Error != "" {
 		// Valhalla's own wording is more useful than anything invented here:
@@ -386,7 +410,22 @@ func (v *Valhalla) Match(ctx context.Context, points []TracePoint) (*MatchedTrac
 	}
 	out.PointsUsed = len(out.Geometry)
 	if out.ChunksMatched == 0 {
-		return nil, fmt.Errorf("no part of the trace could be matched to roads")
+		// CARRY THE ENGINE'S OWN REASON. An earlier version returned only
+		// "no part of the trace could be matched to roads", which says that
+		// something failed and nothing about what — and the plausible causes
+		// are very different: fixes too far apart, points out over water on a
+		// ferry crossing, or a costing that rejects the roads involved.
+		// Valhalla names which; throwing that away made every failure look the
+		// same.
+		why := "no reason reported"
+		for _, r := range results {
+			if r.err != nil {
+				why = r.err.Error()
+				break
+			}
+		}
+		return nil, fmt.Errorf("no part of the trace could be matched to roads "+
+			"(%d segment(s) tried, first failure: %s)", len(chunks), why)
 	}
 
 	// Measured on an Indonesia graph, Salatiga->Semarang, by

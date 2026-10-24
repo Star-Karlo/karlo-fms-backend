@@ -210,22 +210,26 @@ type RuleVehicle struct {
 }
 
 type ServiceSchedule struct {
-	ID           int64              `json:"id"`
-	TenantID     int64              `json:"tenant_id"`
-	VehicleID    *int64             `json:"vehicle_id"`
-	Component    *string            `json:"component"`
-	Scheduler    *string            `json:"scheduler"`
-	KmInterval   pgtype.Numeric     `json:"km_interval"`
-	KmReminder   pgtype.Numeric     `json:"km_reminder"`
-	DayInterval  *int32             `json:"day_interval"`
-	DayReminder  *int32             `json:"day_reminder"`
-	LastDoneAt   pgtype.Date        `json:"last_done_at"`
-	LastOdometer pgtype.Numeric     `json:"last_odometer"`
-	NextDueAt    pgtype.Date        `json:"next_due_at"`
-	NextOdometer pgtype.Numeric     `json:"next_odometer"`
-	Status       string             `json:"status"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	HangarID     *int64             `json:"hangar_id"`
+	ID                 int64              `json:"id"`
+	TenantID           int64              `json:"tenant_id"`
+	VehicleID          *int64             `json:"vehicle_id"`
+	Component          *string            `json:"component"`
+	Scheduler          *string            `json:"scheduler"`
+	KmInterval         pgtype.Numeric     `json:"km_interval"`
+	KmReminder         pgtype.Numeric     `json:"km_reminder"`
+	DayInterval        *int32             `json:"day_interval"`
+	DayReminder        *int32             `json:"day_reminder"`
+	LastDoneAt         pgtype.Date        `json:"last_done_at"`
+	LastOdometer       pgtype.Numeric     `json:"last_odometer"`
+	NextDueAt          pgtype.Date        `json:"next_due_at"`
+	NextOdometer       pgtype.Numeric     `json:"next_odometer"`
+	Status             string             `json:"status"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	HangarID           *int64             `json:"hangar_id"`
+	DispatchedAt       pgtype.Timestamptz `json:"dispatched_at"`
+	DispatchedBy       *int64             `json:"dispatched_by"`
+	DispatchDistanceKm *float64           `json:"dispatch_distance_km"`
+	DispatchEtaMin     *float64           `json:"dispatch_eta_min"`
 }
 
 type SopRun struct {

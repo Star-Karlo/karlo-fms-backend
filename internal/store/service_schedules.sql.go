@@ -11,6 +11,69 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const completeServiceSchedule = `-- name: CompleteServiceSchedule :one
+UPDATE service_schedules
+SET status               = 'normal',
+    last_done_at         = COALESCE($1::date, CURRENT_DATE),
+    last_odometer        = COALESCE($2, last_odometer),
+    next_due_at          = $3,
+    next_odometer        = $4,
+    dispatched_at        = NULL,
+    dispatched_by        = NULL,
+    dispatch_distance_km = NULL,
+    dispatch_eta_min     = NULL
+WHERE id = $5
+  AND status = 'in_service'
+RETURNING id, tenant_id, vehicle_id, component, scheduler, km_interval, km_reminder, day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status, created_at, hangar_id, dispatched_at, dispatched_by, dispatch_distance_km, dispatch_eta_min
+`
+
+type CompleteServiceScheduleParams struct {
+	DoneAt       pgtype.Date    `json:"done_at"`
+	Odometer     pgtype.Numeric `json:"odometer"`
+	NextDueAt    pgtype.Date    `json:"next_due_at"`
+	NextOdometer pgtype.Numeric `json:"next_odometer"`
+	ID           int64          `json:"id"`
+}
+
+// Work finished. Records what was done and rolls the schedule forward.
+//
+// next_due_at and next_odometer are passed in rather than computed here: the
+// interval rules live in Go alongside the ones that set them at creation, and
+// splitting that arithmetic across two languages is how the two drift apart.
+func (q *Queries) CompleteServiceSchedule(ctx context.Context, arg CompleteServiceScheduleParams) (ServiceSchedule, error) {
+	row := q.db.QueryRow(ctx, completeServiceSchedule,
+		arg.DoneAt,
+		arg.Odometer,
+		arg.NextDueAt,
+		arg.NextOdometer,
+		arg.ID,
+	)
+	var i ServiceSchedule
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.VehicleID,
+		&i.Component,
+		&i.Scheduler,
+		&i.KmInterval,
+		&i.KmReminder,
+		&i.DayInterval,
+		&i.DayReminder,
+		&i.LastDoneAt,
+		&i.LastOdometer,
+		&i.NextDueAt,
+		&i.NextOdometer,
+		&i.Status,
+		&i.CreatedAt,
+		&i.HangarID,
+		&i.DispatchedAt,
+		&i.DispatchedBy,
+		&i.DispatchDistanceKm,
+		&i.DispatchEtaMin,
+	)
+	return i, err
+}
+
 const countServiceSchedules = `-- name: CountServiceSchedules :one
 SELECT count(*) FROM service_schedules s
 LEFT JOIN vehicles v ON v.id = s.vehicle_id
@@ -42,7 +105,7 @@ INSERT INTO service_schedules (
   COALESCE($13, 'normal'),
   $14
 )
-RETURNING id, tenant_id, vehicle_id, component, scheduler, km_interval, km_reminder, day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status, created_at, hangar_id
+RETURNING id, tenant_id, vehicle_id, component, scheduler, km_interval, km_reminder, day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status, created_at, hangar_id, dispatched_at, dispatched_by, dispatch_distance_km, dispatch_eta_min
 `
 
 type CreateServiceScheduleParams struct {
@@ -97,6 +160,10 @@ func (q *Queries) CreateServiceSchedule(ctx context.Context, arg CreateServiceSc
 		&i.Status,
 		&i.CreatedAt,
 		&i.HangarID,
+		&i.DispatchedAt,
+		&i.DispatchedBy,
+		&i.DispatchDistanceKm,
+		&i.DispatchEtaMin,
 	)
 	return i, err
 }
@@ -110,8 +177,134 @@ func (q *Queries) DeleteServiceSchedule(ctx context.Context, id int64) error {
 	return err
 }
 
+const dispatchServiceSchedule = `-- name: DispatchServiceSchedule :one
+UPDATE service_schedules
+SET status               = 'in_service',
+    hangar_id            = $1,
+    dispatched_at        = now(),
+    dispatched_by        = $2,
+    dispatch_distance_km = $3,
+    dispatch_eta_min     = $4
+WHERE id = $5
+  AND status <> 'in_service'
+RETURNING id, tenant_id, vehicle_id, component, scheduler, km_interval, km_reminder, day_interval, day_reminder, last_done_at, last_odometer, next_due_at, next_odometer, status, created_at, hangar_id, dispatched_at, dispatched_by, dispatch_distance_km, dispatch_eta_min
+`
+
+type DispatchServiceScheduleParams struct {
+	HangarID     *int64   `json:"hangar_id"`
+	DispatchedBy *int64   `json:"dispatched_by"`
+	DistanceKm   *float64 `json:"distance_km"`
+	EtaMin       *float64 `json:"eta_min"`
+	ID           int64    `json:"id"`
+}
+
+// Send a vehicle to a hangar for this service.
+//
+// Guarded in SQL rather than in the handler: the WHERE clause makes
+// dispatching an already-dispatched schedule return no rows instead of
+// overwriting when and where it was first sent. Two operators clicking at once
+// then produce one dispatch and one "already in service", which is the honest
+// answer to what happened.
+func (q *Queries) DispatchServiceSchedule(ctx context.Context, arg DispatchServiceScheduleParams) (ServiceSchedule, error) {
+	row := q.db.QueryRow(ctx, dispatchServiceSchedule,
+		arg.HangarID,
+		arg.DispatchedBy,
+		arg.DistanceKm,
+		arg.EtaMin,
+		arg.ID,
+	)
+	var i ServiceSchedule
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.VehicleID,
+		&i.Component,
+		&i.Scheduler,
+		&i.KmInterval,
+		&i.KmReminder,
+		&i.DayInterval,
+		&i.DayReminder,
+		&i.LastDoneAt,
+		&i.LastOdometer,
+		&i.NextDueAt,
+		&i.NextOdometer,
+		&i.Status,
+		&i.CreatedAt,
+		&i.HangarID,
+		&i.DispatchedAt,
+		&i.DispatchedBy,
+		&i.DispatchDistanceKm,
+		&i.DispatchEtaMin,
+	)
+	return i, err
+}
+
+const getServiceSchedule = `-- name: GetServiceSchedule :one
+SELECT s.id, s.tenant_id, s.vehicle_id, s.component, s.scheduler, s.km_interval, s.km_reminder, s.day_interval, s.day_reminder, s.last_done_at, s.last_odometer, s.next_due_at, s.next_odometer, s.status, s.created_at, s.hangar_id, s.dispatched_at, s.dispatched_by, s.dispatch_distance_km, s.dispatch_eta_min, v.license_plate, v.status AS vehicle_status
+FROM service_schedules s
+LEFT JOIN vehicles v ON v.id = s.vehicle_id
+WHERE s.id = $1
+`
+
+type GetServiceScheduleRow struct {
+	ID                 int64              `json:"id"`
+	TenantID           int64              `json:"tenant_id"`
+	VehicleID          *int64             `json:"vehicle_id"`
+	Component          *string            `json:"component"`
+	Scheduler          *string            `json:"scheduler"`
+	KmInterval         pgtype.Numeric     `json:"km_interval"`
+	KmReminder         pgtype.Numeric     `json:"km_reminder"`
+	DayInterval        *int32             `json:"day_interval"`
+	DayReminder        *int32             `json:"day_reminder"`
+	LastDoneAt         pgtype.Date        `json:"last_done_at"`
+	LastOdometer       pgtype.Numeric     `json:"last_odometer"`
+	NextDueAt          pgtype.Date        `json:"next_due_at"`
+	NextOdometer       pgtype.Numeric     `json:"next_odometer"`
+	Status             string             `json:"status"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	HangarID           *int64             `json:"hangar_id"`
+	DispatchedAt       pgtype.Timestamptz `json:"dispatched_at"`
+	DispatchedBy       *int64             `json:"dispatched_by"`
+	DispatchDistanceKm *float64           `json:"dispatch_distance_km"`
+	DispatchEtaMin     *float64           `json:"dispatch_eta_min"`
+	LicensePlate       *string            `json:"license_plate"`
+	VehicleStatus      *string            `json:"vehicle_status"`
+}
+
+// RLS scopes this to the caller's tenant (0055), so an id from another tenant
+// returns no rows rather than another company's maintenance plan.
+func (q *Queries) GetServiceSchedule(ctx context.Context, id int64) (GetServiceScheduleRow, error) {
+	row := q.db.QueryRow(ctx, getServiceSchedule, id)
+	var i GetServiceScheduleRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.VehicleID,
+		&i.Component,
+		&i.Scheduler,
+		&i.KmInterval,
+		&i.KmReminder,
+		&i.DayInterval,
+		&i.DayReminder,
+		&i.LastDoneAt,
+		&i.LastOdometer,
+		&i.NextDueAt,
+		&i.NextOdometer,
+		&i.Status,
+		&i.CreatedAt,
+		&i.HangarID,
+		&i.DispatchedAt,
+		&i.DispatchedBy,
+		&i.DispatchDistanceKm,
+		&i.DispatchEtaMin,
+		&i.LicensePlate,
+		&i.VehicleStatus,
+	)
+	return i, err
+}
+
 const listServiceSchedules = `-- name: ListServiceSchedules :many
-SELECT s.id, s.tenant_id, s.vehicle_id, s.component, s.scheduler, s.km_interval, s.km_reminder, s.day_interval, s.day_reminder, s.last_done_at, s.last_odometer, s.next_due_at, s.next_odometer, s.status, s.created_at, s.hangar_id, v.license_plate, v.vehicle_type, v.odometer AS current_odometer, v.hourmeter AS current_hourmeter
+SELECT s.id, s.tenant_id, s.vehicle_id, s.component, s.scheduler, s.km_interval, s.km_reminder, s.day_interval, s.day_reminder, s.last_done_at, s.last_odometer, s.next_due_at, s.next_odometer, s.status, s.created_at, s.hangar_id, s.dispatched_at, s.dispatched_by, s.dispatch_distance_km, s.dispatch_eta_min, v.license_plate, v.vehicle_type, v.odometer AS current_odometer, v.hourmeter AS current_hourmeter
 FROM service_schedules s
 LEFT JOIN vehicles v ON v.id = s.vehicle_id
 WHERE ($1::text IS NULL OR v.license_plate ILIKE '%' || $1 || '%' OR s.component ILIKE '%' || $1 || '%')
@@ -128,26 +321,30 @@ type ListServiceSchedulesParams struct {
 }
 
 type ListServiceSchedulesRow struct {
-	ID               int64              `json:"id"`
-	TenantID         int64              `json:"tenant_id"`
-	VehicleID        *int64             `json:"vehicle_id"`
-	Component        *string            `json:"component"`
-	Scheduler        *string            `json:"scheduler"`
-	KmInterval       pgtype.Numeric     `json:"km_interval"`
-	KmReminder       pgtype.Numeric     `json:"km_reminder"`
-	DayInterval      *int32             `json:"day_interval"`
-	DayReminder      *int32             `json:"day_reminder"`
-	LastDoneAt       pgtype.Date        `json:"last_done_at"`
-	LastOdometer     pgtype.Numeric     `json:"last_odometer"`
-	NextDueAt        pgtype.Date        `json:"next_due_at"`
-	NextOdometer     pgtype.Numeric     `json:"next_odometer"`
-	Status           string             `json:"status"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	HangarID         *int64             `json:"hangar_id"`
-	LicensePlate     *string            `json:"license_plate"`
-	VehicleType      *string            `json:"vehicle_type"`
-	CurrentOdometer  pgtype.Numeric     `json:"current_odometer"`
-	CurrentHourmeter pgtype.Numeric     `json:"current_hourmeter"`
+	ID                 int64              `json:"id"`
+	TenantID           int64              `json:"tenant_id"`
+	VehicleID          *int64             `json:"vehicle_id"`
+	Component          *string            `json:"component"`
+	Scheduler          *string            `json:"scheduler"`
+	KmInterval         pgtype.Numeric     `json:"km_interval"`
+	KmReminder         pgtype.Numeric     `json:"km_reminder"`
+	DayInterval        *int32             `json:"day_interval"`
+	DayReminder        *int32             `json:"day_reminder"`
+	LastDoneAt         pgtype.Date        `json:"last_done_at"`
+	LastOdometer       pgtype.Numeric     `json:"last_odometer"`
+	NextDueAt          pgtype.Date        `json:"next_due_at"`
+	NextOdometer       pgtype.Numeric     `json:"next_odometer"`
+	Status             string             `json:"status"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	HangarID           *int64             `json:"hangar_id"`
+	DispatchedAt       pgtype.Timestamptz `json:"dispatched_at"`
+	DispatchedBy       *int64             `json:"dispatched_by"`
+	DispatchDistanceKm *float64           `json:"dispatch_distance_km"`
+	DispatchEtaMin     *float64           `json:"dispatch_eta_min"`
+	LicensePlate       *string            `json:"license_plate"`
+	VehicleType        *string            `json:"vehicle_type"`
+	CurrentOdometer    pgtype.Numeric     `json:"current_odometer"`
+	CurrentHourmeter   pgtype.Numeric     `json:"current_hourmeter"`
 }
 
 func (q *Queries) ListServiceSchedules(ctx context.Context, arg ListServiceSchedulesParams) ([]ListServiceSchedulesRow, error) {
@@ -181,6 +378,10 @@ func (q *Queries) ListServiceSchedules(ctx context.Context, arg ListServiceSched
 			&i.Status,
 			&i.CreatedAt,
 			&i.HangarID,
+			&i.DispatchedAt,
+			&i.DispatchedBy,
+			&i.DispatchDistanceKm,
+			&i.DispatchEtaMin,
 			&i.LicensePlate,
 			&i.VehicleType,
 			&i.CurrentOdometer,
@@ -222,4 +423,24 @@ func (q *Queries) ServiceStatusCounts(ctx context.Context) (ServiceStatusCountsR
 		&i.Normal,
 	)
 	return i, err
+}
+
+const setVehicleStatus = `-- name: SetVehicleStatus :exec
+UPDATE vehicles
+SET status = $1, updated_at = now()
+WHERE id = $2 AND status <> 'archive'
+`
+
+type SetVehicleStatusParams struct {
+	Status string `json:"status"`
+	ID     int64  `json:"id"`
+}
+
+// Used by dispatch and complete to take a truck off the road and put it back.
+//
+// Never touches 'archive': a retired vehicle that happens to carry an open
+// schedule must not be silently returned to the fleet by completing it.
+func (q *Queries) SetVehicleStatus(ctx context.Context, arg SetVehicleStatusParams) error {
+	_, err := q.db.Exec(ctx, setVehicleStatus, arg.Status, arg.ID)
+	return err
 }

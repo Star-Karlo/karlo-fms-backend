@@ -354,6 +354,7 @@ func main() {
 		ORSBase:       cfg.ORSBaseURL,
 		OSRMBase:      cfg.OSRMBaseURL,
 		ValhallaBase:  cfg.ValhallaBaseURL,
+		ValhallaToken: cfg.ValhallaToken,
 	})
 	if router == nil {
 		log.Printf("routing: no provider configured; hangar routes are disabled")

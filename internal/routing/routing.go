@@ -279,9 +279,13 @@ type Config struct {
 	ORSKey        string
 	ORSBase       string
 	OSRMBase      string
-	// ValhallaBase is our own engine, e.g. http://valhalla.internal:8002.
-	// No key, because there is no vendor.
+	// ValhallaBase is our own engine, e.g.
+	// http://fms-routing.karlo.internal:5008.
 	ValhallaBase string
+	// ValhallaToken is the bearer token that engine requires. There is no
+	// vendor and so no API key, but the service is published on a hostname and
+	// gates routing behind a token — without it every call returns 401.
+	ValhallaToken string
 	// ValhallaTruck is fleet-wide heavy-vehicle costing. Zero fields leave
 	// Valhalla's own truck defaults in place.
 	ValhallaTruck TruckOptions
@@ -299,6 +303,9 @@ func New(c Config) Router {
 			return nil
 		}
 		v := NewValhalla(c.ValhallaBase)
+		if c.ValhallaToken != "" {
+			v = v.WithToken(c.ValhallaToken)
+		}
 		if c.ValhallaTruck != (TruckOptions{}) {
 			v = v.WithTruck(c.ValhallaTruck)
 		}

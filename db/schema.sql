@@ -207,7 +207,15 @@ CREATE TABLE service_schedules (
   next_odometer  numeric,
   status         text NOT NULL DEFAULT 'normal',
   created_at     timestamptz NOT NULL DEFAULT now(),
-  hangar_id     bigint
+  hangar_id     bigint,
+  -- Dispatch: 0056_maintenance_dispatch.sql. Kept in sync by hand, because
+  -- sqlc reads THIS file and not db/migrations — a column added only to a
+  -- migration fails codegen with "column does not exist", which reads like a
+  -- query bug rather than a sync one.
+  dispatched_at        timestamptz,
+  dispatched_by        bigint,
+  dispatch_distance_km double precision,
+  dispatch_eta_min     double precision
 );
 
 CREATE TABLE driver_score_events (
