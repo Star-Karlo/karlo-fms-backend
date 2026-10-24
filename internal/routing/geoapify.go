@@ -227,6 +227,20 @@ type MatchedTrace struct {
 	ChunksTotal   int    `json:"chunks_total"`
 	ChunksMatched int    `json:"chunks_matched"`
 	Provider      string `json:"provider"`
+
+	// RawDistanceM is the great-circle length through the INPUT fixes, and
+	// exists to make a partial match detectable.
+	//
+	// A road path is always at least as long as the straight lines between the
+	// same points, so DistanceM should come out ABOVE this. Coming out well
+	// below means the matcher reconstructed only a fragment — and it reports
+	// that as a success: 200, one leg, a plausible geometry, and a distance
+	// that is simply too small. Without this number there is nothing to compare
+	// against and no way to tell.
+	RawDistanceM float64 `json:"raw_distance_m"`
+	// Partial is set when DistanceM falls far enough below RawDistanceM that
+	// the result should not be presented as a complete path.
+	Partial bool `json:"partial"`
 }
 
 // Matcher snaps a GPS trace to the road network.

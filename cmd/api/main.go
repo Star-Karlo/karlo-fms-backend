@@ -335,11 +335,15 @@ func main() {
 	// lanes TMS prices orders with.
 	//
 	// MATCHING is a different question: snap a recorded GPS trace onto the
-	// roads it was actually driven on. Only Geoapify offers it here (ORS has
-	// no such endpoint, and MAPID is not asked for one), so it is wired from
-	// the Geoapify key INDEPENDENTLY of the routing choice. Tying the two
-	// together is how choosing a better router for hangars would have quietly
-	// turned off road snapping on every history page.
+	// roads it was actually driven on. Of the hosted providers only Geoapify
+	// offers it (ORS has no such endpoint, and MAPID is not asked for one), so
+	// it is wired from the Geoapify key INDEPENDENTLY of the routing choice.
+	// Tying the two together is how choosing a better router for hangars would
+	// have quietly turned off road snapping on every history page.
+	//
+	// Valhalla does both, so with ROUTING_PROVIDER=valhalla the AsMatcher
+	// branch below takes it and the Geoapify fallback never runs — which is the
+	// point of leaving the two independent.
 	router := routing.New(routing.Config{
 		Provider:      cfg.RoutingProvider,
 		RouteCacheURL: cfg.RouteCacheURL,
@@ -349,6 +353,7 @@ func main() {
 		ORSKey:        cfg.ORSAPIKey,
 		ORSBase:       cfg.ORSBaseURL,
 		OSRMBase:      cfg.OSRMBaseURL,
+		ValhallaBase:  cfg.ValhallaBaseURL,
 	})
 	if router == nil {
 		log.Printf("routing: no provider configured; hangar routes are disabled")

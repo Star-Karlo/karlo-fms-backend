@@ -1,11 +1,11 @@
 // Package routing computes driving routes — currently "get this truck to the
 // hangar it is booked into".
 //
-// PROVIDER-AGNOSTIC ON PURPOSE. The Router interface exists because the
-// provider is expected to change: OpenRouteService is the right choice at
-// today's volume (a handful of routes a day, no infrastructure to run), and a
-// self-hosted OSRM is the right choice once volume grows or once map matching
-// is needed. Swapping is then a config value, not a rewrite of the callers.
+// PROVIDER-AGNOSTIC ON PURPOSE, and the swap this was built for has now
+// happened: a hosted provider is right while routing is a handful of calls a
+// day, and a self-hosted engine is right once routing is used for every lane's
+// kilometres. `valhalla` is that engine (valhalla.go), and switching to it is
+// one config value — ROUTING_PROVIDER — with no caller changes.
 //
 // WHAT OPENROUTESERVICE CANNOT DO, stated here because it is the question this
 // package will be asked next. ORS offers directions, isochrones, matrix, snap
@@ -15,8 +15,9 @@
 // consecutive points near a highway and its service road snap to different
 // roads, nothing connects them, and the result is a confident-looking line that
 // never happened. Snapping a GPS trace to the road network needs a
-// sequence-aware matcher — OSRM's /match or Valhalla's trace_route — so that
-// feature waits for the self-hosted engine rather than being faked here.
+// sequence-aware matcher — OSRM's /match or Valhalla's trace_route. That engine
+// now exists here, so the Valhalla provider implements BOTH Router and Matcher
+// and is the only one that does.
 package routing
 
 import (
@@ -268,7 +269,7 @@ func (o *OSRM) Route(ctx context.Context, from, to Point) (*Route, error) {
 
 // Config selects and configures a provider.
 type Config struct {
-	Provider string // mapid | geoapify | ors | osrm
+	Provider string // valhalla | mapid | geoapify | ors | osrm
 	// RouteCacheURL + ServiceToken drive the "mapid" provider: Karlo's own
 	// routing cache, which is also what TMS prices orders against.
 	RouteCacheURL string
@@ -278,6 +279,12 @@ type Config struct {
 	ORSKey        string
 	ORSBase       string
 	OSRMBase      string
+	// ValhallaBase is our own engine, e.g. http://valhalla.internal:8002.
+	// No key, because there is no vendor.
+	ValhallaBase string
+	// ValhallaTruck is fleet-wide heavy-vehicle costing. Zero fields leave
+	// Valhalla's own truck defaults in place.
+	ValhallaTruck TruckOptions
 }
 
 // New picks a provider. Returns nil when none is set up, which callers surface
@@ -287,6 +294,15 @@ type Config struct {
 // permits commercial use on its free tier AND offers map matching.
 func New(c Config) Router {
 	switch c.Provider {
+	case "valhalla":
+		if c.ValhallaBase == "" {
+			return nil
+		}
+		v := NewValhalla(c.ValhallaBase)
+		if c.ValhallaTruck != (TruckOptions{}) {
+			v = v.WithTruck(c.ValhallaTruck)
+		}
+		return v
 	case "mapid":
 		// Through Karlo's routing cache, which already holds the lanes TMS
 		// priced — see mapid.go for why that is the point.
