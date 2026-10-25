@@ -110,7 +110,6 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tid := auth.TenantID(r.Context())
-	uid := auth.UserID(r.Context())
 
 	var out DispatchResult
 	var vehLat, vehLon float64
@@ -200,8 +199,30 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 	// 409 rather than a silently overwritten record of when and where.
 	err = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
 		st := store.New(tx)
+
+		// dispatched_by is a foreign key into THIS database's users table, and
+		// the signed-in operator may not be in it: an SSO session carries the
+		// platform's user id from karlo_auth, which has no local row. Filling
+		// it blindly fails the whole dispatch with
+		//
+		//   violates foreign key constraint "service_schedules_dispatched_by_fkey"
+		//
+		// so a truck could not be sent for its service at all, and the error
+		// named a constraint rather than the problem. Same trap as
+		// api_tokens_created_by_fkey, solved the same way: attribution is
+		// worth having and not worth blocking on, so it is recorded when the
+		// user is local and left null when they are not.
+		var dispatchedBy *int64
+		if uid := auth.UserID(r.Context()); uid > 0 {
+			var exists bool
+			if e := tx.QueryRow(r.Context(),
+				`SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)`, uid).Scan(&exists); e == nil && exists {
+				dispatchedBy = &uid
+			}
+		}
+
 		row, err := st.DispatchServiceSchedule(r.Context(), store.DispatchServiceScheduleParams{
-			ID: id, HangarID: &req.HangarID, DispatchedBy: &uid,
+			ID: id, HangarID: &req.HangarID, DispatchedBy: dispatchedBy,
 			DistanceKm: out.DistanceKm, EtaMin: out.EtaMin,
 		})
 		if err != nil {
