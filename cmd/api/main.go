@@ -261,7 +261,21 @@ func main() {
 		log.Printf("mdwrite: vehicle and driver writes also go to %s as the calling user", cfg.MDServiceURL)
 	}
 
-	vehicleH := vehicle.NewHandler(vehicle.NewService(pool).WithMasterData(mdWriter).WithCatalog(cat, companyDir)).WithResolver(companyDir)
+	// MASTERDATA_TOLL_FIELDS is off until Star-Karlo/Master-Data#11 ships.
+	// Master data answers 500 to keys it does not know, and that failure
+	// reaches the operator as a failed save for a row that was written — so
+	// the axle count is kept local until the upstream field exists.
+	vehicleH := vehicle.NewHandler(
+		vehicle.NewService(pool).
+			WithMasterData(mdWriter).
+			WithCatalog(cat, companyDir).
+			WithMasterDataTollFields(cfg.MasterDataTollFields),
+	).WithResolver(companyDir)
+	if cfg.MasterDataTollFields {
+		log.Printf("vehicles: axles and dimensions are sent to master data")
+	} else {
+		log.Printf("vehicles: axles and dimensions stay local (MASTERDATA_TOLL_FIELDS unset)")
+	}
 	fleetGroupH := fleetgroup.NewHandler(fleetgroup.NewService(pool)).WithMasterData(mdWriter, companyDir)
 	driverH := driver.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir)
 	trackerH := tracker.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(trackerWakers...)

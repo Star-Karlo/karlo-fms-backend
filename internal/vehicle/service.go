@@ -22,6 +22,19 @@ type Service struct {
 	md   *mdwrite.Client   // nil before cutover: writes stay local
 	cat  *catalog.Resolver // nil without master data: names go up unresolved (omitted)
 	dir  mdwrite.CompanyResolver
+	// tollFieldsUp gates sending axles and dimensions UPSTREAM. Master data
+	// rejects keys it does not know with a 500, and that rejection reaches the
+	// operator as a failed save for a row that was in fact written. See
+	// config.MasterDataTollFields.
+	tollFieldsUp bool
+}
+
+// WithMasterDataTollFields enables sending axles, the golongan override and
+// the lorry dimensions to master data. Off until Star-Karlo/Master-Data#11 is
+// deployed; the local columns are written either way.
+func (s *Service) WithMasterDataTollFields(on bool) *Service {
+	s.tollFieldsUp = on
+	return s
 }
 
 // WithCatalog makes the write-through resolve manufacturer / box_type /
@@ -413,12 +426,14 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 		req.Manufacturer != nil || req.VehicleType != nil || req.BoxType != nil ||
 		req.Odometer != nil || req.Hourmeter != nil ||
 		req.FuelTankLiters != nil || req.FuelRatioKmpl != nil || req.Notes != nil ||
-		// WITHOUT THESE, an edit that sets ONLY an axle count would write the
-		// local column and never reach master data — so TMS would not get the
-		// one field it needs most from this form.
-		req.Axles != nil || req.GolonganOverride != nil ||
-		req.LengthM != nil || req.WidthM != nil || req.HeightM != nil ||
-		req.MaxWeightKg != nil
+		// ONLY WHEN THEY ARE ACTUALLY SENT. Including them here while the
+		// payload omits them would call master data with nothing to say — and
+		// an edit that sets only an axle count would then make a pointless
+		// round trip that can fail and surface as a failed save.
+		(s.tollFieldsUp &&
+			(req.Axles != nil || req.GolonganOverride != nil ||
+				req.LengthM != nil || req.WidthM != nil || req.HeightM != nil ||
+				req.MaxWeightKg != nil))
 	if s.md != nil && mdID != nil && touchesMD {
 		v := mdwrite.Vehicle{}
 		v.BrandID, v.TruckBodyID, v.TruckHeadID = s.catalogIDs(ctx, s.company(ctx, tenantID), req.Manufacturer, req.VehicleType, req.BoxType)
@@ -446,10 +461,12 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 		v.FuelTankLiters = req.FuelTankLiters
 		v.FuelRatioKmpl = req.FuelRatioKmpl
 		v.Notes = req.Notes
-		v.Axles = req.Axles
-		v.GolonganOverride = req.GolonganOverride
-		v.LengthM, v.WidthM, v.HeightM = req.LengthM, req.WidthM, req.HeightM
-		v.MaxWeightKg = req.MaxWeightKg
+		if s.tollFieldsUp {
+			v.Axles = req.Axles
+			v.GolonganOverride = req.GolonganOverride
+			v.LengthM, v.WidthM, v.HeightM = req.LengthM, req.WidthM, req.HeightM
+			v.MaxWeightKg = req.MaxWeightKg
+		}
 		if err := s.md.UpdateVehicle(ctx, caller, *mdID, v); err != nil {
 			// Local write is already committed and cannot be rolled back here,
 			// but the caller must learn it did not reach TMS.

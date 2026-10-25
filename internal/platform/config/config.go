@@ -176,13 +176,31 @@ type Config struct {
 	//
 	// Empty key disables toll pricing; a dispatch then returns its route with
 	// no toll figure, which is the pre-existing behaviour.
-	MAPIDTollKey    string
-	MAPIDTollURL    string
-	GeoapifyAPIKey  string
-	GeoapifyBaseURL string
-	ORSAPIKey       string
-	ORSBaseURL      string
-	OSRMBaseURL     string
+	MAPIDTollKey string
+	MAPIDTollURL string
+
+	// MasterDataTollFields controls whether a vehicle edit sends axles,
+	// golonganOverride and the lorry dimensions UPSTREAM.
+	//
+	// OFF BY DEFAULT BECAUSE MASTER DATA REJECTS KEYS IT DOES NOT KNOW. I had
+	// assumed it ignored them; it answers
+	//
+	//   PUT /api/v1/vehicles/{id}: 500 {"success":false,"message":"Request failed"}
+	//
+	// and that failure arrives AFTER the local row is committed, so an
+	// operator entering an axle count saw an error for a save that had
+	// actually worked.
+	//
+	// The local column is written either way, so gating only the upstream half
+	// costs nothing today. Set MASTERDATA_TOLL_FIELDS=true once
+	// Star-Karlo/Master-Data#11 is deployed — no code change, no release
+	// coordination.
+	MasterDataTollFields bool
+	GeoapifyAPIKey       string
+	GeoapifyBaseURL      string
+	ORSAPIKey            string
+	ORSBaseURL           string
+	OSRMBaseURL          string
 	// ValhallaBaseURL is Karlo's own routing engine. No API key: no vendor.
 	ValhallaBaseURL string
 	// ValhallaToken gates that engine. Required because it is published on a
@@ -238,17 +256,18 @@ func Load() Config {
 			AlertDays:        EnvInt("RETENTION_ALERT_DAYS", 548),         // ~18 months
 			DrivingEventDays: EnvInt("RETENTION_DRIVING_EVENT_DAYS", 365), // 12 months
 		},
-		RoutingProvider: Env("ROUTING_PROVIDER", "geoapify"),
-		RouteCacheURL:   Env("ROUTE_CACHE_URL", ""),
-		MAPIDTollKey:    Env("MAPID_TOLL_KEY", ""),
-		MAPIDTollURL:    Env("MAPID_TOLL_URL", "https://routing.mapid.io"),
-		GeoapifyAPIKey:  Env("GEOAPIFY_API_KEY", ""),
-		GeoapifyBaseURL: Env("GEOAPIFY_BASE_URL", ""),
-		ORSAPIKey:       Env("ORS_API_KEY", ""),
-		ORSBaseURL:      Env("ORS_BASE_URL", ""),
-		OSRMBaseURL:     Env("OSRM_BASE_URL", ""),
-		ValhallaBaseURL: Env("VALHALLA_BASE_URL", ""),
-		ValhallaToken:   Env("VALHALLA_TOKEN", ""),
+		RoutingProvider:      Env("ROUTING_PROVIDER", "geoapify"),
+		RouteCacheURL:        Env("ROUTE_CACHE_URL", ""),
+		MAPIDTollKey:         Env("MAPID_TOLL_KEY", ""),
+		MAPIDTollURL:         Env("MAPID_TOLL_URL", "https://routing.mapid.io"),
+		MasterDataTollFields: Env("MASTERDATA_TOLL_FIELDS", "") == "true",
+		GeoapifyAPIKey:       Env("GEOAPIFY_API_KEY", ""),
+		GeoapifyBaseURL:      Env("GEOAPIFY_BASE_URL", ""),
+		ORSAPIKey:            Env("ORS_API_KEY", ""),
+		ORSBaseURL:           Env("ORS_BASE_URL", ""),
+		OSRMBaseURL:          Env("OSRM_BASE_URL", ""),
+		ValhallaBaseURL:      Env("VALHALLA_BASE_URL", ""),
+		ValhallaToken:        Env("VALHALLA_TOKEN", ""),
 		// Host ports 5433/6380 avoid clashing with the telemetry stack (5432/6379).
 		DatabaseURL: Env("DATABASE_URL", "postgres://fms_app:fms_app@localhost:5433/fms_app"),
 		RedisAddr:   Env("REDIS_ADDR", ""), // platform Redis in Jakarta; empty = no revocation feed
