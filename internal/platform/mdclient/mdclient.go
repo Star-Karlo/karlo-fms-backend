@@ -275,6 +275,16 @@ func (c *Client) ListVehicles(ctx context.Context, companyID string) ([]Vehicle,
 				FuelTankLiters: t.FuelTankLiters,
 				FuelRatioKmpl:  t.FuelRatioKmpl,
 				Notes:          t.Notes,
+				// The toll key and the routing dimensions. These fields have
+				// been read by vehiclesync since it was written — its UPDATE
+				// COALESCEs over them — and were always nil because the
+				// contract did not carry them. Master data now sends them, so
+				// that statement stops being a no-op.
+				Axles:       axles16(t.Axles),
+				LengthM:     t.LengthM,
+				WidthM:      t.WidthM,
+				HeightM:     t.HeightM,
+				MaxWeightKg: t.MaxWeightKg,
 			})
 		}
 
@@ -406,4 +416,17 @@ func (c *Client) ListDrivers(ctx context.Context, companyID string) ([]Driver, e
 			return out, nil
 		}
 	}
+}
+
+// axles16 narrows the wire's int32 to the column's int16, keeping absence.
+//
+// Absence is the point: nil means the axle count was never recorded, and
+// vehiclesync COALESCEs this field — so a zero would erase a count an
+// operator entered in FMS rather than leave it alone.
+func axles16(n *int32) *int16 {
+	if n == nil {
+		return nil
+	}
+	v := int16(*n) //nolint:gosec // an axle count cannot overflow int16
+	return &v
 }

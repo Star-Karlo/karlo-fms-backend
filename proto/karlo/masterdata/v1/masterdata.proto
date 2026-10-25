@@ -249,6 +249,29 @@ message Truck {
   optional double fuel_ratio_kmpl = 24;
 
   optional string notes = 25;
+  // Axles is the TOLL KEY, and absent means UNKNOWN.
+  //
+  // Every Indonesian tariff is priced on golongan, and golongan for a goods
+  // vehicle is its axle count: 2 -> II, 3 -> III, 4 -> IV, 5 or more -> V.
+  // Without it a toll can be computed for a route but not attributed to a
+  // class, so the quote comes back as five figures.
+  //
+  // OPTIONAL, like the fuel fields above and for the same reason: a plain
+  // int32 arrives as 0 whether the axle count is unrecorded or genuinely
+  // zero, and FMS projects these with COALESCE — a 0 would overwrite a real
+  // count an operator had entered there. A GUESSED class is worse than none,
+  // because it misprices every truck that has a real count and does it
+  // invisibly.
+  optional int32 axles = 26;
+
+  // The lorry's dimensions, for ROUTING rather than tolls: Valhalla applies
+  // the height, width and weight restrictions it reads from OpenStreetMap,
+  // but only for a truck whose figures it has. Metres and kilograms, matching
+  // what the engine expects so nothing converts on the way.
+  optional double length_m = 27;
+  optional double width_m = 28;
+  optional double height_m = 29;
+  optional double max_weight_kg = 30;
 }
 
 message GetTruckRequest {

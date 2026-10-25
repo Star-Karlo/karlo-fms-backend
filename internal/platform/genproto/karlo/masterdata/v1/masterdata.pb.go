@@ -787,8 +787,30 @@ type Truck struct {
 	FuelTankLiters *float64 `protobuf:"fixed64,23,opt,name=fuel_tank_liters,json=fuelTankLiters,proto3,oneof" json:"fuel_tank_liters,omitempty"`
 	FuelRatioKmpl  *float64 `protobuf:"fixed64,24,opt,name=fuel_ratio_kmpl,json=fuelRatioKmpl,proto3,oneof" json:"fuel_ratio_kmpl,omitempty"`
 	Notes          *string  `protobuf:"bytes,25,opt,name=notes,proto3,oneof" json:"notes,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Axles is the TOLL KEY, and absent means UNKNOWN.
+	//
+	// Every Indonesian tariff is priced on golongan, and golongan for a goods
+	// vehicle is its axle count: 2 -> II, 3 -> III, 4 -> IV, 5 or more -> V.
+	// Without it a toll can be computed for a route but not attributed to a
+	// class, so the quote comes back as five figures.
+	//
+	// OPTIONAL, like the fuel fields above and for the same reason: a plain
+	// int32 arrives as 0 whether the axle count is unrecorded or genuinely
+	// zero, and FMS projects these with COALESCE — a 0 would overwrite a real
+	// count an operator had entered there. A GUESSED class is worse than none,
+	// because it misprices every truck that has a real count and does it
+	// invisibly.
+	Axles *int32 `protobuf:"varint,26,opt,name=axles,proto3,oneof" json:"axles,omitempty"`
+	// The lorry's dimensions, for ROUTING rather than tolls: Valhalla applies
+	// the height, width and weight restrictions it reads from OpenStreetMap,
+	// but only for a truck whose figures it has. Metres and kilograms, matching
+	// what the engine expects so nothing converts on the way.
+	LengthM       *float64 `protobuf:"fixed64,27,opt,name=length_m,json=lengthM,proto3,oneof" json:"length_m,omitempty"`
+	WidthM        *float64 `protobuf:"fixed64,28,opt,name=width_m,json=widthM,proto3,oneof" json:"width_m,omitempty"`
+	HeightM       *float64 `protobuf:"fixed64,29,opt,name=height_m,json=heightM,proto3,oneof" json:"height_m,omitempty"`
+	MaxWeightKg   *float64 `protobuf:"fixed64,30,opt,name=max_weight_kg,json=maxWeightKg,proto3,oneof" json:"max_weight_kg,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Truck) Reset() {
@@ -994,6 +1016,41 @@ func (x *Truck) GetNotes() string {
 		return *x.Notes
 	}
 	return ""
+}
+
+func (x *Truck) GetAxles() int32 {
+	if x != nil && x.Axles != nil {
+		return *x.Axles
+	}
+	return 0
+}
+
+func (x *Truck) GetLengthM() float64 {
+	if x != nil && x.LengthM != nil {
+		return *x.LengthM
+	}
+	return 0
+}
+
+func (x *Truck) GetWidthM() float64 {
+	if x != nil && x.WidthM != nil {
+		return *x.WidthM
+	}
+	return 0
+}
+
+func (x *Truck) GetHeightM() float64 {
+	if x != nil && x.HeightM != nil {
+		return *x.HeightM
+	}
+	return 0
+}
+
+func (x *Truck) GetMaxWeightKg() float64 {
+	if x != nil && x.MaxWeightKg != nil {
+		return *x.MaxWeightKg
+	}
+	return 0
 }
 
 type GetTruckRequest struct {
@@ -2831,7 +2888,7 @@ const file_karlo_masterdata_v1_masterdata_proto_rawDesc = "" +
 	"company_id\x18\x02 \x01(\tR\tcompanyId\"m\n" +
 	"\x1aValidateReferencesResponse\x12\x14\n" +
 	"\x05valid\x18\x01 \x01(\bR\x05valid\x129\n" +
-	"\ainvalid\x18\x02 \x03(\v2\x1f.karlo.masterdata.v1.CatalogRefR\ainvalid\"\xe4\a\n" +
+	"\ainvalid\x18\x02 \x03(\v2\x1f.karlo.masterdata.v1.CatalogRefR\ainvalid\"\xc8\t\n" +
 	"\x05Truck\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -2863,13 +2920,25 @@ const file_karlo_masterdata_v1_masterdata_proto_rawDesc = "" +
 	"\x0fhourmeter_hours\x18\x16 \x01(\x01H\x02R\x0ehourmeterHours\x88\x01\x01\x12-\n" +
 	"\x10fuel_tank_liters\x18\x17 \x01(\x01H\x03R\x0efuelTankLiters\x88\x01\x01\x12+\n" +
 	"\x0ffuel_ratio_kmpl\x18\x18 \x01(\x01H\x04R\rfuelRatioKmpl\x88\x01\x01\x12\x19\n" +
-	"\x05notes\x18\x19 \x01(\tH\x05R\x05notes\x88\x01\x01B\b\n" +
+	"\x05notes\x18\x19 \x01(\tH\x05R\x05notes\x88\x01\x01\x12\x19\n" +
+	"\x05axles\x18\x1a \x01(\x05H\x06R\x05axles\x88\x01\x01\x12\x1e\n" +
+	"\blength_m\x18\x1b \x01(\x01H\aR\alengthM\x88\x01\x01\x12\x1c\n" +
+	"\awidth_m\x18\x1c \x01(\x01H\bR\x06widthM\x88\x01\x01\x12\x1e\n" +
+	"\bheight_m\x18\x1d \x01(\x01H\tR\aheightM\x88\x01\x01\x12'\n" +
+	"\rmax_weight_kg\x18\x1e \x01(\x01H\n" +
+	"R\vmaxWeightKg\x88\x01\x01B\b\n" +
 	"\x06_colorB\x0e\n" +
 	"\f_odometer_kmB\x12\n" +
 	"\x10_hourmeter_hoursB\x13\n" +
 	"\x11_fuel_tank_litersB\x12\n" +
 	"\x10_fuel_ratio_kmplB\b\n" +
-	"\x06_notes\"J\n" +
+	"\x06_notesB\b\n" +
+	"\x06_axlesB\v\n" +
+	"\t_length_mB\n" +
+	"\n" +
+	"\b_width_mB\v\n" +
+	"\t_height_mB\x10\n" +
+	"\x0e_max_weight_kg\"J\n" +
 	"\x0fGetTruckRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0finclude_deleted\x18\x02 \x01(\bR\x0eincludeDeleted\"D\n" +
