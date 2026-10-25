@@ -428,6 +428,42 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				r.Updated += int(ct.RowsAffected())
 			}
 
+			// 3a''. Axles and dimensions, once master data carries them.
+			//
+			//       AXLES IS THE TOLL KEY. Every Indonesian tariff is priced
+			//       on golongan, and golongan for a goods vehicle is its axle
+			//       count: 2 -> II, 3 -> III, 4 -> IV, 5 or more -> V. Without
+			//       it a route's toll can be computed but not attributed to a
+			//       class, so a quote comes back as five numbers.
+			//
+			//       The dimensions are what Valhalla needs to apply the OSM
+			//       height, width and weight restrictions it already knows.
+			//
+			//       NIL KEEPS WHAT FMS HOLDS, as with every other optional
+			//       field here — so a value an operator entered in FMS is not
+			//       erased on the first pass, and master data takes over the
+			//       moment it starts sending one. Until then these are all nil
+			//       and this statement is a no-op, which is why it can ship
+			//       before the upstream field exists.
+			ct, err = tx.Exec(ctx, `
+				UPDATE vehicles SET axles         = COALESCE($2, axles),
+				                    length_m      = COALESCE($3, length_m),
+				                    width_m       = COALESCE($4, width_m),
+				                    height_m      = COALESCE($5, height_m),
+				                    max_weight_kg = COALESCE($6, max_weight_kg),
+				                    updated_at    = now()
+				 WHERE master_data_id = $1
+				   AND (($2 IS NOT NULL AND axles         IS DISTINCT FROM $2)
+				     OR ($3 IS NOT NULL AND length_m      IS DISTINCT FROM $3)
+				     OR ($4 IS NOT NULL AND width_m       IS DISTINCT FROM $4)
+				     OR ($5 IS NOT NULL AND height_m      IS DISTINCT FROM $5)
+				     OR ($6 IS NOT NULL AND max_weight_kg IS DISTINCT FROM $6))`,
+				v.ID, v.Axles, v.LengthM, v.WidthM, v.HeightM, v.MaxWeightKg)
+			if err != nil {
+				return err
+			}
+			r.Updated += int(ct.RowsAffected())
+
 			// 3a'. Group membership — master data's vehicle group becomes the
 			//      fleet group, resolved through fleet_groups.master_data_id
 			//      (groupsync fills it on the same notice; an unknown group

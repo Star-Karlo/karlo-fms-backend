@@ -84,6 +84,36 @@ type Vehicle struct {
 	FuelTankLiters *float64
 	FuelRatioKmpl  *float64
 	Notes          *string
+
+	/* TOLL AND DIMENSIONS, pending in master data.
+
+	   Axles is the key every Indonesian toll tariff is priced on — golongan
+	   II at two axles through V at five or more — and FMS has nowhere else to
+	   get it. The legacy truck master in Mongo carries one on 53% of live
+	   rows and some of those contradict the vehicle (axle 3 beside a
+	   "Pickup_2_other" icon), so it can seed a column and cannot be the
+	   source of truth.
+
+	   THE REASON THIS BELONGS UPSTREAM AND NOT IN FMS. The toll spend being
+	   addressed is TMS order quoting, not FMS maintenance. A value entered in
+	   FMS reaches nothing else: vehiclesync projects master data ONTO
+	   fms_app.vehicles and nothing writes back. Entered in master data, both
+	   products get it from one place.
+
+	   Nil keeps whatever FMS holds, like every pointer above — so an operator
+	   entering an axle count in FMS today is not overwritten, and master data
+	   takes over the moment it starts sending one. */
+	Axles *int16
+	// LengthM, WidthM, HeightM and MaxWeightKg are what Valhalla needs to
+	// apply the height, width and weight restrictions it already knows from
+	// OpenStreetMap. Without them every route uses fleet-wide defaults, so
+	// a 40ft trailer is routed like a van. The legacy data has these on 96%
+	// of trucks at values including 23 m wide and 32 m tall, which is why
+	// they are wanted from a source someone is accountable for.
+	LengthM     *float64
+	WidthM      *float64
+	HeightM     *float64
+	MaxWeightKg *float64
 }
 
 // DeviceAssignment is one stretch during which a vehicle carried a device.

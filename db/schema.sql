@@ -101,6 +101,12 @@ CREATE TABLE vehicles (
   -- case, which BPJT splits between Golongan I and II on size. See 0057.
   axles             smallint,
   golongan_override smallint,
+  -- Lorry dimensions for truck-aware routing (0062). NULL = unknown, and
+  -- routing then falls back to fleet-wide defaults.
+  length_m          double precision,
+  width_m           double precision,
+  height_m          double precision,
+  max_weight_kg     double precision,
   tracker_id        bigint REFERENCES trackers(id),
   current_driver_id bigint REFERENCES employees(id),
   notes             text,
