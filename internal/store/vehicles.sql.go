@@ -21,7 +21,7 @@ func (q *Queries) ArchiveVehicle(ctx context.Context, id int64) error {
 }
 
 const assignVehicleDriver = `-- name: AssignVehicleDriver :one
-UPDATE vehicles SET current_driver_id = $2 WHERE id = $1 RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
+UPDATE vehicles SET current_driver_id = $2 WHERE id = $1 RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, axles, golongan_override, length_m, width_m, height_m, max_weight_kg, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
 
 type AssignVehicleDriverParams struct {
@@ -48,6 +48,12 @@ func (q *Queries) AssignVehicleDriver(ctx context.Context, arg AssignVehicleDriv
 		&i.Hourmeter,
 		&i.FuelTankLiters,
 		&i.FuelRatioKmpl,
+		&i.Axles,
+		&i.GolonganOverride,
+		&i.LengthM,
+		&i.WidthM,
+		&i.HeightM,
+		&i.MaxWeightKg,
 		&i.TrackerID,
 		&i.CurrentDriverID,
 		&i.Notes,
@@ -63,7 +69,7 @@ func (q *Queries) AssignVehicleDriver(ctx context.Context, arg AssignVehicleDriv
 }
 
 const assignVehicleTracker = `-- name: AssignVehicleTracker :one
-UPDATE vehicles SET tracker_id = $2 WHERE id = $1 RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
+UPDATE vehicles SET tracker_id = $2 WHERE id = $1 RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, axles, golongan_override, length_m, width_m, height_m, max_weight_kg, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
 
 type AssignVehicleTrackerParams struct {
@@ -90,6 +96,12 @@ func (q *Queries) AssignVehicleTracker(ctx context.Context, arg AssignVehicleTra
 		&i.Hourmeter,
 		&i.FuelTankLiters,
 		&i.FuelRatioKmpl,
+		&i.Axles,
+		&i.GolonganOverride,
+		&i.LengthM,
+		&i.WidthM,
+		&i.HeightM,
+		&i.MaxWeightKg,
 		&i.TrackerID,
 		&i.CurrentDriverID,
 		&i.Notes,
@@ -130,36 +142,46 @@ const createVehicle = `-- name: CreateVehicle :one
 INSERT INTO vehicles (
   tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no,
   fleet_group_id, status, garage, odometer, hourmeter, tracker_id, current_driver_id, notes,
-  fuel_tank_liters, fuel_ratio_kmpl, master_data_id
+  fuel_tank_liters, fuel_ratio_kmpl, master_data_id,
+  axles, golongan_override, length_m, width_m, height_m, max_weight_kg
 ) VALUES (
   $1, $2, $3, $4, $5,
   $6, $7, $8,
   COALESCE($9, 'active'), $10, $11,
   $12, $13, $14, $15,
-  $16, $17, $18
+  $16, $17, $18,
+  $19, $20,
+  $21, $22, $23,
+  $24
 )
-RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
+RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, axles, golongan_override, length_m, width_m, height_m, max_weight_kg, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
 
 type CreateVehicleParams struct {
-	TenantID        int64          `json:"tenant_id"`
-	LicensePlate    string         `json:"license_plate"`
-	Manufacturer    *string        `json:"manufacturer"`
-	VehicleType     *string        `json:"vehicle_type"`
-	BoxType         *string        `json:"box_type"`
-	UnitYear        *int32         `json:"unit_year"`
-	HullNo          *string        `json:"hull_no"`
-	FleetGroupID    *int64         `json:"fleet_group_id"`
-	Status          interface{}    `json:"status"`
-	Garage          *string        `json:"garage"`
-	Odometer        pgtype.Numeric `json:"odometer"`
-	Hourmeter       pgtype.Numeric `json:"hourmeter"`
-	TrackerID       *int64         `json:"tracker_id"`
-	CurrentDriverID *int64         `json:"current_driver_id"`
-	Notes           *string        `json:"notes"`
-	FuelTankLiters  *float64       `json:"fuel_tank_liters"`
-	FuelRatioKmpl   *float64       `json:"fuel_ratio_kmpl"`
-	MasterDataID    *string        `json:"master_data_id"`
+	TenantID         int64          `json:"tenant_id"`
+	LicensePlate     string         `json:"license_plate"`
+	Manufacturer     *string        `json:"manufacturer"`
+	VehicleType      *string        `json:"vehicle_type"`
+	BoxType          *string        `json:"box_type"`
+	UnitYear         *int32         `json:"unit_year"`
+	HullNo           *string        `json:"hull_no"`
+	FleetGroupID     *int64         `json:"fleet_group_id"`
+	Status           interface{}    `json:"status"`
+	Garage           *string        `json:"garage"`
+	Odometer         pgtype.Numeric `json:"odometer"`
+	Hourmeter        pgtype.Numeric `json:"hourmeter"`
+	TrackerID        *int64         `json:"tracker_id"`
+	CurrentDriverID  *int64         `json:"current_driver_id"`
+	Notes            *string        `json:"notes"`
+	FuelTankLiters   *float64       `json:"fuel_tank_liters"`
+	FuelRatioKmpl    *float64       `json:"fuel_ratio_kmpl"`
+	MasterDataID     *string        `json:"master_data_id"`
+	Axles            *int16         `json:"axles"`
+	GolonganOverride *int16         `json:"golongan_override"`
+	LengthM          *float64       `json:"length_m"`
+	WidthM           *float64       `json:"width_m"`
+	HeightM          *float64       `json:"height_m"`
+	MaxWeightKg      *float64       `json:"max_weight_kg"`
 }
 
 func (q *Queries) CreateVehicle(ctx context.Context, arg CreateVehicleParams) (Vehicle, error) {
@@ -182,6 +204,12 @@ func (q *Queries) CreateVehicle(ctx context.Context, arg CreateVehicleParams) (V
 		arg.FuelTankLiters,
 		arg.FuelRatioKmpl,
 		arg.MasterDataID,
+		arg.Axles,
+		arg.GolonganOverride,
+		arg.LengthM,
+		arg.WidthM,
+		arg.HeightM,
+		arg.MaxWeightKg,
 	)
 	var i Vehicle
 	err := row.Scan(
@@ -200,6 +228,12 @@ func (q *Queries) CreateVehicle(ctx context.Context, arg CreateVehicleParams) (V
 		&i.Hourmeter,
 		&i.FuelTankLiters,
 		&i.FuelRatioKmpl,
+		&i.Axles,
+		&i.GolonganOverride,
+		&i.LengthM,
+		&i.WidthM,
+		&i.HeightM,
+		&i.MaxWeightKg,
 		&i.TrackerID,
 		&i.CurrentDriverID,
 		&i.Notes,
@@ -370,7 +404,7 @@ func (q *Queries) GetLiveViewVehicle(ctx context.Context, id int64) (GetLiveView
 
 const getVehicle = `-- name: GetVehicle :one
 SELECT
-  v.id, v.tenant_id, v.license_plate, v.manufacturer, v.vehicle_type, v.box_type, v.unit_year, v.hull_no, v.fleet_group_id, v.status, v.garage, v.odometer, v.hourmeter, v.fuel_tank_liters, v.fuel_ratio_kmpl, v.tracker_id, v.current_driver_id, v.notes, v.documents, v.external_ref, v.color, v.attributes, v.master_data_id, v.created_at, v.updated_at,
+  v.id, v.tenant_id, v.license_plate, v.manufacturer, v.vehicle_type, v.box_type, v.unit_year, v.hull_no, v.fleet_group_id, v.status, v.garage, v.odometer, v.hourmeter, v.fuel_tank_liters, v.fuel_ratio_kmpl, v.axles, v.golongan_override, v.length_m, v.width_m, v.height_m, v.max_weight_kg, v.tracker_id, v.current_driver_id, v.notes, v.documents, v.external_ref, v.color, v.attributes, v.master_data_id, v.created_at, v.updated_at,
   fg.name        AS fleet_group_name,
   e.full_name    AS driver_name,
   e.phone        AS driver_phone,
@@ -384,36 +418,42 @@ WHERE v.id = $1
 `
 
 type GetVehicleRow struct {
-	ID              int64              `json:"id"`
-	TenantID        int64              `json:"tenant_id"`
-	LicensePlate    string             `json:"license_plate"`
-	Manufacturer    *string            `json:"manufacturer"`
-	VehicleType     *string            `json:"vehicle_type"`
-	BoxType         *string            `json:"box_type"`
-	UnitYear        *int32             `json:"unit_year"`
-	HullNo          *string            `json:"hull_no"`
-	FleetGroupID    *int64             `json:"fleet_group_id"`
-	Status          string             `json:"status"`
-	Garage          *string            `json:"garage"`
-	Odometer        pgtype.Numeric     `json:"odometer"`
-	Hourmeter       pgtype.Numeric     `json:"hourmeter"`
-	FuelTankLiters  *float64           `json:"fuel_tank_liters"`
-	FuelRatioKmpl   *float64           `json:"fuel_ratio_kmpl"`
-	TrackerID       *int64             `json:"tracker_id"`
-	CurrentDriverID *int64             `json:"current_driver_id"`
-	Notes           *string            `json:"notes"`
-	Documents       []byte             `json:"documents"`
-	ExternalRef     *string            `json:"external_ref"`
-	Color           *string            `json:"color"`
-	Attributes      []byte             `json:"attributes"`
-	MasterDataID    *string            `json:"master_data_id"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	FleetGroupName  *string            `json:"fleet_group_name"`
-	DriverName      *string            `json:"driver_name"`
-	DriverPhone     *string            `json:"driver_phone"`
-	TrackerImei     *string            `json:"tracker_imei"`
-	TrackerPhone    *string            `json:"tracker_phone"`
+	ID               int64              `json:"id"`
+	TenantID         int64              `json:"tenant_id"`
+	LicensePlate     string             `json:"license_plate"`
+	Manufacturer     *string            `json:"manufacturer"`
+	VehicleType      *string            `json:"vehicle_type"`
+	BoxType          *string            `json:"box_type"`
+	UnitYear         *int32             `json:"unit_year"`
+	HullNo           *string            `json:"hull_no"`
+	FleetGroupID     *int64             `json:"fleet_group_id"`
+	Status           string             `json:"status"`
+	Garage           *string            `json:"garage"`
+	Odometer         pgtype.Numeric     `json:"odometer"`
+	Hourmeter        pgtype.Numeric     `json:"hourmeter"`
+	FuelTankLiters   *float64           `json:"fuel_tank_liters"`
+	FuelRatioKmpl    *float64           `json:"fuel_ratio_kmpl"`
+	Axles            *int16             `json:"axles"`
+	GolonganOverride *int16             `json:"golongan_override"`
+	LengthM          *float64           `json:"length_m"`
+	WidthM           *float64           `json:"width_m"`
+	HeightM          *float64           `json:"height_m"`
+	MaxWeightKg      *float64           `json:"max_weight_kg"`
+	TrackerID        *int64             `json:"tracker_id"`
+	CurrentDriverID  *int64             `json:"current_driver_id"`
+	Notes            *string            `json:"notes"`
+	Documents        []byte             `json:"documents"`
+	ExternalRef      *string            `json:"external_ref"`
+	Color            *string            `json:"color"`
+	Attributes       []byte             `json:"attributes"`
+	MasterDataID     *string            `json:"master_data_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	FleetGroupName   *string            `json:"fleet_group_name"`
+	DriverName       *string            `json:"driver_name"`
+	DriverPhone      *string            `json:"driver_phone"`
+	TrackerImei      *string            `json:"tracker_imei"`
+	TrackerPhone     *string            `json:"tracker_phone"`
 }
 
 func (q *Queries) GetVehicle(ctx context.Context, id int64) (GetVehicleRow, error) {
@@ -435,6 +475,12 @@ func (q *Queries) GetVehicle(ctx context.Context, id int64) (GetVehicleRow, erro
 		&i.Hourmeter,
 		&i.FuelTankLiters,
 		&i.FuelRatioKmpl,
+		&i.Axles,
+		&i.GolonganOverride,
+		&i.LengthM,
+		&i.WidthM,
+		&i.HeightM,
+		&i.MaxWeightKg,
 		&i.TrackerID,
 		&i.CurrentDriverID,
 		&i.Notes,
@@ -455,7 +501,7 @@ func (q *Queries) GetVehicle(ctx context.Context, id int64) (GetVehicleRow, erro
 }
 
 const getVehicleRow = `-- name: GetVehicleRow :one
-SELECT id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at FROM vehicles WHERE id = $1
+SELECT id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, axles, golongan_override, length_m, width_m, height_m, max_weight_kg, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at FROM vehicles WHERE id = $1
 `
 
 // The bare row, without GetVehicle's joins. Used where only the vehicle's own
@@ -480,6 +526,12 @@ func (q *Queries) GetVehicleRow(ctx context.Context, id int64) (Vehicle, error) 
 		&i.Hourmeter,
 		&i.FuelTankLiters,
 		&i.FuelRatioKmpl,
+		&i.Axles,
+		&i.GolonganOverride,
+		&i.LengthM,
+		&i.WidthM,
+		&i.HeightM,
+		&i.MaxWeightKg,
 		&i.TrackerID,
 		&i.CurrentDriverID,
 		&i.Notes,
@@ -593,7 +645,7 @@ func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64)
 }
 
 const listUnpairedVehicles = `-- name: ListUnpairedVehicles :many
-SELECT id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at FROM vehicles
+SELECT id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, axles, golongan_override, length_m, width_m, height_m, max_weight_kg, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at FROM vehicles
  WHERE tenant_id = $1 AND master_data_id IS NULL AND status <> 'archive'
  ORDER BY id
 `
@@ -626,6 +678,12 @@ func (q *Queries) ListUnpairedVehicles(ctx context.Context, tenantID int64) ([]V
 			&i.Hourmeter,
 			&i.FuelTankLiters,
 			&i.FuelRatioKmpl,
+			&i.Axles,
+			&i.GolonganOverride,
+			&i.LengthM,
+			&i.WidthM,
+			&i.HeightM,
+			&i.MaxWeightKg,
 			&i.TrackerID,
 			&i.CurrentDriverID,
 			&i.Notes,
@@ -649,7 +707,7 @@ func (q *Queries) ListUnpairedVehicles(ctx context.Context, tenantID int64) ([]V
 
 const listVehicles = `-- name: ListVehicles :many
 SELECT
-  v.id, v.tenant_id, v.license_plate, v.manufacturer, v.vehicle_type, v.box_type, v.unit_year, v.hull_no, v.fleet_group_id, v.status, v.garage, v.odometer, v.hourmeter, v.fuel_tank_liters, v.fuel_ratio_kmpl, v.tracker_id, v.current_driver_id, v.notes, v.documents, v.external_ref, v.color, v.attributes, v.master_data_id, v.created_at, v.updated_at,
+  v.id, v.tenant_id, v.license_plate, v.manufacturer, v.vehicle_type, v.box_type, v.unit_year, v.hull_no, v.fleet_group_id, v.status, v.garage, v.odometer, v.hourmeter, v.fuel_tank_liters, v.fuel_ratio_kmpl, v.axles, v.golongan_override, v.length_m, v.width_m, v.height_m, v.max_weight_kg, v.tracker_id, v.current_driver_id, v.notes, v.documents, v.external_ref, v.color, v.attributes, v.master_data_id, v.created_at, v.updated_at,
   fg.name     AS fleet_group_name,
   e.full_name AS driver_name,
   t.imei      AS tracker_imei
@@ -675,34 +733,40 @@ type ListVehiclesParams struct {
 }
 
 type ListVehiclesRow struct {
-	ID              int64              `json:"id"`
-	TenantID        int64              `json:"tenant_id"`
-	LicensePlate    string             `json:"license_plate"`
-	Manufacturer    *string            `json:"manufacturer"`
-	VehicleType     *string            `json:"vehicle_type"`
-	BoxType         *string            `json:"box_type"`
-	UnitYear        *int32             `json:"unit_year"`
-	HullNo          *string            `json:"hull_no"`
-	FleetGroupID    *int64             `json:"fleet_group_id"`
-	Status          string             `json:"status"`
-	Garage          *string            `json:"garage"`
-	Odometer        pgtype.Numeric     `json:"odometer"`
-	Hourmeter       pgtype.Numeric     `json:"hourmeter"`
-	FuelTankLiters  *float64           `json:"fuel_tank_liters"`
-	FuelRatioKmpl   *float64           `json:"fuel_ratio_kmpl"`
-	TrackerID       *int64             `json:"tracker_id"`
-	CurrentDriverID *int64             `json:"current_driver_id"`
-	Notes           *string            `json:"notes"`
-	Documents       []byte             `json:"documents"`
-	ExternalRef     *string            `json:"external_ref"`
-	Color           *string            `json:"color"`
-	Attributes      []byte             `json:"attributes"`
-	MasterDataID    *string            `json:"master_data_id"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	FleetGroupName  *string            `json:"fleet_group_name"`
-	DriverName      *string            `json:"driver_name"`
-	TrackerImei     *string            `json:"tracker_imei"`
+	ID               int64              `json:"id"`
+	TenantID         int64              `json:"tenant_id"`
+	LicensePlate     string             `json:"license_plate"`
+	Manufacturer     *string            `json:"manufacturer"`
+	VehicleType      *string            `json:"vehicle_type"`
+	BoxType          *string            `json:"box_type"`
+	UnitYear         *int32             `json:"unit_year"`
+	HullNo           *string            `json:"hull_no"`
+	FleetGroupID     *int64             `json:"fleet_group_id"`
+	Status           string             `json:"status"`
+	Garage           *string            `json:"garage"`
+	Odometer         pgtype.Numeric     `json:"odometer"`
+	Hourmeter        pgtype.Numeric     `json:"hourmeter"`
+	FuelTankLiters   *float64           `json:"fuel_tank_liters"`
+	FuelRatioKmpl    *float64           `json:"fuel_ratio_kmpl"`
+	Axles            *int16             `json:"axles"`
+	GolonganOverride *int16             `json:"golongan_override"`
+	LengthM          *float64           `json:"length_m"`
+	WidthM           *float64           `json:"width_m"`
+	HeightM          *float64           `json:"height_m"`
+	MaxWeightKg      *float64           `json:"max_weight_kg"`
+	TrackerID        *int64             `json:"tracker_id"`
+	CurrentDriverID  *int64             `json:"current_driver_id"`
+	Notes            *string            `json:"notes"`
+	Documents        []byte             `json:"documents"`
+	ExternalRef      *string            `json:"external_ref"`
+	Color            *string            `json:"color"`
+	Attributes       []byte             `json:"attributes"`
+	MasterDataID     *string            `json:"master_data_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	FleetGroupName   *string            `json:"fleet_group_name"`
+	DriverName       *string            `json:"driver_name"`
+	TrackerImei      *string            `json:"tracker_imei"`
 }
 
 func (q *Queries) ListVehicles(ctx context.Context, arg ListVehiclesParams) ([]ListVehiclesRow, error) {
@@ -736,6 +800,12 @@ func (q *Queries) ListVehicles(ctx context.Context, arg ListVehiclesParams) ([]L
 			&i.Hourmeter,
 			&i.FuelTankLiters,
 			&i.FuelRatioKmpl,
+			&i.Axles,
+			&i.GolonganOverride,
+			&i.LengthM,
+			&i.WidthM,
+			&i.HeightM,
+			&i.MaxWeightKg,
 			&i.TrackerID,
 			&i.CurrentDriverID,
 			&i.Notes,
@@ -763,7 +833,7 @@ func (q *Queries) ListVehicles(ctx context.Context, arg ListVehiclesParams) ([]L
 const pairVehicle = `-- name: PairVehicle :one
 UPDATE vehicles SET master_data_id = $2, updated_at = now()
  WHERE id = $1 AND master_data_id IS NULL
-RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
+RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, axles, golongan_override, length_m, width_m, height_m, max_weight_kg, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
 
 type PairVehicleParams struct {
@@ -793,6 +863,12 @@ func (q *Queries) PairVehicle(ctx context.Context, arg PairVehicleParams) (Vehic
 		&i.Hourmeter,
 		&i.FuelTankLiters,
 		&i.FuelRatioKmpl,
+		&i.Axles,
+		&i.GolonganOverride,
+		&i.LengthM,
+		&i.WidthM,
+		&i.HeightM,
+		&i.MaxWeightKg,
 		&i.TrackerID,
 		&i.CurrentDriverID,
 		&i.Notes,
@@ -822,27 +898,43 @@ SET license_plate     = COALESCE($2, license_plate),
     hourmeter         = COALESCE($12, hourmeter),
     notes             = COALESCE($13, notes),
     fuel_tank_liters  = COALESCE($14, fuel_tank_liters),
-    fuel_ratio_kmpl   = COALESCE($15, fuel_ratio_kmpl)
+    fuel_ratio_kmpl   = COALESCE($15, fuel_ratio_kmpl),
+    -- COALESCE, like every field above: an omitted value leaves what is there.
+    -- It matters more for these than for most, because master data will start
+    -- sending them later and vehiclesync uses the same rule — so a figure
+    -- entered here is not erased by either path.
+    axles             = COALESCE($16, axles),
+    golongan_override = COALESCE($17, golongan_override),
+    length_m          = COALESCE($18, length_m),
+    width_m           = COALESCE($19, width_m),
+    height_m          = COALESCE($20, height_m),
+    max_weight_kg     = COALESCE($21, max_weight_kg)
 WHERE id = $1
-RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
+RETURNING id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, axles, golongan_override, length_m, width_m, height_m, max_weight_kg, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at
 `
 
 type UpdateVehicleParams struct {
-	ID             int64          `json:"id"`
-	LicensePlate   *string        `json:"license_plate"`
-	Manufacturer   *string        `json:"manufacturer"`
-	VehicleType    *string        `json:"vehicle_type"`
-	BoxType        *string        `json:"box_type"`
-	UnitYear       *int32         `json:"unit_year"`
-	HullNo         *string        `json:"hull_no"`
-	FleetGroupID   *int64         `json:"fleet_group_id"`
-	Status         *string        `json:"status"`
-	Garage         *string        `json:"garage"`
-	Odometer       pgtype.Numeric `json:"odometer"`
-	Hourmeter      pgtype.Numeric `json:"hourmeter"`
-	Notes          *string        `json:"notes"`
-	FuelTankLiters *float64       `json:"fuel_tank_liters"`
-	FuelRatioKmpl  *float64       `json:"fuel_ratio_kmpl"`
+	ID               int64          `json:"id"`
+	LicensePlate     *string        `json:"license_plate"`
+	Manufacturer     *string        `json:"manufacturer"`
+	VehicleType      *string        `json:"vehicle_type"`
+	BoxType          *string        `json:"box_type"`
+	UnitYear         *int32         `json:"unit_year"`
+	HullNo           *string        `json:"hull_no"`
+	FleetGroupID     *int64         `json:"fleet_group_id"`
+	Status           *string        `json:"status"`
+	Garage           *string        `json:"garage"`
+	Odometer         pgtype.Numeric `json:"odometer"`
+	Hourmeter        pgtype.Numeric `json:"hourmeter"`
+	Notes            *string        `json:"notes"`
+	FuelTankLiters   *float64       `json:"fuel_tank_liters"`
+	FuelRatioKmpl    *float64       `json:"fuel_ratio_kmpl"`
+	Axles            *int16         `json:"axles"`
+	GolonganOverride *int16         `json:"golongan_override"`
+	LengthM          *float64       `json:"length_m"`
+	WidthM           *float64       `json:"width_m"`
+	HeightM          *float64       `json:"height_m"`
+	MaxWeightKg      *float64       `json:"max_weight_kg"`
 }
 
 func (q *Queries) UpdateVehicle(ctx context.Context, arg UpdateVehicleParams) (Vehicle, error) {
@@ -862,6 +954,12 @@ func (q *Queries) UpdateVehicle(ctx context.Context, arg UpdateVehicleParams) (V
 		arg.Notes,
 		arg.FuelTankLiters,
 		arg.FuelRatioKmpl,
+		arg.Axles,
+		arg.GolonganOverride,
+		arg.LengthM,
+		arg.WidthM,
+		arg.HeightM,
+		arg.MaxWeightKg,
 	)
 	var i Vehicle
 	err := row.Scan(
@@ -880,6 +978,12 @@ func (q *Queries) UpdateVehicle(ctx context.Context, arg UpdateVehicleParams) (V
 		&i.Hourmeter,
 		&i.FuelTankLiters,
 		&i.FuelRatioKmpl,
+		&i.Axles,
+		&i.GolonganOverride,
+		&i.LengthM,
+		&i.WidthM,
+		&i.HeightM,
+		&i.MaxWeightKg,
 		&i.TrackerID,
 		&i.CurrentDriverID,
 		&i.Notes,

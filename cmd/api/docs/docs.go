@@ -12034,6 +12034,9 @@ const docTemplate = `{
         "vehicle.CreateRequest": {
             "type": "object",
             "properties": {
+                "axles": {
+                    "type": "integer"
+                },
                 "box_type": {
                     "type": "string"
                 },
@@ -12052,17 +12055,29 @@ const docTemplate = `{
                 "garage": {
                     "type": "string"
                 },
+                "golongan_override": {
+                    "type": "integer"
+                },
+                "height_m": {
+                    "type": "number"
+                },
                 "hourmeter": {
                     "type": "number"
                 },
                 "hull_no": {
                     "type": "string"
                 },
+                "length_m": {
+                    "type": "number"
+                },
                 "license_plate": {
                     "type": "string"
                 },
                 "manufacturer": {
                     "type": "string"
+                },
+                "max_weight_kg": {
+                    "type": "number"
                 },
                 "notes": {
                     "type": "string"
@@ -12081,12 +12096,19 @@ const docTemplate = `{
                 },
                 "vehicle_type": {
                     "type": "string"
+                },
+                "width_m": {
+                    "type": "number"
                 }
             }
         },
         "vehicle.DTO": {
             "type": "object",
             "properties": {
+                "axles": {
+                    "description": "Toll class and lorry dimensions.\n\nAxles decides the toll class — 2 is Golongan II, 3 is III, 4 is IV, 5 or\nmore is V — and nil means UNKNOWN, never a default. A guessed class\nmisprices every truck that has a real axle count, and does it invisibly\nbecause the figure looks precise.\n\nGolonganOverride exists because two axles is ambiguous: BPJT splits\ntwo-axle vehicles between Golongan I (\"pick up / truk kecil\") and\nGolongan II on size, which an axle count cannot decide.\n\nThe dimensions let routing apply the height, width and weight limits it\nalready reads from OpenStreetMap; without them every route uses\nfleet-wide defaults.",
+                    "type": "integer"
+                },
                 "box_type": {
                     "type": "string"
                 },
@@ -12120,6 +12142,12 @@ const docTemplate = `{
                 "garage": {
                     "type": "string"
                 },
+                "golongan_override": {
+                    "type": "integer"
+                },
+                "height_m": {
+                    "type": "number"
+                },
                 "hourmeter": {
                     "type": "number"
                 },
@@ -12128,6 +12156,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                },
+                "length_m": {
+                    "type": "number"
                 },
                 "license_plate": {
                     "type": "string"
@@ -12138,6 +12169,9 @@ const docTemplate = `{
                 "master_data_id": {
                     "description": "MasterDataID pairs the row with karlo_masterdata (the id TMS uses).\nNull until vehiclesync or write-through has paired it.",
                     "type": "string"
+                },
+                "max_weight_kg": {
+                    "type": "number"
                 },
                 "notes": {
                     "type": "string"
@@ -12172,6 +12206,9 @@ const docTemplate = `{
                 },
                 "vehicle_type": {
                     "type": "string"
+                },
+                "width_m": {
+                    "type": "number"
                 }
             }
         },
@@ -12198,6 +12235,9 @@ const docTemplate = `{
         "vehicle.UpdateRequest": {
             "type": "object",
             "properties": {
+                "axles": {
+                    "type": "integer"
+                },
                 "box_type": {
                     "type": "string"
                 },
@@ -12213,17 +12253,29 @@ const docTemplate = `{
                 "garage": {
                     "type": "string"
                 },
+                "golongan_override": {
+                    "type": "integer"
+                },
+                "height_m": {
+                    "type": "number"
+                },
                 "hourmeter": {
                     "type": "number"
                 },
                 "hull_no": {
                     "type": "string"
                 },
+                "length_m": {
+                    "type": "number"
+                },
                 "license_plate": {
                     "type": "string"
                 },
                 "manufacturer": {
                     "type": "string"
+                },
+                "max_weight_kg": {
+                    "type": "number"
                 },
                 "notes": {
                     "type": "string"
@@ -12239,6 +12291,9 @@ const docTemplate = `{
                 },
                 "vehicle_type": {
                     "type": "string"
+                },
+                "width_m": {
+                    "type": "number"
                 }
             }
         },

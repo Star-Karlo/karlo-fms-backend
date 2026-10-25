@@ -246,6 +246,41 @@ type Tenant struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+// Toll gates with positions, keyed by normalised name. Shared across tenants: a gate is a national fact.
+type TollGate struct {
+	ID        int64              `json:"id"`
+	Name      string             `json:"name"`
+	NameNorm  string             `json:"name_norm"`
+	Lat       float64            `json:"lat"`
+	Lon       float64            `json:"lon"`
+	Source    string             `json:"source"`
+	Ruas      *string            `json:"ruas"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TollGateAlias struct {
+	GateID int64  `json:"gate_id"`
+	Alias  string `json:"alias"`
+}
+
+// Toll tariffs per (entry, exit, golongan). verdict=review means it failed a consistency check — do not bill on it.
+type TollTariff struct {
+	ID            int64              `json:"id"`
+	Kind          string             `json:"kind"`
+	EntryGate     int64              `json:"entry_gate"`
+	ExitGate      *int64             `json:"exit_gate"`
+	Golongan      int16              `json:"golongan"`
+	AmountRp      int64              `json:"amount_rp"`
+	Source        string             `json:"source"`
+	SourceRef     *string            `json:"source_ref"`
+	EffectiveFrom pgtype.Date        `json:"effective_from"`
+	FetchedAt     pgtype.Timestamptz `json:"fetched_at"`
+	Verdict       string             `json:"verdict"`
+	Issues        *string            `json:"issues"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type Tracker struct {
 	ID           int64              `json:"id"`
 	TenantID     int64              `json:"tenant_id"`
@@ -300,31 +335,37 @@ type User struct {
 }
 
 type Vehicle struct {
-	ID              int64              `json:"id"`
-	TenantID        int64              `json:"tenant_id"`
-	LicensePlate    string             `json:"license_plate"`
-	Manufacturer    *string            `json:"manufacturer"`
-	VehicleType     *string            `json:"vehicle_type"`
-	BoxType         *string            `json:"box_type"`
-	UnitYear        *int32             `json:"unit_year"`
-	HullNo          *string            `json:"hull_no"`
-	FleetGroupID    *int64             `json:"fleet_group_id"`
-	Status          string             `json:"status"`
-	Garage          *string            `json:"garage"`
-	Odometer        pgtype.Numeric     `json:"odometer"`
-	Hourmeter       pgtype.Numeric     `json:"hourmeter"`
-	FuelTankLiters  *float64           `json:"fuel_tank_liters"`
-	FuelRatioKmpl   *float64           `json:"fuel_ratio_kmpl"`
-	TrackerID       *int64             `json:"tracker_id"`
-	CurrentDriverID *int64             `json:"current_driver_id"`
-	Notes           *string            `json:"notes"`
-	Documents       []byte             `json:"documents"`
-	ExternalRef     *string            `json:"external_ref"`
-	Color           *string            `json:"color"`
-	Attributes      []byte             `json:"attributes"`
-	MasterDataID    *string            `json:"master_data_id"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID               int64              `json:"id"`
+	TenantID         int64              `json:"tenant_id"`
+	LicensePlate     string             `json:"license_plate"`
+	Manufacturer     *string            `json:"manufacturer"`
+	VehicleType      *string            `json:"vehicle_type"`
+	BoxType          *string            `json:"box_type"`
+	UnitYear         *int32             `json:"unit_year"`
+	HullNo           *string            `json:"hull_no"`
+	FleetGroupID     *int64             `json:"fleet_group_id"`
+	Status           string             `json:"status"`
+	Garage           *string            `json:"garage"`
+	Odometer         pgtype.Numeric     `json:"odometer"`
+	Hourmeter        pgtype.Numeric     `json:"hourmeter"`
+	FuelTankLiters   *float64           `json:"fuel_tank_liters"`
+	FuelRatioKmpl    *float64           `json:"fuel_ratio_kmpl"`
+	Axles            *int16             `json:"axles"`
+	GolonganOverride *int16             `json:"golongan_override"`
+	LengthM          *float64           `json:"length_m"`
+	WidthM           *float64           `json:"width_m"`
+	HeightM          *float64           `json:"height_m"`
+	MaxWeightKg      *float64           `json:"max_weight_kg"`
+	TrackerID        *int64             `json:"tracker_id"`
+	CurrentDriverID  *int64             `json:"current_driver_id"`
+	Notes            *string            `json:"notes"`
+	Documents        []byte             `json:"documents"`
+	ExternalRef      *string            `json:"external_ref"`
+	Color            *string            `json:"color"`
+	Attributes       []byte             `json:"attributes"`
+	MasterDataID     *string            `json:"master_data_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type VehicleTelemetryState struct {

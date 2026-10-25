@@ -249,6 +249,25 @@ type Vehicle struct {
 	FuelRatioKmpl  *float64 `json:"fuelRatioKmpl,omitempty"`
 	Notes          *string  `json:"notes,omitempty"`
 
+	/* TOLL CLASS AND DIMENSIONS, same pointer-with-omitempty contract.
+
+	   Axles is what every Indonesian toll tariff is priced on, and TMS needs
+	   it more than FMS does: TMS prices orders, which is where the toll spend
+	   sits. Sending it upstream is therefore the point rather than a courtesy
+	   — an axle count entered in FMS reaches TMS through master data, and
+	   neither product has to be told twice.
+
+	   Requested upstream in Star-Karlo/Master-Data#11. Until that lands these
+	   keys are simply ignored by the receiver, which is why they can ship
+	   first: an unknown key is not an error, and the local column is written
+	   either way. */
+	Axles            *int16   `json:"axles,omitempty"`
+	GolonganOverride *int16   `json:"golonganOverride,omitempty"`
+	LengthM          *float64 `json:"lengthM,omitempty"`
+	WidthM           *float64 `json:"widthM,omitempty"`
+	HeightM          *float64 `json:"heightM,omitempty"`
+	MaxWeightKg      *float64 `json:"maxWeightKg,omitempty"`
+
 	// Attributes MERGE upstream rather than replace, so writing fmsVehicleId
 	// here does not erase whatever else the record carries.
 	Attributes map[string]any `json:"attributes,omitempty"`

@@ -2,13 +2,17 @@
 INSERT INTO vehicles (
   tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no,
   fleet_group_id, status, garage, odometer, hourmeter, tracker_id, current_driver_id, notes,
-  fuel_tank_liters, fuel_ratio_kmpl, master_data_id
+  fuel_tank_liters, fuel_ratio_kmpl, master_data_id,
+  axles, golongan_override, length_m, width_m, height_m, max_weight_kg
 ) VALUES (
   $1, $2, sqlc.narg('manufacturer'), sqlc.narg('vehicle_type'), sqlc.narg('box_type'),
   sqlc.narg('unit_year'), sqlc.narg('hull_no'), sqlc.narg('fleet_group_id'),
   COALESCE(sqlc.narg('status'), 'active'), sqlc.narg('garage'), sqlc.narg('odometer'),
   sqlc.narg('hourmeter'), sqlc.narg('tracker_id'), sqlc.narg('current_driver_id'), sqlc.narg('notes'),
-  sqlc.narg('fuel_tank_liters'), sqlc.narg('fuel_ratio_kmpl'), sqlc.narg('master_data_id')
+  sqlc.narg('fuel_tank_liters'), sqlc.narg('fuel_ratio_kmpl'), sqlc.narg('master_data_id'),
+  sqlc.narg('axles'), sqlc.narg('golongan_override'),
+  sqlc.narg('length_m'), sqlc.narg('width_m'), sqlc.narg('height_m'),
+  sqlc.narg('max_weight_kg')
 )
 RETURNING *;
 
@@ -63,7 +67,17 @@ SET license_plate     = COALESCE(sqlc.narg('license_plate'), license_plate),
     hourmeter         = COALESCE(sqlc.narg('hourmeter'), hourmeter),
     notes             = COALESCE(sqlc.narg('notes'), notes),
     fuel_tank_liters  = COALESCE(sqlc.narg('fuel_tank_liters'), fuel_tank_liters),
-    fuel_ratio_kmpl   = COALESCE(sqlc.narg('fuel_ratio_kmpl'), fuel_ratio_kmpl)
+    fuel_ratio_kmpl   = COALESCE(sqlc.narg('fuel_ratio_kmpl'), fuel_ratio_kmpl),
+    -- COALESCE, like every field above: an omitted value leaves what is there.
+    -- It matters more for these than for most, because master data will start
+    -- sending them later and vehiclesync uses the same rule — so a figure
+    -- entered here is not erased by either path.
+    axles             = COALESCE(sqlc.narg('axles'), axles),
+    golongan_override = COALESCE(sqlc.narg('golongan_override'), golongan_override),
+    length_m          = COALESCE(sqlc.narg('length_m'), length_m),
+    width_m           = COALESCE(sqlc.narg('width_m'), width_m),
+    height_m          = COALESCE(sqlc.narg('height_m'), height_m),
+    max_weight_kg     = COALESCE(sqlc.narg('max_weight_kg'), max_weight_kg)
 WHERE id = $1
 RETURNING *;
 

@@ -226,8 +226,45 @@ func validFuel(tank, ratio *float64) error {
 	return nil
 }
 
+// validTollAndSize rejects implausible toll and dimension figures with a
+// readable message, rather than letting the CHECK constraints from 0057 and
+// 0062 surface as a raw violation.
+//
+// THE BOUNDS ARE NOT PEDANTRY. The legacy truck master this data will be
+// seeded from holds dimensions on 96% of its rows at values including 23 m
+// wide, 32 m tall and 1.232 kg — someone typing 1, 2, 3 into a form. Every one
+// of those passes a "greater than zero" test, which is exactly how they
+// survived to be found years later.
+func validTollAndSize(axles, gol *int16, length, width, height, weight *float64) error {
+	if axles != nil && (*axles < 2 || *axles > 12) {
+		return fmt.Errorf("axles must be between 2 and 12")
+	}
+	if gol != nil && (*gol < 1 || *gol > 5) {
+		return fmt.Errorf("toll class override must be between 1 and 5")
+	}
+	for _, c := range []struct {
+		v      *float64
+		lo, hi float64
+		name   string
+	}{
+		{length, 2, 30, "length (m)"},
+		{width, 1.2, 3.5, "width (m)"},
+		{height, 1.2, 5, "height (m)"},
+		{weight, 500, 80000, "max weight (kg)"},
+	} {
+		if c.v != nil && (*c.v < c.lo || *c.v > c.hi) {
+			return fmt.Errorf("%s must be between %g and %g", c.name, c.lo, c.hi)
+		}
+	}
+	return nil
+}
+
 func (s *Service) Create(ctx context.Context, tenantID int64, caller mdwrite.Caller, req CreateRequest) (*DTO, error) {
 	if err := validFuel(req.FuelTankLiters, req.FuelRatioKmpl); err != nil {
+		return nil, err
+	}
+	if err := validTollAndSize(req.Axles, req.GolonganOverride,
+		req.LengthM, req.WidthM, req.HeightM, req.MaxWeightKg); err != nil {
 		return nil, err
 	}
 
@@ -272,7 +309,10 @@ func (s *Service) Create(ctx context.Context, tenantID int64, caller mdwrite.Cal
 			FleetGroupID: req.FleetGroupID, Status: derefStatus(req.Status), Garage: req.Garage,
 			Odometer: conv.Num(req.Odometer), Hourmeter: conv.Num(req.Hourmeter),
 			FuelTankLiters: req.FuelTankLiters, FuelRatioKmpl: req.FuelRatioKmpl,
-			TrackerID: req.TrackerID, CurrentDriverID: req.CurrentDriverID, Notes: req.Notes,
+			Axles: req.Axles, GolonganOverride: req.GolonganOverride,
+			LengthM: req.LengthM, WidthM: req.WidthM, HeightM: req.HeightM,
+			MaxWeightKg: req.MaxWeightKg,
+			TrackerID:   req.TrackerID, CurrentDriverID: req.CurrentDriverID, Notes: req.Notes,
 			MasterDataID: mdID,
 		})
 		if err != nil {
@@ -302,6 +342,10 @@ func (s *Service) Create(ctx context.Context, tenantID int64, caller mdwrite.Cal
 // Update patches a vehicle's fields.
 func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite.Caller, req UpdateRequest) (*DTO, error) {
 	if err := validFuel(req.FuelTankLiters, req.FuelRatioKmpl); err != nil {
+		return nil, err
+	}
+	if err := validTollAndSize(req.Axles, req.GolonganOverride,
+		req.LengthM, req.WidthM, req.HeightM, req.MaxWeightKg); err != nil {
 		return nil, err
 	}
 	// Status in and out of 'archive' is a retirement, not a field edit, and
@@ -339,6 +383,9 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 			FleetGroupID: req.FleetGroupID, Status: req.Status, Garage: req.Garage,
 			Odometer: conv.Num(req.Odometer), Hourmeter: conv.Num(req.Hourmeter),
 			FuelTankLiters: req.FuelTankLiters, FuelRatioKmpl: req.FuelRatioKmpl, Notes: req.Notes,
+			Axles: req.Axles, GolonganOverride: req.GolonganOverride,
+			LengthM: req.LengthM, WidthM: req.WidthM, HeightM: req.HeightM,
+			MaxWeightKg: req.MaxWeightKg,
 		})
 		if err != nil {
 			return err
@@ -365,7 +412,13 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 	touchesMD := req.LicensePlate != nil || req.HullNo != nil || req.UnitYear != nil || req.Status != nil ||
 		req.Manufacturer != nil || req.VehicleType != nil || req.BoxType != nil ||
 		req.Odometer != nil || req.Hourmeter != nil ||
-		req.FuelTankLiters != nil || req.FuelRatioKmpl != nil || req.Notes != nil
+		req.FuelTankLiters != nil || req.FuelRatioKmpl != nil || req.Notes != nil ||
+		// WITHOUT THESE, an edit that sets ONLY an axle count would write the
+		// local column and never reach master data — so TMS would not get the
+		// one field it needs most from this form.
+		req.Axles != nil || req.GolonganOverride != nil ||
+		req.LengthM != nil || req.WidthM != nil || req.HeightM != nil ||
+		req.MaxWeightKg != nil
 	if s.md != nil && mdID != nil && touchesMD {
 		v := mdwrite.Vehicle{}
 		v.BrandID, v.TruckBodyID, v.TruckHeadID = s.catalogIDs(ctx, s.company(ctx, tenantID), req.Manufacturer, req.VehicleType, req.BoxType)
@@ -393,6 +446,10 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 		v.FuelTankLiters = req.FuelTankLiters
 		v.FuelRatioKmpl = req.FuelRatioKmpl
 		v.Notes = req.Notes
+		v.Axles = req.Axles
+		v.GolonganOverride = req.GolonganOverride
+		v.LengthM, v.WidthM, v.HeightM = req.LengthM, req.WidthM, req.HeightM
+		v.MaxWeightKg = req.MaxWeightKg
 		if err := s.md.UpdateVehicle(ctx, caller, *mdID, v); err != nil {
 			// Local write is already committed and cannot be rolled back here,
 			// but the caller must learn it did not reach TMS.
