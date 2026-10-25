@@ -186,3 +186,44 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// THE SOURCES DISAGREE 88% OF THE TIME where they overlap, so which one wins
+// cannot be left to query order. Jasa Marga publishes its own ruas; MAPID
+// derives figures from a route and so depends on which gate the geometry
+// snapped to — asked for Cikupa -> Merak it entered at a ramp gate and
+// answered 124.500 against a published 104.500.
+func TestBetterSourceWins(t *testing.T) {
+	cells := []TollCell{
+		{EntryNorm: "cikupa", ExitNorm: "merak", Source: "mapid",
+			AmountRp: map[int]int64{5: 124500}, Verdict: "usable"},
+		{EntryNorm: "cikupa", ExitNorm: "merak", Source: "jasamarga",
+			AmountRp: map[int]int64{5: 104500}, Verdict: "usable"},
+	}
+	// Both orderings, because the bug this guards against is order dependence.
+	for _, order := range [][]TollCell{cells, {cells[1], cells[0]}} {
+		table := NewTollTable(order)
+		passed := GatesAlong(route(), []TollGate{
+			gate(1, "cikupa", 106.1), gate(2, "merak", 106.4),
+		})
+		res, err := table.Cover(passed, 5)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(res.Charges) != 1 || res.Charges[0].AmountRp != 104500 {
+			t.Fatalf("the published tariff must win regardless of row order, got %+v", res.Charges)
+		}
+	}
+}
+
+// A decree outranks both, since it is the legal figure the others approximate.
+func TestDecreeOutranksEverything(t *testing.T) {
+	if SourcePriority["decree"] <= SourcePriority["jasamarga"] ||
+		SourcePriority["jasamarga"] <= SourcePriority["mapid"] {
+		t.Fatal("ranking must be decree > jasamarga > mapid")
+	}
+	// An unlisted source must rank BELOW every known one: something added
+	// later without thought should not silently outrank a published tariff.
+	if SourcePriority["something-new"] >= SourcePriority["mapid"] {
+		t.Error("an unknown source must rank below the known ones")
+	}
+}

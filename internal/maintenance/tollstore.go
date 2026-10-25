@@ -57,31 +57,38 @@ func (s *TollStore) LoadTollCells(ctx context.Context) ([]routing.TollCell, erro
 		  coalesce(xg.name_norm, '')                    AS exit_norm,
 		  t.golongan,
 		  t.amount_rp,
+		  t.source,
+		  -- Pessimistic PER SOURCE. A cell is excluded when that source's own
+		  -- rows disagree, which must not condemn the other source's copy of
+		  -- the same pair.
 		  bool_and(t.verdict = 'usable') OVER (
-		    PARTITION BY t.entry_gate, coalesce(t.exit_gate, 0)
+		    PARTITION BY t.entry_gate, coalesce(t.exit_gate, 0), t.source
 		  )                                             AS cell_usable
 		FROM toll_tariffs t
 		JOIN toll_gates eg ON eg.id = t.entry_gate
 		LEFT JOIN toll_gates xg ON xg.id = t.exit_gate
-		ORDER BY entry_norm, exit_norm, t.golongan`)
+		-- Grouped per (cell, source): two sources covering one pair are two
+		-- cells here, and NewTollTable picks the better-ranked one. Merging
+		-- them by price would average a published tariff with a derived one.
+		ORDER BY entry_norm, exit_norm, t.source, t.golongan`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	type key struct{ entry, exit string }
+	type key struct{ entry, exit, source string }
 	byCell := map[key]*routing.TollCell{}
 	var order []key
 
 	for rows.Next() {
-		var kind, entryNorm, exitNorm string
+		var kind, entryNorm, exitNorm, source string
 		var golongan int16
 		var amount int64
 		var usable bool
-		if err := rows.Scan(&kind, &entryNorm, &exitNorm, &golongan, &amount, &usable); err != nil {
+		if err := rows.Scan(&kind, &entryNorm, &exitNorm, &golongan, &amount, &source, &usable); err != nil {
 			return nil, err
 		}
-		k := key{entryNorm, exitNorm}
+		k := key{entryNorm, exitNorm, source}
 		c, ok := byCell[k]
 		if !ok {
 			c = &routing.TollCell{
@@ -90,6 +97,7 @@ func (s *TollStore) LoadTollCells(ctx context.Context) ([]routing.TollCell, erro
 				Flat:      kind == "flat",
 				AmountRp:  map[int]int64{},
 				Verdict:   "usable",
+				Source:    source,
 			}
 			byCell[k] = c
 			order = append(order, k)

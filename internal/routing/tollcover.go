@@ -36,6 +36,30 @@ type TollGate struct {
 	Lon      float64
 }
 
+// SourcePriority ranks tariff sources, highest first.
+//
+// NEEDED BECAUSE THE SOURCES DISAGREE, and not occasionally: on the 149
+// figures where both had an answer, Jasa Marga and MAPID differed on 131 of
+// them — Cikande -> Merak by 14.000 for Golongan V, Balaraja Barat -> Cikupa
+// by 13.000 the other way.
+//
+// The disagreement is explainable rather than random. MAPID's figures are
+// derived from a ROUTE, so they depend on which gate the geometry snapped to:
+// asked for Cikupa -> Merak it entered at a ramp gate and answered 124.500
+// where the published pair is 104.500. An operator's own tariff table has no
+// such dependency. So where Jasa Marga publishes a figure for its own ruas, it
+// wins; MAPID covers everything Jasa Marga does not, which includes Cipali
+// (Astra) and Trans-Sumatra (Hutama Karya) — and those are where our worst
+// cells live.
+//
+// A source absent from this map ranks below every listed one, which is the
+// safe default for something added later without thought.
+var SourcePriority = map[string]int{
+	"decree":    30, // a ministerial decree: the legal figure
+	"jasamarga": 20, // the operator's own published table
+	"mapid":     10, // derived from a routing answer
+}
+
 // TollCell is one chargeable transaction in the tariff table.
 type TollCell struct {
 	// EntryNorm and ExitNorm are normalised gate names. ExitNorm is empty for
@@ -47,6 +71,9 @@ type TollCell struct {
 	// price, which the cover reports rather than substituting a neighbour.
 	AmountRp map[int]int64
 	Verdict  string
+	// Source names where the figures came from, and decides which cell wins
+	// when two sources cover the same pair. See SourcePriority.
+	Source string
 }
 
 // TollTable is the tariff data, indexed for covering.
@@ -65,18 +92,28 @@ type TollTable struct {
 // cannot price yet, which the cover will say.
 func NewTollTable(cells []TollCell) *TollTable {
 	t := &TollTable{closed: map[string]map[string]TollCell{}, flat: map[string]TollCell{}}
+	// BETTER SOURCE WINS, rather than whichever row happened to arrive last.
+	// Without this the table's contents would depend on query order, which is
+	// an unpleasant way to discover that two sources disagree 88% of the time.
+	better := func(a, b TollCell) bool {
+		return SourcePriority[a.Source] > SourcePriority[b.Source]
+	}
 	for _, c := range cells {
 		if c.Verdict != "usable" {
 			continue
 		}
 		if c.Flat {
-			t.flat[c.EntryNorm] = c
+			if cur, ok := t.flat[c.EntryNorm]; !ok || better(c, cur) {
+				t.flat[c.EntryNorm] = c
+			}
 			continue
 		}
 		if t.closed[c.EntryNorm] == nil {
 			t.closed[c.EntryNorm] = map[string]TollCell{}
 		}
-		t.closed[c.EntryNorm][c.ExitNorm] = c
+		if cur, ok := t.closed[c.EntryNorm][c.ExitNorm]; !ok || better(c, cur) {
+			t.closed[c.EntryNorm][c.ExitNorm] = c
+		}
 	}
 	return t
 }
