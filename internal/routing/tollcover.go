@@ -232,7 +232,130 @@ type CoverResult struct {
 // tell a cheap route from an unmeasured one.
 func (c CoverResult) Incomplete() bool { return len(c.Unpriced) > 0 }
 
+// CoverStructure is the journey's charges, independent of vehicle class.
+//
+// WHY THE STRUCTURE IS SEPARATE FROM THE PRICES. Covering per class and summing
+// whatever each one could price produces totals that are not comparable, and on
+// a long route it produces an IMPOSSIBLE one: a 543 km dispatch reported
+// Golongan I at 365.000 above Golongan IV/V at 364.500. Golongan I is the
+// cheapest class on every tariff in Indonesia.
+//
+// The cause is uneven coverage, not a bad tariff. Jasa Marga's published dump
+// carries 2.397 pairs priced for Golongan I ALONE — the harvest that produced
+// it answered 404 for the other classes — so on a long journey Golongan I gets
+// charged at gates the other classes cannot be charged at, and its total grows
+// past theirs. Every individual cell is fine; the sums are of different things.
+//
+// So the journey is covered ONCE, by which cells exist, and then each class is
+// priced over that same set of charges. A class that cannot price every charge
+// in the structure is omitted entirely rather than given a partial total,
+// because a partial total is what caused the inversion.
+type CoverStructure struct {
+	// Cells are the charges, in travel order.
+	Cells []TollCell
+	// Gates names the from/to of each charge, parallel to Cells.
+	From []string
+	To   []string
+	// Unpriced names gates no cell covered at all.
+	Unpriced []string
+}
+
+// Incomplete reports whether some gate went uncovered.
+func (c CoverStructure) Incomplete() bool { return len(c.Unpriced) > 0 }
+
+// PriceFor totals the structure for one golongan.
+//
+// Returns ok=false when ANY charge lacks that class, so the caller omits it
+// rather than publishing a sum of a different journey.
+func (c CoverStructure) PriceFor(golongan int) (int64, []TollCharge, bool) {
+	var total int64
+	charges := make([]TollCharge, 0, len(c.Cells))
+	for i, cell := range c.Cells {
+		amount, ok := cell.AmountRp[golongan]
+		if !ok {
+			return 0, nil, false
+		}
+		total += amount
+		charges = append(charges, TollCharge{
+			FromGate: c.From[i],
+			ToGate:   c.To[i],
+			Flat:     cell.Flat,
+			AmountRp: amount,
+		})
+	}
+	return total, charges, true
+}
+
+// CoverAll works out which charges a gate sequence incurs, for every class at
+// once.
+//
+// Greedy longest match on CELL EXISTENCE rather than on a particular class's
+// price, so the structure is the same whichever class is being quoted — see
+// CoverStructure for why that matters.
+func (t *TollTable) CoverAll(passed []PassedGate) CoverStructure {
+	var res CoverStructure
+	if len(passed) == 0 {
+		return res
+	}
+	i := 0
+	// wasExit marks a gate already consumed as the END of a charge. It matters
+	// for the unpriced report below: such a gate IS accounted for, so naming
+	// it as missing a tariff would send someone looking for one that is not
+	// needed.
+	wasExit := false
+	for i < len(passed) {
+		from := passed[i].Gate
+
+		bestJ, bestCell := -1, TollCell{}
+		if exits := t.closed[from.NameNorm]; exits != nil {
+			for j := len(passed) - 1; j > i; j-- {
+				if cell, ok := exits[passed[j].Gate.NameNorm]; ok {
+					bestJ, bestCell = j, cell
+					break
+				}
+			}
+		}
+		if bestJ > 0 {
+			res.Cells = append(res.Cells, bestCell)
+			res.From = append(res.From, from.Name)
+			res.To = append(res.To, passed[bestJ].Gate.Name)
+			// RESUME AT THE EXIT, NOT PAST IT.
+			//
+			// An exit gate is usually the next entry: a Trans-Java journey
+			// exits a closed system and immediately joins the next one at the
+			// same plaza, which the recorded gate sequences show literally —
+			// "cikampek utama 2(out) > cikampek utama 2 (gate in)(in)".
+			// Resuming past it dropped every charge after the first on a
+			// chained route, silently undercounting a long journey.
+			i = bestJ
+			wasExit = true
+			continue
+		}
+		if cell, ok := t.flat[from.NameNorm]; ok {
+			res.Cells = append(res.Cells, cell)
+			res.From = append(res.From, from.Name)
+			res.To = append(res.To, "")
+			i++
+			wasExit = false
+			continue
+		}
+		// Nothing starts here. Only a gate that was NOT just an exit is a gap:
+		// the end of a journey is an exit with nothing beyond it, which is
+		// complete rather than missing.
+		if !wasExit {
+			res.Unpriced = append(res.Unpriced, from.Name)
+		}
+		i++
+		wasExit = false
+	}
+	return res
+}
+
 // Cover works out the charges a gate sequence incurs, for one golongan.
+//
+// DEPRECATED in favour of CoverAll plus PriceFor, which cannot produce the
+// class-inconsistent totals this does. Kept because the tests pin its
+// behaviour and it documents the per-class path.
 //
 // GREEDY LONGEST MATCH, which mirrors how a closed system bills: you take a
 // card at an entry and pay at the furthest exit you reach before leaving, so

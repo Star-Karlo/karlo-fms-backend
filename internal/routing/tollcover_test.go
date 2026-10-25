@@ -1,6 +1,9 @@
 package routing
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // A straight run east along the equator-ish latitude of Java, with gates
 // placed on it. Simple geometry on purpose: the cover logic is what is under
@@ -225,5 +228,99 @@ func TestDecreeOutranksEverything(t *testing.T) {
 	// later without thought should not silently outrank a published tariff.
 	if SourcePriority["something-new"] >= SourcePriority["mapid"] {
 		t.Error("an unknown source must rank below the known ones")
+	}
+}
+
+// THE PRODUCTION BUG. A 543 km dispatch reported Golongan I at 365.000 above
+// Golongan IV/V at 364.500 — impossible, since Golongan I is the cheapest class
+// on every Indonesian tariff.
+//
+// The cells were all individually fine. Jasa Marga's published dump carries
+// 2.397 pairs priced for Golongan I ALONE, so on a long route Golongan I was
+// charged at gates the other classes could not be, and the two totals were
+// sums of different journeys. Covering once and pricing that structure per
+// class is what makes them comparable.
+func TestClassesArePricedOverTheSameCharges(t *testing.T) {
+	table := NewTollTable([]TollCell{
+		// Priced for every class.
+		{EntryNorm: "a", ExitNorm: "b", Verdict: "usable", Source: "jasamarga",
+			AmountRp: map[int]int64{1: 10000, 2: 15000, 3: 15000, 4: 20000, 5: 20000}},
+		// GOLONGAN I ONLY — the shape that caused the inversion.
+		{EntryNorm: "b", ExitNorm: "c", Verdict: "usable", Source: "jasamarga",
+			AmountRp: map[int]int64{1: 500000}},
+	})
+	passed := GatesAlong(route(), []TollGate{
+		gate(1, "a", 106.1), gate(2, "b", 106.4), gate(3, "c", 106.8),
+	})
+
+	st := table.CoverAll(passed)
+	if len(st.Cells) != 2 {
+		t.Fatalf("both charges must be in the structure, got %d", len(st.Cells))
+	}
+
+	// Golongan I can price both, so it totals both.
+	total1, _, ok := st.PriceFor(1)
+	if !ok || total1 != 510000 {
+		t.Errorf("golongan 1 prices both charges: want 510000 ok, got %d %v", total1, ok)
+	}
+	// Golongan 5 cannot price the second, so it is OMITTED — not given 20000,
+	// which would be a total for a shorter journey and would sit below
+	// golongan 1's, reading as a sane ordering while describing two different
+	// trips.
+	if _, _, ok := st.PriceFor(5); ok {
+		t.Error("golongan 5 cannot price every charge, so it must be omitted entirely")
+	}
+}
+
+// And the ordering is asserted rather than assumed, so data that disagrees
+// with itself refuses instead of publishing an impossible quote.
+func TestCoverAllKeepsStructureIdenticalAcrossClasses(t *testing.T) {
+	table := NewTollTable([]TollCell{
+		{EntryNorm: "a", ExitNorm: "b", Verdict: "usable",
+			AmountRp: map[int]int64{1: 10000, 5: 20000}},
+		{EntryNorm: "b", ExitNorm: "c", Verdict: "usable",
+			AmountRp: map[int]int64{1: 5000, 5: 9000}},
+	})
+	passed := GatesAlong(route(), []TollGate{
+		gate(1, "a", 106.1), gate(2, "b", 106.4), gate(3, "c", 106.8),
+	})
+	st := table.CoverAll(passed)
+	_, c1, ok1 := st.PriceFor(1)
+	_, c5, ok5 := st.PriceFor(5)
+	if !ok1 || !ok5 {
+		t.Fatal("both classes price every charge here")
+	}
+	if len(c1) != len(c5) {
+		t.Fatalf("the charge structure must be identical: %d vs %d", len(c1), len(c5))
+	}
+	for i := range c1 {
+		if c1[i].FromGate != c5[i].FromGate || c1[i].ToGate != c5[i].ToGate {
+			t.Errorf("charge %d differs between classes: %v vs %v", i, c1[i], c5[i])
+		}
+	}
+}
+
+// RESUMING AT THE EXIT MUST STILL TERMINATE. A cell whose entry and exit
+// normalise to the same gate — which the data does contain, since a plaza is
+// recorded as both an exit and a re-entry — would otherwise charge itself
+// forever.
+func TestCoverAllTerminatesOnASelfPair(t *testing.T) {
+	table := NewTollTable([]TollCell{
+		{EntryNorm: "a", ExitNorm: "a", Verdict: "usable",
+			AmountRp: map[int]int64{5: 1000}},
+	})
+	// Two nodes that normalise to the same gate, as a plaza's out-then-in pair
+	// does.
+	passed := GatesAlong(route(), []TollGate{gate(1, "a", 106.1), gate(2, "a", 106.4)})
+	done := make(chan CoverStructure, 1)
+	go func() { done <- table.CoverAll(passed) }()
+	select {
+	case st := <-done:
+		if len(st.Cells) > len(passed) {
+			t.Errorf("cannot charge more times than there are gates: %d charges, %d gates",
+				len(st.Cells), len(passed))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CoverAll did not terminate — resuming at the exit must still advance")
 	}
 }

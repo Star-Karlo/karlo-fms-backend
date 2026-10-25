@@ -102,33 +102,58 @@ func (p *InternalToll) PriceRoute(ctx context.Context, geometry [][2]float64) (*
 		return &TollQuote{Provider: p.Name()}, nil
 	}
 
+	// ONE COVER, THEN PRICED PER CLASS.
+	//
+	// Covering separately per class and summing whatever each could price
+	// produced an impossible answer in production: a 543 km dispatch showed
+	// Golongan I at 365.000 above Golongan IV/V at 364.500, when Golongan I is
+	// the cheapest class on every Indonesian tariff. The cells were all fine —
+	// Jasa Marga's dump has 2.397 pairs priced for Golongan I alone, so on a
+	// long route Golongan I was charged at gates the other classes were not,
+	// and the totals were sums of different journeys.
+	//
+	// Covering once and pricing that same structure per class makes the totals
+	// comparable by construction, and a class that cannot price every charge
+	// is left out rather than given a partial.
+	structure := table.CoverAll(passed)
+
 	quote := &TollQuote{ByGolongan: map[int]int64{}, Provider: p.Name()}
 	unpriced := map[string]bool{}
+	for _, u := range structure.Unpriced {
+		unpriced[u] = true
+	}
 	for gol := 1; gol <= 5; gol++ {
-		res, err := table.Cover(passed, gol)
-		if err != nil {
-			continue
-		}
-		for _, u := range res.Unpriced {
-			unpriced[u] = true
-		}
-		var total int64
-		for _, c := range res.Charges {
-			total += c.AmountRp
-		}
-		if total <= 0 {
+		total, charges, ok := structure.PriceFor(gol)
+		if !ok || total <= 0 {
 			continue
 		}
 		quote.ByGolongan[gol] = total
-		// Segments are recorded once, from whichever class covered first. They
-		// describe the journey's STRUCTURE, which is the same for every class;
-		// only the amounts differ, and those are in ByGolongan.
+		// Segments describe the journey's structure, which is now identical
+		// for every class by construction, so recording them once is correct
+		// rather than merely convenient.
 		if len(quote.Segments) == 0 {
-			for _, c := range res.Charges {
+			for _, c := range charges {
 				quote.Segments = append(quote.Segments, TollSegment{
 					FromGate: c.FromGate,
 					ToGate:   c.ToGate,
 				})
+			}
+		}
+	}
+
+	// A class priced where a cheaper one is not would still look odd, so the
+	// ordering is checked rather than assumed. Golongan I is the cheapest
+	// class on every published Indonesian tariff; if the totals say otherwise
+	// something is wrong with the data and the quote should not assert it.
+	for a := 1; a <= 5; a++ {
+		for b := a + 1; b <= 5; b++ {
+			x, okA := quote.ByGolongan[a]
+			y, okB := quote.ByGolongan[b]
+			if okA && okB && x > y {
+				return nil, fmt.Errorf(
+					"toll totals are inconsistent: golongan %d (%d) above golongan %d (%d) "+
+						"across %d charge(s) — the tariff data for this route disagrees with itself",
+					a, x, b, y, len(structure.Cells))
 			}
 		}
 	}
