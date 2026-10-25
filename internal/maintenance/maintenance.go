@@ -87,6 +87,13 @@ type Handler struct {
 	// can still be sent to a hangar, it just cannot say how far away it is.
 	live   *liveview.Service
 	router routing.Router
+	// toll prices the trip to the workshop. Separate from router because the
+	// two are different providers: routing is Karlo's own Valhalla, while toll
+	// tariffs are only available upstream.
+	toll routing.TollPricer
+	// tollQuoter prices from the route geometry, which is what the in-house
+	// tariff tables need. Preferred over toll where both are set.
+	tollQuoter routing.TollQuoter
 }
 
 // NewHandler builds the handler.

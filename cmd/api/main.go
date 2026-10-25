@@ -379,6 +379,44 @@ func main() {
 	// construction because the router is built further down, after the config
 	// that selects a provider.
 	maintenanceH = maintenanceH.WithLive(liveSvc).WithRouter(router)
+
+	// Toll pricing for that dispatch, which is a DIFFERENT provider from the
+	// router above and so is wired separately.
+	//
+	// Routing is Karlo's own Valhalla; toll tariffs are not in it and are not
+	// in Karlo's routing cache either — nine candidate paths there answer 404
+	// while /v1/route answers 401, so the cache is route-only. MAPID's own
+	// service has them, one call returning all five golongan.
+	//
+	// An empty key leaves this nil, and a dispatch then returns its route with
+	// no toll figure, exactly as before.
+	// IN-HOUSE FIRST. Pricing from toll_gates and toll_tariffs needs no
+	// external call and no per-journey cost; it needs the route geometry,
+	// which the dispatch has. Its tables start empty, and an empty table
+	// refuses to price rather than reporting a journey as toll-free.
+	tollStore := maintenance.NewTollStore(pool)
+	if gates, err := tollStore.LoadTollGates(ctx); err != nil {
+		log.Printf("routing: toll tables unreadable, no in-house pricing: %v", err)
+	} else if len(gates) == 0 {
+		log.Printf("routing: toll tables are empty; load them with cmd/import-toll")
+	} else {
+		cells, _ := tollStore.LoadTollCells(ctx)
+		closed, flat := routing.NewTollTable(cells).Cells()
+		maintenanceH = maintenanceH.WithTollQuoter(
+			routing.NewInternalToll(tollStore, 0))
+		log.Printf("routing: toll pricing in-house — %d gate(s), %d closed and %d flat usable cell(s)",
+			len(gates), closed, flat)
+	}
+
+	// MAPID stays wired as the FALLBACK and the cross-check, not the primary.
+	// It prices from endpoints, so WithTollQuoter above takes precedence
+	// wherever the in-house tables can answer. Keeping it means a gap in those
+	// tables degrades to an external call rather than to no figure at all.
+	if cfg.MAPIDTollKey != "" {
+		maintenanceH = maintenanceH.WithTollPricer(
+			routing.NewMAPIDToll(cfg.MAPIDTollURL, cfg.MAPIDTollKey))
+		log.Printf("routing: toll fallback via mapid")
+	}
 	// Document upload/download. An empty DOCUMENTS_BUCKET disables just
 	// these endpoints (503) rather than failing startup.
 	documentH := document.NewHandler(ctx, pool, cfg.AWSRegion, cfg.DocumentsBucket)

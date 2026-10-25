@@ -1,7 +1,9 @@
 package maintenance
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -60,6 +62,23 @@ type DispatchResult struct {
 	Geometry [][2]float64 `json:"geometry,omitempty"`
 	Provider string       `json:"provider,omitempty"`
 
+	// TollRp is what the trip to the workshop costs in tolls, for THIS
+	// vehicle's class. Nil when the class is unknown or no toll applies —
+	// never zero, because zero asserts the roads are free and a missing axle
+	// count is not that claim.
+	TollRp *int64 `json:"toll_rp,omitempty"`
+	// TollByGolongan is every class's figure, returned when this vehicle's own
+	// class cannot be determined. 47% of the legacy fleet has no axle count,
+	// and showing a range beats picking one silently.
+	TollByGolongan map[int]int64 `json:"toll_by_golongan,omitempty"`
+	// TollGolongan is the class TollRp was taken from, so a disputed figure
+	// can be traced to an assumption rather than argued about blind.
+	TollGolongan int `json:"toll_golongan,omitempty"`
+	// TollNote explains an absent figure: no axles recorded, no toll on the
+	// route, or pricing unavailable. An empty toll with no note would read as
+	// "this trip is toll-free".
+	TollNote string `json:"toll_note,omitempty"`
+
 	// VehicleMarkedRepair is false when the vehicle was archived, since a
 	// retired truck must not be quietly returned to the fleet's active list by
 	// booking a service against it.
@@ -74,6 +93,25 @@ func (h *Handler) WithRouter(r routing.Router) *Handler {
 	return h
 }
 
+// WithTollPricer attaches toll pricing from endpoints. Optional: without one a
+// dispatch still happens and the route still comes back, with no toll figure.
+//
+// Kept for a provider that only takes endpoints. Prefer WithTollQuoter, which
+// gets the route geometry and so can price from our own tables.
+func (h *Handler) WithTollPricer(p routing.TollPricer) *Handler {
+	h.toll = p
+	return h
+}
+
+// WithTollQuoter attaches route-geometry toll pricing, which is what the
+// in-house tables need: two endpoints cannot say which gates lie between them.
+//
+// Takes precedence over WithTollPricer where both are set.
+func (h *Handler) WithTollQuoter(q routing.TollQuoter) *Handler {
+	h.tollQuoter = q
+	return h
+}
+
 // WithLive attaches the live-position service, which the route starts from.
 func (h *Handler) WithLive(l *liveview.Service) *Handler {
 	h.live = l
@@ -83,7 +121,7 @@ func (h *Handler) WithLive(l *liveview.Service) *Handler {
 // dispatch godoc
 //
 //	@Summary	Send a vehicle to a hangar for a due service
-//	@Description Marks the schedule in_service, the vehicle under repair, and returns the route from the vehicle's current position to the hangar.
+//	@Description Marks the schedule in_service, the vehicle under repair, and returns the route from the vehicle's current position to the hangar, with its toll. `toll_rp` is for this vehicle's own class, derived from its axle count; when no axle count is recorded — 47% of the legacy fleet — `toll_by_golongan` lists every class instead and `toll_note` says why. An absent toll always carries a note, because a missing figure would otherwise read as a toll-free trip. Both routing and toll are computed in-house: Valhalla for the route, and FMS's own toll_gates/toll_tariffs for the price, by finding which gates the route passes and which charges they make up. A gate no tariff covers REFUSES the quote rather than returning a partial sum, because a plausible figure that is too low gets billed while a missing one gets noticed. An external provider remains wired as a fallback for routes the tables cannot yet price.
 //	@Tags		maintenance
 //	@Security	BearerAuth
 //	@Accept		json
@@ -115,6 +153,9 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 	var vehLat, vehLon float64
 	var hangarLat, hangarLon float64
 	var radiusM int32
+	// The vehicle's toll class inputs, read in the same transaction as the
+	// rest. Nil means unknown and must stay that way — see priceToll.
+	var vehAxles, vehGolongan *int16
 
 	// FIRST PASS: read what is needed and confirm the dispatch is legal, all
 	// inside the tenant transaction so RLS (migration 0055) scopes it. The
@@ -156,6 +197,22 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The vehicle's axle count, for the toll class. A separate small query
+	// rather than another join: it is needed only when a vehicle exists, and
+	// folding it into the schedule read would complicate the common path for
+	// one optional figure.
+	if out.VehicleID != nil {
+		if err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+			return tx.QueryRow(r.Context(),
+				`SELECT axles, golongan_override FROM vehicles WHERE id = $1`,
+				*out.VehicleID).Scan(&vehAxles, &vehGolongan)
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			// Non-fatal: an unreadable axle count means the toll is reported
+			// per class instead of for one, which priceToll already handles.
+			vehAxles, vehGolongan = nil, nil
+		}
+	}
+
 	// The route, if a vehicle and a provider are both available. A schedule
 	// with no vehicle is legitimate (a component on order, say) and still
 	// dispatchable; it simply has nothing to route.
@@ -189,6 +246,16 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 				min := float64(int(route.DurationS/6+0.5)) / 10
 				out.DistanceKm, out.EtaMin = &km, &min
 				out.Geometry, out.Provider = route.Geometry, route.Provider
+
+				// TOLL, priced on the route we just computed.
+				//
+				// Deliberately after the route and never fatal: the decision
+				// being recorded is taking a truck off the road, and a toll
+				// figure is context around it. A pricing outage must not stop
+				// a dispatch, and an absent figure carries a note rather than
+				// a zero — zero would assert the roads are free.
+				h.priceToll(r.Context(), &out, vehAxles, vehGolongan,
+					vehLat, vehLon, hangarLat, hangarLon)
 				break
 			}
 		}
@@ -458,4 +525,63 @@ func (h *Handler) routeToHangar(w http.ResponseWriter, r *http.Request) {
 	out.DistanceKm, out.EtaMin = &km, &min
 	out.Geometry, out.Provider = route.Geometry, route.Provider
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// priceToll fills in the toll fields, or explains why it could not.
+//
+// WHY THE CLASS IS NOT GUESSED. Toll is keyed on golongan, which comes from the
+// axle count — and 47% of the legacy fleet has none recorded, with some of the
+// rest contradicting the vehicle (axle 3 on a pickup). Picking a class for
+// those would misprice them invisibly, so a vehicle with no usable axle count
+// gets every class's figure and a note, and the operator decides.
+func (h *Handler) priceToll(ctx context.Context, out *DispatchResult,
+	axles, override *int16, fromLat, fromLon, toLat, toLon float64) {
+	var (
+		quote *routing.TollQuote
+		err   error
+	)
+	switch {
+	case h.tollQuoter != nil && len(out.Geometry) >= 2:
+		// PREFERRED. Pricing from our own tables needs to know which gates the
+		// route passes, which only the geometry says.
+		quote, err = h.tollQuoter.PriceRoute(ctx, out.Geometry)
+	case h.toll != nil:
+		quote, err = h.toll.PriceToll(ctx, [][2]float64{
+			{fromLon, fromLat},
+			{toLon, toLat},
+		})
+	default:
+		return // not configured; silence is correct, there is nothing to say
+	}
+	if err != nil {
+		out.TollNote = "toll could not be priced: " + err.Error()
+		return
+	}
+	if len(quote.ByGolongan) == 0 {
+		// A real answer, not a failure: the route stays off the network.
+		out.TollNote = "no toll on this route"
+		return
+	}
+	out.TollByGolongan = quote.ByGolongan
+
+	gol := 0
+	switch {
+	case override != nil && *override >= 1 && *override <= 5:
+		gol = int(*override)
+	case axles != nil:
+		gol = routing.Golongan(int(*axles))
+	}
+	if gol == 0 {
+		out.TollNote = "no axle count recorded for this vehicle, so its toll " +
+			"class is unknown — every class is listed"
+		return
+	}
+	if amount, ok := quote.ByGolongan[gol]; ok {
+		out.TollRp, out.TollGolongan = &amount, gol
+		return
+	}
+	// The class is known but the provider did not price it. Reported rather
+	// than substituted from a neighbouring class, which would be a guess
+	// wearing a precise number.
+	out.TollNote = fmt.Sprintf("golongan %d was not priced for this route", gol)
 }

@@ -5087,7 +5087,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Marks the schedule in_service, the vehicle under repair, and returns the route from the vehicle's current position to the hangar.",
+                "description": "Marks the schedule in_service, the vehicle under repair, and returns the route from the vehicle's current position to the hangar, with its toll. `toll_rp` is for this vehicle's own class, derived from its axle count; when no axle count is recorded — 47% of the legacy fleet — `toll_by_golongan` lists every class instead and `toll_note` says why. An absent toll always carries a note, because a missing figure would otherwise read as a toll-free trip. Both routing and toll are computed in-house: Valhalla for the route, and FMS's own toll_gates/toll_tariffs for the price, by finding which gates the route passes and which charges they make up. A gate no tariff covers REFUSES the quote rather than returning a partial sum, because a plausible figure that is too low gets billed while a missing one gets noticed. An external provider remains wired as a fallback for routes the tables cannot yet price.",
                 "consumes": [
                     "application/json"
                 ],
@@ -10476,6 +10476,26 @@
                 },
                 "status": {
                     "type": "string"
+                },
+                "toll_by_golongan": {
+                    "description": "TollByGolongan is every class's figure, returned when this vehicle's own\nclass cannot be determined. 47% of the legacy fleet has no axle count,\nand showing a range beats picking one silently.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "toll_golongan": {
+                    "description": "TollGolongan is the class TollRp was taken from, so a disputed figure\ncan be traced to an assumption rather than argued about blind.",
+                    "type": "integer"
+                },
+                "toll_note": {
+                    "description": "TollNote explains an absent figure: no axles recorded, no toll on the\nroute, or pricing unavailable. An empty toll with no note would read as\n\"this trip is toll-free\".",
+                    "type": "string"
+                },
+                "toll_rp": {
+                    "description": "TollRp is what the trip to the workshop costs in tolls, for THIS\nvehicle's class. Nil when the class is unknown or no toll applies —\nnever zero, because zero asserts the roads are free and a missing axle\ncount is not that claim.",
+                    "type": "integer"
                 },
                 "vehicle_id": {
                     "type": "integer"

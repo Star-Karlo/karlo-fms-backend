@@ -168,7 +168,16 @@ type Config struct {
 	// RouteCacheURL is Karlo's routing cache (the routing endpoints on the
 	// geocode service), used by the "mapid" provider. FMS presents its
 	// platform service token; the MAPID key stays on that service.
-	RouteCacheURL   string
+	RouteCacheURL string
+	// MAPIDTollKey and MAPIDTollURL price tolls. SEPARATE FROM RouteCacheURL
+	// on purpose: the route cache has no toll path (nine candidates answer 404
+	// while /v1/route answers 401), so toll pricing goes straight to MAPID's
+	// own service rather than through Karlo's cache.
+	//
+	// Empty key disables toll pricing; a dispatch then returns its route with
+	// no toll figure, which is the pre-existing behaviour.
+	MAPIDTollKey    string
+	MAPIDTollURL    string
 	GeoapifyAPIKey  string
 	GeoapifyBaseURL string
 	ORSAPIKey       string
@@ -231,6 +240,8 @@ func Load() Config {
 		},
 		RoutingProvider: Env("ROUTING_PROVIDER", "geoapify"),
 		RouteCacheURL:   Env("ROUTE_CACHE_URL", ""),
+		MAPIDTollKey:    Env("MAPID_TOLL_KEY", ""),
+		MAPIDTollURL:    Env("MAPID_TOLL_URL", "https://routing.mapid.io"),
 		GeoapifyAPIKey:  Env("GEOAPIFY_API_KEY", ""),
 		GeoapifyBaseURL: Env("GEOAPIFY_BASE_URL", ""),
 		ORSAPIKey:       Env("ORS_API_KEY", ""),

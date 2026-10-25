@@ -96,6 +96,11 @@ CREATE TABLE vehicles (
   hourmeter         numeric,
   fuel_tank_liters  double precision,
   fuel_ratio_kmpl   double precision,
+  -- Toll golongan derives from axles (2=II, 3=III, 4=IV, 5+=V); NULL is
+  -- unknown and must not be defaulted. golongan_override covers the 2-axle
+  -- case, which BPJT splits between Golongan I and II on size. See 0057.
+  axles             smallint,
+  golongan_override smallint,
   tracker_id        bigint REFERENCES trackers(id),
   current_driver_id bigint REFERENCES employees(id),
   notes             text,
@@ -359,3 +364,50 @@ CREATE TABLE sop_runs (
   since      timestamptz NOT NULL,
   PRIMARY KEY (tenant_id, vehicle_id, code)
 );
+
+
+-- Toll gates and tariffs (0058). Shared across tenants; see the migration
+-- for why there is no RLS here.
+CREATE TABLE IF NOT EXISTS toll_gates (
+  id          bigserial PRIMARY KEY,
+  name        text NOT NULL,
+  name_norm   text NOT NULL,
+  lat         double precision NOT NULL,
+  lon         double precision NOT NULL,
+  source      text NOT NULL,
+  ruas        text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS toll_gates_name_norm_key ON toll_gates (name_norm);
+CREATE TABLE IF NOT EXISTS toll_gate_aliases (
+  gate_id   bigint NOT NULL REFERENCES toll_gates(id) ON DELETE CASCADE,
+  alias     text NOT NULL,
+  PRIMARY KEY (gate_id, alias)
+);
+CREATE TABLE IF NOT EXISTS toll_tariffs (
+  id         bigserial PRIMARY KEY,
+  kind       text NOT NULL CHECK (kind IN ('closed', 'flat')),
+  entry_gate bigint NOT NULL REFERENCES toll_gates(id),
+  exit_gate  bigint REFERENCES toll_gates(id),
+  golongan   smallint NOT NULL CHECK (golongan BETWEEN 1 AND 5),
+  amount_rp  bigint NOT NULL CHECK (amount_rp > 0),
+  source       text NOT NULL,
+  source_ref   text,
+  effective_from date,
+  fetched_at   timestamptz NOT NULL DEFAULT now(),
+  verdict    text NOT NULL DEFAULT 'review' CHECK (verdict IN ('usable', 'review')),
+  issues     text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT toll_tariffs_exit_matches_kind CHECK (
+    (kind = 'flat'   AND exit_gate IS NULL) OR
+    (kind = 'closed' AND exit_gate IS NOT NULL)
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS toll_tariffs_cell_key
+  ON toll_tariffs (entry_gate, COALESCE(exit_gate, 0), golongan, source);
+CREATE INDEX IF NOT EXISTS toll_tariffs_entry_idx ON toll_tariffs (entry_gate, golongan);
+COMMENT ON TABLE toll_gates IS
+  'Toll gates with positions, keyed by normalised name. Shared across tenants: a gate is a national fact.';
+COMMENT ON TABLE toll_tariffs IS
+  'Toll tariffs per (entry, exit, golongan). verdict=review means it failed a consistency check — do not bill on it.';
