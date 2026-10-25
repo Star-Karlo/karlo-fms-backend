@@ -56,12 +56,16 @@ type SnappedHistory struct {
 	// shortest the journey could possibly have been.
 	//
 	// It exists because ChunksMatched == ChunksTotal does NOT mean the whole
-	// path was found. A matcher can return a SHORT answer for every chunk and
-	// report complete success — measured on Valhalla against a known route,
-	// reconstruction falls to 83% once fixes are ~1 km apart and 28% at
-	// ~1,5 km, with no error at any point. Our trackers report about every
-	// 50 s, which is comfortable in town and marginal at motorway speed, so
-	// this is the common case on long runs rather than an edge one.
+	// path was found. A chunk can come back SHORT and still report complete
+	// success: no error, one plausible line, a distance that is simply too
+	// small. This number is the floor that makes that detectable.
+	//
+	// It earned its place by catching a real one. trace_route reports a
+	// discontinuous match as several trips, and this client read only the
+	// first — so a 99 km stretch that matched as 37,7 + 10,3 + 46,5 km was
+	// reported as 37,7 km with every appearance of success. Figures once
+	// quoted here about matching degrading with fix spacing came from the same
+	// blind spot and should not be reused.
 	StraightLineKm float64 `json:"straight_line_km"`
 	// Partial is set when the matched path is implausibly short against
 	// StraightLineKm. Roads cannot be shorter than the straight lines between
@@ -72,12 +76,22 @@ type SnappedHistory struct {
 	// When true the line is a fragment: show it as incomplete, and do not use
 	// DistanceKm as a distance.
 	Partial bool `json:"partial"`
+
+	// GapsBridged counts holes in the match that were closed by routing between
+	// two matched segments.
+	//
+	// The matcher restarts wherever it cannot join two consecutive fixes,
+	// leaving a short hole — usually a couple of kilometres around an
+	// interchange. Both ends are already snapped to the road network, so
+	// routing across is reliable, but it is an inference about a stretch that
+	// was never observed. Surfaced so the caption can say so.
+	GapsBridged int `json:"gaps_bridged"`
 }
 
 // snapHistory godoc
 //
 //	@Summary		A vehicle's travelled path, snapped to the road network
-//	@Description	Map-matches the raw GPS trace so the line follows roads instead of cutting corners and wandering through buildings. Costs several provider requests (the trace is split into chunks of 200 fixes and matched in parallel), so it is requested explicitly rather than being folded into the history response — and the raw trace remains available, because the matched line is an interpretation and the fixes themselves are what matter in a dispute. `distance_km` is measured along roads. `chunks_matched` below `chunks_total` means part of the journey was unmatchable — typically an unmapped yard or plantation track.
+//	@Description	Map-matches the raw GPS trace so the line follows roads instead of cutting corners and wandering through buildings. Where the matcher cannot join two consecutive fixes it ends one match and begins another, leaving a short hole — usually a couple of kilometres at an interchange; those holes are closed by routing between the two matched ends, and `gaps_bridged` counts them, because a bridged stretch is inferred rather than observed. `chunks_matched` below `chunks_total` means a whole section failed, typically an unmapped yard or plantation track. Costs several provider requests (the trace is split into chunks of 200 fixes and matched in parallel), so it is requested explicitly rather than being folded into the history response — and the raw trace remains available, because the matched line is an interpretation and the fixes themselves are what matter in a dispute. `distance_km` is measured along roads. `chunks_matched` below `chunks_total` means part of the journey was unmatchable — typically an unmapped yard or plantation track.
 //	@Tags			live-view
 //	@Security		BearerAuth
 //	@Produce		json
@@ -158,5 +172,6 @@ func (h *Handler) snapHistory(w http.ResponseWriter, r *http.Request) {
 		// through ChunksMatched.
 		StraightLineKm: float64(int(matched.RawDistanceM/100+0.5)) / 10,
 		Partial:        matched.Partial,
+		GapsBridged:    matched.GapsBridged,
 	})
 }

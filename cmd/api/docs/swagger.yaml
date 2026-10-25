@@ -2017,6 +2017,17 @@ definitions:
           recorded, i.e. ~6% over, which is what following real road geometry
           instead of straight lines between fixes should produce.
         type: number
+      gaps_bridged:
+        description: |-
+          GapsBridged counts holes in the match that were closed by routing between
+          two matched segments.
+
+          The matcher restarts wherever it cannot join two consecutive fixes,
+          leaving a short hole — usually a couple of kilometres around an
+          interchange. Both ends are already snapped to the road network, so
+          routing across is reliable, but it is an inference about a stretch that
+          was never observed. Surfaced so the caption can say so.
+        type: integer
       geometry:
         items:
           items:
@@ -2024,10 +2035,38 @@ definitions:
             type: number
           type: array
         type: array
+      partial:
+        description: |-
+          Partial is set when the matched path is implausibly short against
+          StraightLineKm. Roads cannot be shorter than the straight lines between
+          their own points, so a matched distance well below it is arithmetically
+          impossible for a complete path — which makes this detectable rather than
+          something a reader has to notice.
+
+          When true the line is a fragment: show it as incomplete, and do not use
+          DistanceKm as a distance.
+        type: boolean
       points_in:
         type: integer
       provider:
         type: string
+      straight_line_km:
+        description: |-
+          StraightLineKm is the great-circle distance through the raw fixes: the
+          shortest the journey could possibly have been.
+
+          It exists because ChunksMatched == ChunksTotal does NOT mean the whole
+          path was found. A chunk can come back SHORT and still report complete
+          success: no error, one plausible line, a distance that is simply too
+          small. This number is the floor that makes that detectable.
+
+          It earned its place by catching a real one. trace_route reports a
+          discontinuous match as several trips, and this client read only the
+          first — so a 99 km stretch that matched as 37,7 + 10,3 + 46,5 km was
+          reported as 37,7 km with every appearance of success. Figures once
+          quoted here about matching degrading with fix spacing came from the same
+          blind spot and should not be reused.
+        type: number
       vehicle_id:
         type: integer
     type: object
@@ -2354,6 +2393,28 @@ definitions:
       vehicle_type:
         type: string
     type: object
+  maintenance.CompleteRequest:
+    properties:
+      done_at:
+        description: |-
+          DoneAt defaults to today. Supplied when the paperwork lands later than
+          the work did, which is the normal case.
+        type: string
+      next_due_at:
+        description: |-
+          NextDueAt and NextOdometer are computed by the caller from the
+          schedule's own interval. Left here rather than derived in SQL so the
+          arithmetic lives in one language, beside the rules that set it at
+          creation.
+        type: string
+      next_odometer:
+        type: number
+      odometer:
+        description: |-
+          Odometer at completion. Rolls the next interval forward from the real
+          reading rather than from an estimate.
+        type: number
+    type: object
   maintenance.Counts:
     properties:
       due_soon:
@@ -2426,6 +2487,56 @@ definitions:
         type: integer
       vehicle_type:
         type: string
+    type: object
+  maintenance.DispatchRequest:
+    properties:
+      hangar_id:
+        description: |-
+          HangarID is required here even though the column is nullable, because a
+          dispatch with no destination is not a dispatch. A schedule can still be
+          created, and serviced roadside, without one.
+        type: integer
+    type: object
+  maintenance.DispatchResult:
+    properties:
+      already_there:
+        description: |-
+          AlreadyThere when the truck is inside the hangar's radius. The schedule
+          is still dispatched — the work is booked either way — but no route is
+          returned, because routing a vehicle to where it is standing draws a dot.
+        type: boolean
+      distance_km:
+        type: number
+      eta_min:
+        type: number
+      geometry:
+        description: Geometry is [lon, lat], ready for a map as a GeoJSON LineString.
+        items:
+          items:
+            format: float64
+            type: number
+          type: array
+        type: array
+      hangar_id:
+        type: integer
+      hangar_name:
+        type: string
+      id:
+        type: integer
+      license_plate:
+        type: string
+      provider:
+        type: string
+      status:
+        type: string
+      vehicle_id:
+        type: integer
+      vehicle_marked_repair:
+        description: |-
+          VehicleMarkedRepair is false when the vehicle was archived, since a
+          retired truck must not be quietly returned to the fleet's active list by
+          booking a service against it.
+        type: boolean
     type: object
   maintenance.Response:
     properties:
@@ -6903,6 +7014,74 @@ paths:
       summary: Delete a service schedule
       tags:
       - maintenance
+  /v1/service-schedules/{id}/complete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: service schedule id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: completion
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/maintenance.CompleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "409":
+          description: not in service
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Finish a service and return the vehicle to the fleet
+      tags:
+      - maintenance
+  /v1/service-schedules/{id}/dispatch:
+    post:
+      consumes:
+      - application/json
+      description: Marks the schedule in_service, the vehicle under repair, and returns
+        the route from the vehicle's current position to the hangar.
+      parameters:
+      - description: service schedule id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: hangar
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/maintenance.DispatchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/maintenance.DispatchResult'
+        "409":
+          description: already in service
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Send a vehicle to a hangar for a due service
+      tags:
+      - maintenance
   /v1/trackers:
     get:
       parameters:
@@ -7586,13 +7765,19 @@ paths:
   /v1/vehicles/{vehicle_id}/history/snapped:
     get:
       description: Map-matches the raw GPS trace so the line follows roads instead
-        of cutting corners and wandering through buildings. Costs several provider
-        requests (the trace is split into chunks of 200 fixes and matched in parallel),
-        so it is requested explicitly rather than being folded into the history response
-        — and the raw trace remains available, because the matched line is an interpretation
-        and the fixes themselves are what matter in a dispute. `distance_km` is measured
-        along roads. `chunks_matched` below `chunks_total` means part of the journey
-        was unmatchable — typically an unmapped yard or plantation track.
+        of cutting corners and wandering through buildings. Where the matcher cannot
+        join two consecutive fixes it ends one match and begins another, leaving a
+        short hole — usually a couple of kilometres at an interchange; those holes
+        are closed by routing between the two matched ends, and `gaps_bridged` counts
+        them, because a bridged stretch is inferred rather than observed. `chunks_matched`
+        below `chunks_total` means a whole section failed, typically an unmapped yard
+        or plantation track. Costs several provider requests (the trace is split into
+        chunks of 200 fixes and matched in parallel), so it is requested explicitly
+        rather than being folded into the history response — and the raw trace remains
+        available, because the matched line is an interpretation and the fixes themselves
+        are what matter in a dispute. `distance_km` is measured along roads. `chunks_matched`
+        below `chunks_total` means part of the journey was unmatchable — typically
+        an unmapped yard or plantation track.
       parameters:
       - description: vehicle id
         in: path

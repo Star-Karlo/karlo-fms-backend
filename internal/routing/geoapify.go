@@ -241,6 +241,19 @@ type MatchedTrace struct {
 	// Partial is set when DistanceM falls far enough below RawDistanceM that
 	// the result should not be presented as a complete path.
 	Partial bool `json:"partial"`
+
+	// GapsBridged counts holes between matched segments that were closed by
+	// routing across them.
+	//
+	// The matcher ends a match and starts a new one wherever it cannot join two
+	// consecutive fixes, leaving a short hole — typically a couple of kilometres
+	// at an interchange. Both ends of a hole are positions the matcher itself
+	// produced, already on the network, so routing between them is sound.
+	//
+	// It is still an INFERENCE about a stretch that was not observed, which is
+	// why it is counted rather than hidden. Only Valhalla sets this; Geoapify
+	// leaves it at zero.
+	GapsBridged int `json:"gaps_bridged"`
 }
 
 // Matcher snaps a GPS trace to the road network.

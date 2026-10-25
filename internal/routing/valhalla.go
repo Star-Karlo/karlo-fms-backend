@@ -115,6 +115,17 @@ type valhallaLocation struct {
 	// "via" forbids it and can force a long detour at an endpoint sitting on
 	// the wrong side of a divided road.
 	Type string `json:"type,omitempty"`
+	// Radius is how far around this location Valhalla may look for a road,
+	// in metres. Zero sends nothing and Valhalla snaps to the nearest edge.
+	//
+	// Worth setting when the location is a GPS fix rather than an address.
+	// The nearest edge to a fix beside a divided highway is regularly the
+	// OPPOSITE carriageway, and because an intermediate "through" location
+	// forbids a U-turn, Valhalla then has to find a legal way across and
+	// back — producing a correct route down the wrong road, kilometres long.
+	// A radius lets it weigh every edge in the circle and choose the one the
+	// rest of the path agrees with.
+	Radius float64 `json:"radius,omitempty"`
 }
 
 type valhallaCostingOptions struct {
@@ -162,6 +173,15 @@ type valhallaTraceOptions struct {
 // "gap" is not a gap but a genuine break in the record, and joining across it
 // would invent a path the truck never drove — which is why the chunker below
 // splits on time instead of letting this number grow.
+//
+// WHAT THIS DOES NOT DO: stop the matcher splitting a trace into several
+// matches. It only sets how far apart two fixes may be before the pair is
+// refused outright. The matcher still ends one match and starts another
+// wherever it cannot find a road path between consecutive candidates — at an
+// interchange, say — and raising this number does not prevent that. Those
+// splits arrive as valhallaResponse.Alternates and are read there; an earlier
+// version of this file discarded them and misread the result as this constant
+// being too small.
 const valhallaBreakageDistanceM = 20000
 
 // valhallaSearchRadiusM is how far from a fix Valhalla may look for a road.
@@ -182,23 +202,51 @@ type valhallaShapePoint struct {
 	Time int64 `json:"time,omitempty"`
 }
 
+type valhallaSummary struct {
+	Length float64 `json:"length"` // kilometres, per Units
+	Time   float64 `json:"time"`   // seconds
+}
+
+type valhallaLeg struct {
+	// Shape is an encoded polyline at precision 6.
+	Shape   string          `json:"shape"`
+	Summary valhallaSummary `json:"summary"`
+}
+
+type valhallaTrip struct {
+	Legs          []valhallaLeg   `json:"legs"`
+	Summary       valhallaSummary `json:"summary"`
+	StatusMessage string          `json:"status_message"`
+}
+
 // valhallaResponse covers /route and /trace_route, which share a trip shape.
 type valhallaResponse struct {
-	Trip struct {
-		Legs []struct {
-			// Shape is an encoded polyline at precision 6.
-			Shape   string `json:"shape"`
-			Summary struct {
-				Length float64 `json:"length"` // kilometres, per Units
-				Time   float64 `json:"time"`   // seconds
-			} `json:"summary"`
-		} `json:"legs"`
-		Summary struct {
-			Length float64 `json:"length"`
-			Time   float64 `json:"time"`
-		} `json:"summary"`
-		StatusMessage string `json:"status_message"`
-	} `json:"trip"`
+	Trip valhallaTrip `json:"trip"`
+
+	// Alternates MEANS TWO DIFFERENT THINGS, and conflating them corrupts one
+	// of the two callers.
+	//
+	// On /route it is what the name says: competing routes between the same
+	// endpoints. Summing those would add up several versions of one journey.
+	// We never ask for them, so the field is empty there — and must stay
+	// unused, because a future request option would silently inflate distances.
+	//
+	// On /trace_route it is not alternatives at all. When the matcher cannot
+	// join two consecutive fixes it ends the current match and starts another,
+	// and the serialiser puts the FIRST contiguous segment in Trip and every
+	// subsequent one here, in travel order. They are consecutive pieces of one
+	// journey, and reading Trip alone keeps only the first.
+	//
+	// THAT WAS THE BUG. A 99 km stretch sampled at 1,2 km matched as 37,7 +
+	// 10,3 + 46,5 km; we reported 37,7 and blamed the sampling rate. Nothing
+	// was wrong with the matching, and no trace_option could have helped —
+	// which is exactly why a parameter sweep came back perfectly flat.
+	//
+	// Only traceSegments reads this. legsToRoute, which serves /route, does not.
+	Alternates []struct {
+		Trip valhallaTrip `json:"trip"`
+	} `json:"alternates"`
+
 	// Valhalla reports failures as a body, not only a status code.
 	Error     string `json:"error"`
 	ErrorCode int    `json:"error_code"`
@@ -269,8 +317,14 @@ func (v *Valhalla) post(ctx context.Context, path string, body any) (*valhallaRe
 // Valhalla computes it and a hand-rolled sum would drift from the engine's own
 // answer for no reason.
 func legsToRoute(out *valhallaResponse) ([][2]float64, float64, float64) {
+	geometry, summary := tripGeometry(out.Trip)
+	return geometry, summary.Length * 1000, summary.Time
+}
+
+// tripGeometry flattens one trip's legs into a single line.
+func tripGeometry(trip valhallaTrip) ([][2]float64, valhallaSummary) {
 	geometry := make([][2]float64, 0, 256)
-	for i, leg := range out.Trip.Legs {
+	for i, leg := range trip.Legs {
 		pts := decodePolyline6(leg.Shape)
 		// Consecutive legs share their junction point; dropping the duplicate
 		// keeps the line clean for anything measuring along it.
@@ -279,7 +333,34 @@ func legsToRoute(out *valhallaResponse) ([][2]float64, float64, float64) {
 		}
 		geometry = append(geometry, pts...)
 	}
-	return geometry, out.Trip.Summary.Length * 1000, out.Trip.Summary.Time
+	return geometry, trip.Summary
+}
+
+// traceSegment is one contiguous stretch the matcher was able to follow.
+type traceSegment struct {
+	geometry  [][2]float64
+	distanceM float64
+}
+
+// traceSegments returns every contiguous segment of a trace_route answer, in
+// travel order — Trip first, then each of Alternates.
+//
+// FOR /trace_route ONLY. See valhallaResponse.Alternates for why this must not
+// be used on a /route reply.
+func traceSegments(out *valhallaResponse) []traceSegment {
+	segs := make([]traceSegment, 0, 1+len(out.Alternates))
+	add := func(trip valhallaTrip) {
+		geometry, summary := tripGeometry(trip)
+		if len(geometry) == 0 {
+			return
+		}
+		segs = append(segs, traceSegment{geometry: geometry, distanceM: summary.Length * 1000})
+	}
+	add(out.Trip)
+	for _, alt := range out.Alternates {
+		add(alt.Trip)
+	}
+	return segs
 }
 
 func (v *Valhalla) Route(ctx context.Context, from, to Point) (*Route, error) {
@@ -313,6 +394,24 @@ func (v *Valhalla) Route(ctx context.Context, from, to Point) (*Route, error) {
 // distance, whereas splitting it loses only the join between chunks.
 const valhallaTraceChunk = 1000
 
+// valhallaTraceMaxSpanM bounds a chunk by DISTANCE as well as by point count.
+//
+// FOUND BY probe-sparse-follow.py, and it had been live. Valhalla's trace
+// limits cap one trace_route at 200 km of path:
+//
+//	{"error_code":154,"error":"Path distance exceeds the max distance limit: 200000 meters"}
+//
+// valhallaTraceChunk alone cannot prevent that, because it counts FIXES. A
+// thousand fixes is a couple of hours in city traffic but about 1.200 km at
+// motorway sampling, so a long day went out as one request and was refused
+// outright — matching simply never ran, and the trace fell back to raw with a
+// message about fixes being too far apart, which was not the reason.
+//
+// 150 km of straight-line span, not 200: the limit is on the matched ROAD path,
+// which is longer than the straight lines through the same fixes, typically by
+// 10-30%. 150 km leaves room for that without splitting more than necessary.
+const valhallaTraceMaxSpanM = 150000
+
 // valhallaTraceConcurrency bounds parallel chunk requests. Modest, because the
 // chunks are competing for one server's CPU rather than for a remote quota.
 const valhallaTraceConcurrency = 4
@@ -328,7 +427,10 @@ const valhallaTraceConcurrency = 4
 const valhallaTraceGapBreak = 10 * time.Minute
 
 // chunkTrace splits a trace into segments Valhalla can match in one request:
-// bounded in size, and broken wherever the record itself is broken.
+// bounded in point count AND in distance, and broken wherever the record itself
+// is broken. All three bounds are needed — the first two are separate limits
+// Valhalla enforces, and sparse fixes can breach the distance one while being
+// nowhere near the count.
 //
 // Splitting rather than thinning, for the same reason as in geoapify.go:
 // dropping fixes puts holes in the trace and corrupts the matched distance,
@@ -336,8 +438,13 @@ const valhallaTraceGapBreak = 10 * time.Minute
 func chunkTrace(points []TracePoint) [][]TracePoint {
 	var chunks [][]TracePoint
 	start := 0
+	span := 0.0
 	for i := 1; i <= len(points); i++ {
 		split := i == len(points) || i-start >= valhallaTraceChunk
+		if !split {
+			span += haversineM(points[i-1].Lat, points[i-1].Lon, points[i].Lat, points[i].Lon)
+			split = span >= valhallaTraceMaxSpanM
+		}
 		if !split && !points[i].At.IsZero() && !points[i-1].At.IsZero() {
 			split = points[i].At.Sub(points[i-1].At) > valhallaTraceGapBreak
 		}
@@ -350,6 +457,7 @@ func chunkTrace(points []TracePoint) [][]TracePoint {
 			chunks = append(chunks, points[start:i])
 		}
 		start = i
+		span = 0
 	}
 	return chunks
 }
@@ -375,7 +483,10 @@ func (v *Valhalla) Match(ctx context.Context, points []TracePoint) (*MatchedTrac
 	type result struct {
 		geometry [][2]float64
 		distance float64
-		err      error
+		// bridged counts holes closed by routing between two matched
+		// segments — an inference, and counted so it can be reported.
+		bridged int
+		err     error
 	}
 	results := make([]result, len(chunks))
 
@@ -387,8 +498,8 @@ func (v *Valhalla) Match(ctx context.Context, points []TracePoint) (*MatchedTrac
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			g, d, err := v.matchChunk(ctx, c)
-			results[i] = result{geometry: g, distance: d, err: err}
+			g, d, bridged, err := v.matchChunk(ctx, c)
+			results[i] = result{geometry: g, distance: d, bridged: bridged, err: err}
 		}(i, c)
 	}
 	wg.Wait()
@@ -405,6 +516,7 @@ func (v *Valhalla) Match(ctx context.Context, points []TracePoint) (*MatchedTrac
 			continue
 		}
 		out.ChunksMatched++
+		out.GapsBridged += r.bridged
 		out.DistanceM += r.distance
 		out.Geometry = append(out.Geometry, r.geometry...)
 	}
@@ -428,13 +540,22 @@ func (v *Valhalla) Match(ctx context.Context, points []TracePoint) (*MatchedTrac
 			"(%d segment(s) tried, first failure: %s)", len(chunks), why)
 	}
 
-	// Measured on an Indonesia graph, Salatiga->Semarang, by
-	// routing-service/scripts/probe-matching.py: matching reconstructs 100% of
-	// a known route while fixes are within ~640 m, 83% at ~1.0 km, 28% at
-	// ~1.5 km and 3% at ~2.4 km. FMS trackers report about every 50 s, which is
-	// ~420 m in town but ~1.1 km at Trans-Java speeds — so degradation is
-	// expected on exactly the fast roads that matter most, and it has to be
-	// visible rather than inferred from a number looking small.
+	// A SHORT ANSWER IS STILL POSSIBLE, so it is still checked — but far less
+	// often than the numbers that used to be quoted here suggested.
+	//
+	// Those numbers were wrong. probe-matching.py reported matching recovering
+	// 100% of a known route at ~640 m fix spacing, 83% at ~1 km and 28% at
+	// ~1,5 km, and that curve was cited in this file, in snap.go and in the
+	// frontend as evidence that the matcher degrades with sparse fixes. It
+	// does not. The probe read trip.summary.length and ignored `alternates`,
+	// exactly as this client did, so what it actually measured was how far into
+	// each trace the first discontinuity happened to fall. Re-run it before
+	// quoting any figure for sparse-trace quality.
+	//
+	// What remains real: a stretch genuinely off the network, a costing that
+	// rejects the roads involved, or a hole too wide to bridge. Then the line
+	// is a fragment, and that has to stay visible rather than being inferred
+	// from a number looking small.
 	out.RawDistanceM = rawTraceDistanceM(points)
 	out.Partial = out.RawDistanceM > 0 && out.DistanceM < out.RawDistanceM*valhallaPartialMatchRatio
 	return out, nil
@@ -444,28 +565,34 @@ func (v *Valhalla) Match(ctx context.Context, points []TracePoint) (*MatchedTrac
 // path may fall before it is called partial.
 //
 // Roads are longer than the straight lines between their own points, so a
-// complete match lands above 1,0. 0,8 leaves room for sparse sampling cutting
-// corners while still catching the 83%-and-below cases the probe found.
+// complete match lands above 1,0. 0,8 leaves room for a bridged hole or two
+// being shorter than the gap it spans, while still catching a line that is
+// missing a real stretch of the journey.
 const valhallaPartialMatchRatio = 0.8
 
 // rawTraceDistanceM sums the great-circle hops between consecutive fixes: the
 // shortest distance the vehicle could possibly have travelled through them.
 func rawTraceDistanceM(points []TracePoint) float64 {
-	const earthM = 6371008.8
 	total := 0.0
 	for i := 1; i < len(points); i++ {
-		lat1 := points[i-1].Lat * math.Pi / 180
-		lat2 := points[i].Lat * math.Pi / 180
-		dLat := lat2 - lat1
-		dLon := (points[i].Lon - points[i-1].Lon) * math.Pi / 180
-		h := math.Pow(math.Sin(dLat/2), 2) +
-			math.Cos(lat1)*math.Cos(lat2)*math.Pow(math.Sin(dLon/2), 2)
-		total += earthM * 2 * math.Asin(math.Sqrt(h))
+		total += haversineM(points[i-1].Lat, points[i-1].Lon, points[i].Lat, points[i].Lon)
 	}
 	return total
 }
 
-func (v *Valhalla) matchChunk(ctx context.Context, points []TracePoint) ([][2]float64, float64, error) {
+// haversineM is the great-circle distance between two positions, in metres.
+func haversineM(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthM = 6371008.8
+	p1 := lat1 * math.Pi / 180
+	p2 := lat2 * math.Pi / 180
+	dLat := p2 - p1
+	dLon := (lon2 - lon1) * math.Pi / 180
+	h := math.Pow(math.Sin(dLat/2), 2) +
+		math.Cos(p1)*math.Cos(p2)*math.Pow(math.Sin(dLon/2), 2)
+	return earthM * 2 * math.Asin(math.Sqrt(h))
+}
+
+func (v *Valhalla) matchChunk(ctx context.Context, points []TracePoint) ([][2]float64, float64, int, error) {
 	shape := make([]valhallaShapePoint, 0, len(points))
 	for _, p := range points {
 		sp := valhallaShapePoint{Lat: p.Lat, Lon: p.Lon}
@@ -487,11 +614,128 @@ func (v *Valhalla) matchChunk(ctx context.Context, points []TracePoint) ([][2]fl
 		},
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	geometry, distanceM, _ := legsToRoute(out)
-	return geometry, distanceM, nil
+	return v.joinSegments(ctx, traceSegments(out))
 }
+
+// valhallaBridgeMaxGapM is the widest hole between two matched segments that
+// may be closed by routing across it.
+//
+// The gaps are small — 2,6 km and 2,8 km on the stretch that exposed this — and
+// both ends are positions the MATCHER produced, already snapped to the network.
+// Routing between two on-road points is the case that reproduced Karlo's billed
+// distances at p50 0,98, and it is a different proposition entirely from routing
+// through hundreds of raw fixes, which invented 2.900 km on a 451 km journey
+// because every noisy fix became a forced detour.
+//
+// Beyond 10 km a hole is not an interchange the matcher stumbled over; it is a
+// genuine break — an unmapped estate road, a ferry, a device that went quiet.
+// Drawing a confident line across that would invent a path, so the hole stays.
+const valhallaBridgeMaxGapM = 10000
+
+// valhallaBridgeMaxRatio rejects a bridge far longer than the hole it fills.
+// Road distance around an interchange can legitimately be a few times the
+// straight-line gap; ten times means the two ends are not actually connected
+// the way the trace implies, and the hole is the honest answer.
+const valhallaBridgeMaxRatio = 3.0
+
+// valhallaBridgeConcurrency bounds parallel bridge requests.
+const valhallaBridgeConcurrency = 6
+
+// joinSegments stitches the matcher's contiguous segments into one line,
+// routing across the small holes between them where that is defensible.
+//
+// Returns the line, its length, and how many holes were closed.
+func (v *Valhalla) joinSegments(ctx context.Context, segs []traceSegment) ([][2]float64, float64, int, error) {
+	if len(segs) == 0 {
+		return nil, 0, 0, nil
+	}
+	if len(segs) == 1 {
+		return segs[0].geometry, segs[0].distanceM, 0, nil
+	}
+
+	// Geometry is [lon, lat], GeoJSON order — not [lat, lon].
+	endOf := func(g [][2]float64) (float64, float64) { return g[len(g)-1][1], g[len(g)-1][0] }
+	startOf := func(g [][2]float64) (float64, float64) { return g[0][1], g[0][0] }
+
+	type bridge struct {
+		geometry  [][2]float64
+		distanceM float64
+	}
+	bridges := make([]bridge, len(segs)-1)
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, valhallaBridgeConcurrency)
+	for i := 0; i < len(segs)-1; i++ {
+		aLat, aLon := endOf(segs[i].geometry)
+		bLat, bLon := startOf(segs[i+1].geometry)
+		gap := haversineM(aLat, aLon, bLat, bLon)
+		if gap > valhallaBridgeMaxGapM {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, aLat, aLon, bLat, bLon, gap float64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			r, err := v.Route(ctx, Point{Lat: aLat, Lon: aLon}, Point{Lat: bLat, Lon: bLon})
+			// A failed bridge is not a failed match: the hole simply stays, and
+			// the line is reported as having one. Nothing here may abandon a
+			// match that otherwise succeeded.
+			if err != nil || len(r.Geometry) == 0 {
+				return
+			}
+			if gap > 0 && r.DistanceM > gap*valhallaBridgeMaxRatio {
+				return
+			}
+			bridges[i] = bridge{geometry: r.Geometry, distanceM: r.DistanceM}
+		}(i, aLat, aLon, bLat, bLon, gap)
+	}
+	wg.Wait()
+
+	geometry := append([][2]float64(nil), segs[0].geometry...)
+	distance := segs[0].distanceM
+	bridged := 0
+	for i := 1; i < len(segs); i++ {
+		if b := bridges[i-1]; len(b.geometry) > 0 {
+			// Both ends are shared with the segments either side; drop them so
+			// the joint is not duplicated.
+			mid := b.geometry
+			if len(mid) > 2 {
+				mid = mid[1 : len(mid)-1]
+			}
+			geometry = append(geometry, mid...)
+			distance += b.distanceM
+			bridged++
+		}
+		geometry = append(geometry, segs[i].geometry...)
+		distance += segs[i].distanceM
+	}
+	return geometry, distance, bridged, nil
+}
+
+// WHY THERE IS NO SECOND RECONSTRUCTION METHOD HERE.
+//
+// A fallback that routed THROUGH the fixes used to live at this point, built to
+// rescue traces whose fixes were too far apart to match. It was wrong twice
+// over, and both errors are worth keeping on record.
+//
+// It was unnecessary. The short answers it existed to fix were not a matching
+// failure at all — they were this client keeping only the first segment of a
+// discontinuous match and discarding the rest. See valhallaResponse.Alternates.
+//
+// And it was dangerous. probe-sparse-follow.py part two scattered the fixes off
+// the centreline, as a real tracker does, and routing through them returned
+// 2.900 km for a 451 km journey at 25 m of scatter and 5.552 km at 50 m. An
+// intermediate waypoint forbids a U-turn, so every fix landing on the opposite
+// carriageway sent the route to the next interchange and back. At 1,2 km
+// spacing there were hundreds of chances, and a per-waypoint search radius did
+// not help — contrary to a confident comment that claimed it would.
+//
+// If a trace genuinely cannot be matched, the honest answer is the raw track
+// and a note saying so. Do not reintroduce this without re-running that probe.
 
 // decodePolyline6 decodes Valhalla's encoded polyline into [lon, lat] pairs.
 //

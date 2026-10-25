@@ -5036,6 +5036,112 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/service-schedules/{id}/complete": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "maintenance"
+                ],
+                "summary": "Finish a service and return the vehicle to the fleet",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "service schedule id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "completion",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/maintenance.CompleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "409": {
+                        "description": "not in service",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/service-schedules/{id}/dispatch": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks the schedule in_service, the vehicle under repair, and returns the route from the vehicle's current position to the hangar.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "maintenance"
+                ],
+                "summary": "Send a vehicle to a hangar for a due service",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "service schedule id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "hangar",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/maintenance.DispatchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/maintenance.DispatchResult"
+                        }
+                    },
+                    "409": {
+                        "description": "already in service",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/trackers": {
             "get": {
                 "security": [
@@ -6432,7 +6538,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Map-matches the raw GPS trace so the line follows roads instead of cutting corners and wandering through buildings. Costs several provider requests (the trace is split into chunks of 200 fixes and matched in parallel), so it is requested explicitly rather than being folded into the history response — and the raw trace remains available, because the matched line is an interpretation and the fixes themselves are what matter in a dispute. ` + "`" + `distance_km` + "`" + ` is measured along roads. ` + "`" + `chunks_matched` + "`" + ` below ` + "`" + `chunks_total` + "`" + ` means part of the journey was unmatchable — typically an unmapped yard or plantation track.",
+                "description": "Map-matches the raw GPS trace so the line follows roads instead of cutting corners and wandering through buildings. Where the matcher cannot join two consecutive fixes it ends one match and begins another, leaving a short hole — usually a couple of kilometres at an interchange; those holes are closed by routing between the two matched ends, and ` + "`" + `gaps_bridged` + "`" + ` counts them, because a bridged stretch is inferred rather than observed. ` + "`" + `chunks_matched` + "`" + ` below ` + "`" + `chunks_total` + "`" + ` means a whole section failed, typically an unmapped yard or plantation track. Costs several provider requests (the trace is split into chunks of 200 fixes and matched in parallel), so it is requested explicitly rather than being folded into the history response — and the raw trace remains available, because the matched line is an interpretation and the fixes themselves are what matter in a dispute. ` + "`" + `distance_km` + "`" + ` is measured along roads. ` + "`" + `chunks_matched` + "`" + ` below ` + "`" + `chunks_total` + "`" + ` means part of the journey was unmatchable — typically an unmapped yard or plantation track.",
                 "produces": [
                     "application/json"
                 ],
@@ -9675,6 +9781,10 @@ const docTemplate = `{
                     "description": "DistanceKm is measured along roads. Verified against a day whose distance\nwas known independently from the daily rollup: 489 km matched vs 461.5 km\nrecorded, i.e. ~6% over, which is what following real road geometry\ninstead of straight lines between fixes should produce.",
                     "type": "number"
                 },
+                "gaps_bridged": {
+                    "description": "GapsBridged counts holes in the match that were closed by routing between\ntwo matched segments.\n\nThe matcher restarts wherever it cannot join two consecutive fixes,\nleaving a short hole — usually a couple of kilometres around an\ninterchange. Both ends are already snapped to the road network, so\nrouting across is reliable, but it is an inference about a stretch that\nwas never observed. Surfaced so the caption can say so.",
+                    "type": "integer"
+                },
                 "geometry": {
                     "type": "array",
                     "items": {
@@ -9685,11 +9795,19 @@ const docTemplate = `{
                         }
                     }
                 },
+                "partial": {
+                    "description": "Partial is set when the matched path is implausibly short against\nStraightLineKm. Roads cannot be shorter than the straight lines between\ntheir own points, so a matched distance well below it is arithmetically\nimpossible for a complete path — which makes this detectable rather than\nsomething a reader has to notice.\n\nWhen true the line is a fragment: show it as incomplete, and do not use\nDistanceKm as a distance.",
+                    "type": "boolean"
+                },
                 "points_in": {
                     "type": "integer"
                 },
                 "provider": {
                     "type": "string"
+                },
+                "straight_line_km": {
+                    "description": "StraightLineKm is the great-circle distance through the raw fixes: the\nshortest the journey could possibly have been.\n\nIt exists because ChunksMatched == ChunksTotal does NOT mean the whole\npath was found. A chunk can come back SHORT and still report complete\nsuccess: no error, one plausible line, a distance that is simply too\nsmall. This number is the floor that makes that detectable.\n\nIt earned its place by catching a real one. trace_route reports a\ndiscontinuous match as several trips, and this client read only the\nfirst — so a 99 km stretch that matched as 37,7 + 10,3 + 46,5 km was\nreported as 37,7 km with every appearance of success. Figures once\nquoted here about matching degrading with fix spacing came from the same\nblind spot and should not be reused.",
+                    "type": "number"
                 },
                 "vehicle_id": {
                     "type": "integer"
@@ -10091,6 +10209,26 @@ const docTemplate = `{
                 }
             }
         },
+        "maintenance.CompleteRequest": {
+            "type": "object",
+            "properties": {
+                "done_at": {
+                    "description": "DoneAt defaults to today. Supplied when the paperwork lands later than\nthe work did, which is the normal case.",
+                    "type": "string"
+                },
+                "next_due_at": {
+                    "description": "NextDueAt and NextOdometer are computed by the caller from the\nschedule's own interval. Left here rather than derived in SQL so the\narithmetic lives in one language, beside the rules that set it at\ncreation.",
+                    "type": "string"
+                },
+                "next_odometer": {
+                    "type": "number"
+                },
+                "odometer": {
+                    "description": "Odometer at completion. Rolls the next interval forward from the real\nreading rather than from an estimate.",
+                    "type": "number"
+                }
+            }
+        },
         "maintenance.Counts": {
             "type": "object",
             "properties": {
@@ -10189,6 +10327,66 @@ const docTemplate = `{
                 },
                 "vehicle_type": {
                     "type": "string"
+                }
+            }
+        },
+        "maintenance.DispatchRequest": {
+            "type": "object",
+            "properties": {
+                "hangar_id": {
+                    "description": "HangarID is required here even though the column is nullable, because a\ndispatch with no destination is not a dispatch. A schedule can still be\ncreated, and serviced roadside, without one.",
+                    "type": "integer"
+                }
+            }
+        },
+        "maintenance.DispatchResult": {
+            "type": "object",
+            "properties": {
+                "already_there": {
+                    "description": "AlreadyThere when the truck is inside the hangar's radius. The schedule\nis still dispatched — the work is booked either way — but no route is\nreturned, because routing a vehicle to where it is standing draws a dot.",
+                    "type": "boolean"
+                },
+                "distance_km": {
+                    "type": "number"
+                },
+                "eta_min": {
+                    "type": "number"
+                },
+                "geometry": {
+                    "description": "Geometry is [lon, lat], ready for a map as a GeoJSON LineString.",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
+                    }
+                },
+                "hangar_id": {
+                    "type": "integer"
+                },
+                "hangar_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                },
+                "vehicle_marked_repair": {
+                    "description": "VehicleMarkedRepair is false when the vehicle was archived, since a\nretired truck must not be quietly returned to the fleet's active list by\nbooking a service against it.",
+                    "type": "boolean"
                 }
             }
         },

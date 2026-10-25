@@ -91,7 +91,7 @@ func (h *Handler) WithLive(l *liveview.Service) *Handler {
 //	@Param		id		path		int							true	"service schedule id"
 //	@Param		body	body		maintenance.DispatchRequest	true	"hangar"
 //	@Success	200		{object}	maintenance.DispatchResult
-//	@Failure	409		{object}	httpx.ErrorBody	"already in service"
+//	@Failure	409		{object}	map[string]string	"already in service"
 //	@Router		/v1/service-schedules/{id}/dispatch [post]
 func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -279,7 +279,7 @@ type CompleteRequest struct {
 //	@Param		id		path	int							true	"service schedule id"
 //	@Param		body	body	maintenance.CompleteRequest	true	"completion"
 //	@Success	200
-//	@Failure	409	{object}	httpx.ErrorBody	"not in service"
+//	@Failure	409	{object}	map[string]string	"not in service"
 //	@Router		/v1/service-schedules/{id}/complete [post]
 func (h *Handler) complete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)

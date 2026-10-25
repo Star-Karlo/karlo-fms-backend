@@ -77,13 +77,7 @@ func TestLegsToRouteDropsSharedJunction(t *testing.T) {
 	// Two legs meeting at 107.050000,-6.180000. The junction appears as the
 	// last point of leg 1 and the first of leg 2; the line must carry it once.
 	out := &valhallaResponse{}
-	out.Trip.Legs = []struct {
-		Shape   string `json:"shape"`
-		Summary struct {
-			Length float64 `json:"length"`
-			Time   float64 `json:"time"`
-		} `json:"summary"`
-	}{
+	out.Trip.Legs = []valhallaLeg{
 		{Shape: "~jlyJshqvjEfsaBkwaDguhC_~cH"}, // 3 points, ending at the junction
 		{Shape: "~jlyJshqvjEfsaBkwaDguhC_~cH"}, // same 3 points again
 	}
