@@ -52,15 +52,18 @@ func TestCoverTakesTheLongestMatch(t *testing.T) {
 	passed := GatesAlong(route(), []TollGate{
 		gate(1, "a", 106.1), gate(2, "b", 106.4), gate(3, "c", 106.8),
 	})
-	charges, err := table.Cover(passed, 5)
+	res, err := table.Cover(passed, 5)
 	if err != nil {
-		t.Fatalf("unexpected refusal: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(charges) != 1 {
-		t.Fatalf("a->c covers all three gates in one charge, got %d charges", len(charges))
+	if len(res.Charges) != 1 {
+		t.Fatalf("a->c covers all three gates in one charge, got %d", len(res.Charges))
 	}
-	if charges[0].AmountRp != 50000 {
-		t.Errorf("want the a->c tariff 50000, got %d", charges[0].AmountRp)
+	if res.Charges[0].AmountRp != 50000 {
+		t.Errorf("want the a->c tariff 50000, got %d", res.Charges[0].AmountRp)
+	}
+	if res.Incomplete() {
+		t.Errorf("every gate was covered, so this must not read as incomplete: %v", res.Unpriced)
 	}
 }
 
@@ -72,12 +75,12 @@ func TestCoverSumsConsecutiveFlatFees(t *testing.T) {
 		{EntryNorm: "b", Flat: true, AmountRp: map[int]int64{5: 15000}, Verdict: "usable"},
 	})
 	passed := GatesAlong(route(), []TollGate{gate(1, "a", 106.1), gate(2, "b", 106.4)})
-	charges, err := table.Cover(passed, 5)
+	res, err := table.Cover(passed, 5)
 	if err != nil {
-		t.Fatalf("unexpected refusal: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	var total int64
-	for _, c := range charges {
+	for _, c := range res.Charges {
 		if !c.Flat {
 			t.Error("both charges should be flat")
 		}
@@ -88,23 +91,33 @@ func TestCoverSumsConsecutiveFlatFees(t *testing.T) {
 	}
 }
 
-// THE POINT OF THE WHOLE DESIGN. A gate no tariff covers must refuse the
-// quote, not return the part it could price. A partial sum is a plausible
-// number that is too small, and nothing about it looks wrong.
-func TestCoverRefusesRatherThanUndercharging(t *testing.T) {
+// A gate no tariff covers is PRICED AT ZERO AND NAMED, so the total is useful
+// but cannot be mistaken for complete.
+//
+// This used to refuse outright, which is right for billing and wrong for the
+// screen an operator uses: a 459 km route reported nothing at all because one
+// of its nine gates had no cell leading onward. Zero plus a name is more
+// useful — and the name is what someone goes and looks up.
+func TestCoverPricesWhatItCanAndNamesWhatItCannot(t *testing.T) {
 	table := NewTollTable([]TollCell{
 		{EntryNorm: "a", ExitNorm: "b", AmountRp: map[int]int64{5: 20000}, Verdict: "usable"},
 	})
 	passed := GatesAlong(route(), []TollGate{
 		gate(1, "a", 106.1), gate(2, "b", 106.4), gate(3, "c", 106.8),
 	})
-	_, err := table.Cover(passed, 5)
-	if err == nil {
-		t.Fatal("a gate with no tariff must refuse the quote, not drop the gate")
+	res, err := table.Cover(passed, 5)
+	if err != nil {
+		t.Fatalf("a missing tariff is a gap, not an error: %v", err)
 	}
-	// The message must name the gate, so someone knows which cell to source.
-	if !contains(err.Error(), "c") {
-		t.Errorf("the refusal must name the uncovered gate, got %q", err)
+	if len(res.Charges) != 1 || res.Charges[0].AmountRp != 20000 {
+		t.Fatalf("the a->b charge must still be priced, got %+v", res.Charges)
+	}
+	if !res.Incomplete() {
+		t.Fatal("a skipped gate MUST make the result incomplete, or a short total reads as a real one")
+	}
+	// The name must survive, because it is the work list.
+	if len(res.Unpriced) != 1 || res.Unpriced[0] != "c" {
+		t.Errorf("want the uncovered gate named as \"c\", got %v", res.Unpriced)
 	}
 }
 
@@ -119,8 +132,12 @@ func TestReviewCellsAreExcluded(t *testing.T) {
 		t.Fatalf("a review cell must not be indexed, got closed=%d flat=%d", closed, flat)
 	}
 	passed := GatesAlong(route(), []TollGate{gate(1, "a", 106.1), gate(2, "b", 106.4)})
-	if _, err := table.Cover(passed, 5); err == nil {
-		t.Error("with only a review cell there is no tariff, so the quote must refuse")
+	res, _ := table.Cover(passed, 5)
+	if len(res.Charges) != 0 {
+		t.Error("a review cell must not price anything")
+	}
+	if !res.Incomplete() {
+		t.Error("with only a review cell both gates are unpriced, so this is incomplete")
 	}
 }
 
@@ -132,19 +149,32 @@ func TestCoverReportsAMissingGolongan(t *testing.T) {
 		{EntryNorm: "a", ExitNorm: "b", AmountRp: map[int]int64{5: 20000}, Verdict: "usable"},
 	})
 	passed := GatesAlong(route(), []TollGate{gate(1, "a", 106.1), gate(2, "b", 106.4)})
-	if _, err := table.Cover(passed, 3); err == nil {
-		t.Error("golongan 3 is unpriced here; that must be reported, not filled in from 5")
+	res, _ := table.Cover(passed, 3)
+	if len(res.Charges) != 0 {
+		t.Error("golongan 3 must not be filled in from golongan 5")
+	}
+	if !res.Incomplete() {
+		t.Error("an unpriced class must be reported as a gap")
+	}
+	// The class must appear in the gap, since the pair itself exists.
+	if len(res.Unpriced) != 1 || !contains(res.Unpriced[0], "golongan 3") {
+		t.Errorf("the gap must name the class, got %v", res.Unpriced)
 	}
 }
 
 func TestCoverOfNoGatesIsFree(t *testing.T) {
 	table := NewTollTable(nil)
-	charges, err := table.Cover(nil, 5)
+	res, err := table.Cover(nil, 5)
 	if err != nil {
 		t.Fatalf("a route passing no gates is toll-free, not an error: %v", err)
 	}
-	if len(charges) != 0 {
-		t.Errorf("want no charges, got %d", len(charges))
+	if len(res.Charges) != 0 {
+		t.Errorf("want no charges, got %d", len(res.Charges))
+	}
+	// AND NOT INCOMPLETE. A toll-free route and an unpriced one must be
+	// distinguishable, which is the whole reason the flag exists.
+	if res.Incomplete() {
+		t.Error("no gates means genuinely toll-free, which is complete")
 	}
 }
 

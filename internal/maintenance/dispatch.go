@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -78,6 +79,11 @@ type DispatchResult struct {
 	// route, or pricing unavailable. An empty toll with no note would read as
 	// "this trip is toll-free".
 	TollNote string `json:"toll_note,omitempty"`
+	// TollUnpricedGates names gates no tariff covered. When present, every
+	// toll figure above is an UNDERSTATEMENT: those gates contributed nothing.
+	// Shown so a cheap route cannot be confused with an unmeasured one — and
+	// each name is a tariff someone can look up.
+	TollUnpricedGates []string `json:"toll_unpriced_gates,omitempty"`
 
 	// VehicleMarkedRepair is false when the vehicle was archived, since a
 	// retired truck must not be quietly returned to the fleet's active list by
@@ -441,10 +447,11 @@ type RouteToHangar struct {
 	// and the same rules as the dispatch response: a single figure when the
 	// vehicle's class is known, every class when it is not, and a note rather
 	// than a zero whenever there is no figure.
-	TollRp         *int64        `json:"toll_rp,omitempty"`
-	TollByGolongan map[int]int64 `json:"toll_by_golongan,omitempty"`
-	TollGolongan   int           `json:"toll_golongan,omitempty"`
-	TollNote       string        `json:"toll_note,omitempty"`
+	TollRp            *int64        `json:"toll_rp,omitempty"`
+	TollByGolongan    map[int]int64 `json:"toll_by_golongan,omitempty"`
+	TollGolongan      int           `json:"toll_golongan,omitempty"`
+	TollNote          string        `json:"toll_note,omitempty"`
+	TollUnpricedGates []string      `json:"toll_unpriced_gates,omitempty"`
 }
 
 // routeToHangar godoc
@@ -553,6 +560,7 @@ func (h *Handler) routeToHangar(w http.ResponseWriter, r *http.Request) {
 	out.TollByGolongan = priced.TollByGolongan
 	out.TollGolongan = priced.TollGolongan
 	out.TollNote = priced.TollNote
+	out.TollUnpricedGates = priced.TollUnpricedGates
 
 	httpx.JSON(w, http.StatusOK, out)
 }
@@ -587,8 +595,19 @@ func (h *Handler) priceToll(ctx context.Context, out *DispatchResult,
 		out.TollNote = "toll could not be priced: " + err.Error()
 		return
 	}
+	out.TollUnpricedGates = quote.UnpricedGates
+
 	if len(quote.ByGolongan) == 0 {
-		// A real answer, not a failure: the route stays off the network.
+		if len(quote.UnpricedGates) > 0 {
+			// Gates were found and none could be priced. NOT reported as
+			// toll-free: the route demonstrably uses toll roads, so the note
+			// names what is missing instead.
+			out.TollNote = fmt.Sprintf(
+				"no tariff yet for %d gate(s) on this route: %s",
+				len(quote.UnpricedGates), strings.Join(quote.UnpricedGates, ", "))
+			return
+		}
+		// A real answer: the route stays off the network.
 		out.TollNote = "no toll on this route"
 		return
 	}
@@ -608,6 +627,15 @@ func (h *Handler) priceToll(ctx context.Context, out *DispatchResult,
 	}
 	if amount, ok := quote.ByGolongan[gol]; ok {
 		out.TollRp, out.TollGolongan = &amount, gol
+		if len(quote.UnpricedGates) > 0 {
+			// A PARTIAL TOTAL, SAID OUT LOUD. The figure is real as far as it
+			// goes and useful for comparing two workshops, but it is short by
+			// whatever the named gates charge — and a short total that looks
+			// complete is the one way this feature could mislead.
+			out.TollNote = fmt.Sprintf(
+				"at least this much — no tariff yet for %s",
+				strings.Join(quote.UnpricedGates, ", "))
+		}
 		return
 	}
 	// The class is known but the provider did not price it. Reported rather

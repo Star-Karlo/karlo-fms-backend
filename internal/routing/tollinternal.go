@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -102,17 +103,17 @@ func (p *InternalToll) PriceRoute(ctx context.Context, geometry [][2]float64) (*
 	}
 
 	quote := &TollQuote{ByGolongan: map[int]int64{}, Provider: p.Name()}
-	var firstErr error
+	unpriced := map[string]bool{}
 	for gol := 1; gol <= 5; gol++ {
-		charges, err := table.Cover(passed, gol)
+		res, err := table.Cover(passed, gol)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
 			continue
 		}
+		for _, u := range res.Unpriced {
+			unpriced[u] = true
+		}
 		var total int64
-		for _, c := range charges {
+		for _, c := range res.Charges {
 			total += c.AmountRp
 		}
 		if total <= 0 {
@@ -123,7 +124,7 @@ func (p *InternalToll) PriceRoute(ctx context.Context, geometry [][2]float64) (*
 		// describe the journey's STRUCTURE, which is the same for every class;
 		// only the amounts differ, and those are in ByGolongan.
 		if len(quote.Segments) == 0 {
-			for _, c := range charges {
+			for _, c := range res.Charges {
 				quote.Segments = append(quote.Segments, TollSegment{
 					FromGate: c.FromGate,
 					ToGate:   c.ToGate,
@@ -132,13 +133,24 @@ func (p *InternalToll) PriceRoute(ctx context.Context, geometry [][2]float64) (*
 		}
 	}
 
+	// THE GAPS, CARRIED NOT HIDDEN.
+	//
+	// A total missing some of its gates is an understatement, and every one of
+	// those gates is a tariff someone can go and look up. So the names travel
+	// with the quote: the caller shows them, and they double as the work list.
+	if len(unpriced) > 0 {
+		for name := range unpriced {
+			quote.UnpricedGates = append(quote.UnpricedGates, name)
+		}
+		sort.Strings(quote.UnpricedGates)
+	}
+
 	if len(quote.ByGolongan) == 0 {
-		// Gates were found and none could be priced. An error, not an empty
-		// quote: the route demonstrably uses toll roads, so reporting it as
-		// toll-free would be a lie rather than a gap.
-		return nil, fmt.Errorf(
-			"route passes %d toll gate(s) but none could be priced: %w",
-			len(passed), firstErr)
+		// Gates were found and NOTHING could be priced. Still not an error:
+		// the caller wants the gate names, which are the only actionable part.
+		// Reported as a zero-price quote that is explicitly incomplete, so it
+		// cannot be mistaken for a toll-free route.
+		quote.ByGolongan = nil
 	}
 	return quote, nil
 }

@@ -67,6 +67,16 @@ type TollQuote struct {
 	// about per gate, not in aggregate.
 	Segments []TollSegment `json:"segments,omitempty"`
 
+	// UnpricedGates names the gates no tariff covered. When this is non-empty
+	// the totals in ByGolongan are an UNDERSTATEMENT: those gates contributed
+	// nothing, so the real cost is higher by however much they charge.
+	//
+	// Carried rather than swallowed for two reasons. A caller must be able to
+	// tell a cheap route from an unmeasured one, which the figure alone cannot
+	// say. And each name is a tariff someone can look up — so this doubles as
+	// the work list for closing the gaps.
+	UnpricedGates []string `json:"unpriced_gates,omitempty"`
+
 	Provider string `json:"provider"`
 }
 

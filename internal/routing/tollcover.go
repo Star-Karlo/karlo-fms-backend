@@ -177,6 +177,24 @@ type TollCharge struct {
 	AmountRp int64  `json:"amount_rp"`
 }
 
+// CoverResult is what a gate sequence came to, and what of it is missing.
+type CoverResult struct {
+	Charges []TollCharge
+	// Unpriced names the gates no tariff covered. Those contribute ZERO to the
+	// total, so a result with any of them is an UNDERSTATEMENT — never a
+	// figure to bill on, and the reason Incomplete exists.
+	Unpriced []string
+}
+
+// Incomplete reports whether some gate went unpriced.
+//
+// WHY THIS IS A FLAG AND NOT JUST A SHORTER NUMBER. A partial sum is useful —
+// an operator choosing between two workshops wants the figures it does have —
+// but Rp 0 for an unpriced gate and Rp 0 for a genuinely toll-free road are
+// the same number meaning opposite things. Without this, nobody downstream can
+// tell a cheap route from an unmeasured one.
+func (c CoverResult) Incomplete() bool { return len(c.Unpriced) > 0 }
+
 // Cover works out the charges a gate sequence incurs, for one golongan.
 //
 // GREEDY LONGEST MATCH, which mirrors how a closed system bills: you take a
@@ -186,14 +204,17 @@ type TollCharge struct {
 // reproduces that; taking the shortest would split one transaction into
 // several and overcharge.
 //
-// Every gate must be consumed. A gate that begins no closed cell and has no
-// flat fee is unexplained, and the whole quote is refused rather than returned
-// short — see the type comment for why.
-func (t *TollTable) Cover(passed []PassedGate, golongan int) ([]TollCharge, error) {
+// A GATE NO TARIFF COVERS IS SKIPPED AND NAMED, not fatal. An earlier version
+// refused the whole quote, which is right for billing and wrong for the screen
+// an operator actually uses: a 459 km route to a workshop reported nothing at
+// all because one of its nine gates — Cibitung 4 — had no cell leading onward.
+// Pricing eight of nine and saying which one is missing is more useful, and
+// the missing names are the work list for sourcing them.
+func (t *TollTable) Cover(passed []PassedGate, golongan int) (CoverResult, error) {
+	var res CoverResult
 	if len(passed) == 0 {
-		return nil, nil // no gates: a toll-free route, which is an answer
+		return res, nil // no gates: a toll-free route, which is an answer
 	}
-	var charges []TollCharge
 	i := 0
 	for i < len(passed) {
 		from := passed[i].Gate
@@ -209,43 +230,47 @@ func (t *TollTable) Cover(passed []PassedGate, golongan int) ([]TollCharge, erro
 			}
 		}
 		if bestJ > 0 {
-			amount, ok := bestCell.AmountRp[golongan]
-			if !ok {
-				return nil, fmt.Errorf(
-					"no golongan %d tariff for %s to %s",
-					golongan, from.Name, passed[bestJ].Gate.Name)
+			if amount, ok := bestCell.AmountRp[golongan]; ok {
+				res.Charges = append(res.Charges, TollCharge{
+					FromGate: from.Name,
+					ToGate:   passed[bestJ].Gate.Name,
+					AmountRp: amount,
+				})
+				// Resume AFTER the exit: the gates in between were covered by
+				// this one charge, which is what a closed transaction means.
+				i = bestJ + 1
+				continue
 			}
-			charges = append(charges, TollCharge{
-				FromGate: from.Name,
-				ToGate:   passed[bestJ].Gate.Name,
-				AmountRp: amount,
-			})
-			// Resume AFTER the exit: the gates in between were covered by this
-			// one charge, which is what a closed transaction means.
+			// The pair exists but not for this class. Named with the class, so
+			// the gap is specific: II and III share a price on many ruas,
+			// which makes substituting one for the other tempting and wrong.
+			res.Unpriced = append(res.Unpriced,
+				fmt.Sprintf("%s to %s (golongan %d)",
+					from.Name, passed[bestJ].Gate.Name, golongan))
 			i = bestJ + 1
 			continue
 		}
 
 		if cell, ok := t.flat[from.NameNorm]; ok {
-			amount, ok := cell.AmountRp[golongan]
-			if !ok {
-				return nil, fmt.Errorf("no golongan %d flat tariff for %s",
-					golongan, from.Name)
+			if amount, ok := cell.AmountRp[golongan]; ok {
+				res.Charges = append(res.Charges, TollCharge{
+					FromGate: from.Name,
+					Flat:     true,
+					AmountRp: amount,
+				})
+				i++
+				continue
 			}
-			charges = append(charges, TollCharge{
-				FromGate: from.Name,
-				Flat:     true,
-				AmountRp: amount,
-			})
+			res.Unpriced = append(res.Unpriced,
+				fmt.Sprintf("%s flat fee (golongan %d)", from.Name, golongan))
 			i++
 			continue
 		}
 
-		// Unexplained. Named, because "toll unavailable" is not actionable and
-		// "no tariff for X" tells someone which cell to go and source.
-		return nil, fmt.Errorf(
-			"no tariff covers %s (gate %d of %d on this route)",
-			from.Name, i+1, len(passed))
+		// No cell starts here at all. Named plainly, because this is the form
+		// the work list takes: "Cibitung 4" is a gate someone can look up.
+		res.Unpriced = append(res.Unpriced, from.Name)
+		i++
 	}
-	return charges, nil
+	return res, nil
 }

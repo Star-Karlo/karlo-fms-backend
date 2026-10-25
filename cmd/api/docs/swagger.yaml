@@ -2597,6 +2597,15 @@ definitions:
           never zero, because zero asserts the roads are free and a missing axle
           count is not that claim.
         type: integer
+      toll_unpriced_gates:
+        description: |-
+          TollUnpricedGates names gates no tariff covered. When present, every
+          toll figure above is an UNDERSTATEMENT: those gates contributed nothing.
+          Shown so a cheap route cannot be confused with an unmeasured one — and
+          each name is a tariff someone can look up.
+        items:
+          type: string
+        type: array
       vehicle_id:
         type: integer
       vehicle_marked_repair:
@@ -2666,6 +2675,10 @@ definitions:
           vehicle's class is known, every class when it is not, and a note rather
           than a zero whenever there is no figure.
         type: integer
+      toll_unpriced_gates:
+        items:
+          type: string
+        type: array
       vehicle_id:
         type: integer
       vehicle_lat:

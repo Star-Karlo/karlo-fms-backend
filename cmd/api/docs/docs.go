@@ -10504,6 +10504,13 @@ const docTemplate = `{
                     "description": "TollRp is what the trip to the workshop costs in tolls, for THIS\nvehicle's class. Nil when the class is unknown or no toll applies —\nnever zero, because zero asserts the roads are free and a missing axle\ncount is not that claim.",
                     "type": "integer"
                 },
+                "toll_unpriced_gates": {
+                    "description": "TollUnpricedGates names gates no tariff covered. When present, every\ntoll figure above is an UNDERSTATEMENT: those gates contributed nothing.\nShown so a cheap route cannot be confused with an unmeasured one — and\neach name is a tariff someone can look up.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "vehicle_id": {
                     "type": "integer"
                 },
@@ -10591,6 +10598,12 @@ const docTemplate = `{
                 "toll_rp": {
                     "description": "Toll for the REMAINING journey, recomputed with the route. Same shape\nand the same rules as the dispatch response: a single figure when the\nvehicle's class is known, every class when it is not, and a note rather\nthan a zero whenever there is no figure.",
                     "type": "integer"
+                },
+                "toll_unpriced_gates": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "vehicle_id": {
                     "type": "integer"
