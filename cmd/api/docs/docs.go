@@ -5149,7 +5149,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Routes from the vehicle's CURRENT position to the hangar its service schedule names. Read-only and safe to poll: unlike the dispatch call it records nothing, which is what lets Live View draw the remaining path as the truck moves. The figures stored at dispatch are deliberately not reused — the vehicle has been driving since, so they describe a journey that no longer starts where it starts now. ` + "`" + `already_there` + "`" + ` means the vehicle is inside the hangar's radius and no line is returned.",
+                "description": "Routes from the vehicle's CURRENT position to the hangar its service schedule names, with the toll for the remaining journey. Read-only and safe to poll: unlike the dispatch call it records nothing, which is what lets Live View draw the remaining path as the truck moves. The figures stored at dispatch are deliberately not reused — the vehicle has been driving since, so they describe a journey that no longer starts where it starts now. ` + "`" + `already_there` + "`" + ` means the vehicle is inside the hangar's radius and no line is returned.",
                 "produces": [
                     "application/json"
                 ],
@@ -10574,6 +10574,23 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "toll_by_golongan": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "toll_golongan": {
+                    "type": "integer"
+                },
+                "toll_note": {
+                    "type": "string"
+                },
+                "toll_rp": {
+                    "description": "Toll for the REMAINING journey, recomputed with the route. Same shape\nand the same rules as the dispatch response: a single figure when the\nvehicle's class is known, every class when it is not, and a note rather\nthan a zero whenever there is no figure.",
+                    "type": "integer"
                 },
                 "vehicle_id": {
                     "type": "integer"

@@ -436,12 +436,21 @@ type RouteToHangar struct {
 	// Geometry is [lon, lat], ready for a map as a GeoJSON LineString.
 	Geometry [][2]float64 `json:"geometry,omitempty"`
 	Provider string       `json:"provider,omitempty"`
+
+	// Toll for the REMAINING journey, recomputed with the route. Same shape
+	// and the same rules as the dispatch response: a single figure when the
+	// vehicle's class is known, every class when it is not, and a note rather
+	// than a zero whenever there is no figure.
+	TollRp         *int64        `json:"toll_rp,omitempty"`
+	TollByGolongan map[int]int64 `json:"toll_by_golongan,omitempty"`
+	TollGolongan   int           `json:"toll_golongan,omitempty"`
+	TollNote       string        `json:"toll_note,omitempty"`
 }
 
 // routeToHangar godoc
 //
 //	@Summary		The remaining journey from a vehicle to its hangar
-//	@Description	Routes from the vehicle's CURRENT position to the hangar its service schedule names. Read-only and safe to poll: unlike the dispatch call it records nothing, which is what lets Live View draw the remaining path as the truck moves. The figures stored at dispatch are deliberately not reused — the vehicle has been driving since, so they describe a journey that no longer starts where it starts now. `already_there` means the vehicle is inside the hangar's radius and no line is returned.
+//	@Description	Routes from the vehicle's CURRENT position to the hangar its service schedule names, with the toll for the remaining journey. Read-only and safe to poll: unlike the dispatch call it records nothing, which is what lets Live View draw the remaining path as the truck moves. The figures stored at dispatch are deliberately not reused — the vehicle has been driving since, so they describe a journey that no longer starts where it starts now. `already_there` means the vehicle is inside the hangar's radius and no line is returned.
 //	@Tags			maintenance
 //	@Security		BearerAuth
 //	@Produce		json
@@ -524,6 +533,27 @@ func (h *Handler) routeToHangar(w http.ResponseWriter, r *http.Request) {
 	min := float64(int(route.DurationS/6+0.5)) / 10
 	out.DistanceKm, out.EtaMin = &km, &min
 	out.Geometry, out.Provider = route.Geometry, route.Provider
+
+	// Toll on the remaining journey. Read through a DispatchResult because
+	// priceToll fills that shape; the two endpoints answer the same question
+	// and must not drift into pricing it differently.
+	var priced DispatchResult
+	priced.Geometry = route.Geometry
+	var axles, override *int16
+	if err := db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		return tx.QueryRow(r.Context(),
+			`SELECT axles, golongan_override FROM vehicles WHERE id = $1`,
+			*out.VehicleID).Scan(&axles, &override)
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		axles, override = nil, nil
+	}
+	h.priceToll(r.Context(), &priced, axles, override,
+		*v.Position.Lat, *v.Position.Lon, out.HangarLat, out.HangarLon)
+	out.TollRp = priced.TollRp
+	out.TollByGolongan = priced.TollByGolongan
+	out.TollGolongan = priced.TollGolongan
+	out.TollNote = priced.TollNote
+
 	httpx.JSON(w, http.StatusOK, out)
 }
 
