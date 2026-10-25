@@ -101,6 +101,9 @@ func (h *Handler) Routes(r chi.Router) {
 		mr.Delete("/v1/service-schedules/{id}", h.del)
 		mr.Post("/v1/service-schedules/{id}/dispatch", h.dispatch)
 		mr.Post("/v1/service-schedules/{id}/complete", h.complete)
+		// GET, because it records nothing: Live View polls it to redraw the
+		// remaining path as the truck moves.
+		mr.Get("/v1/service-schedules/{id}/route", h.routeToHangar)
 	})
 }
 

@@ -5135,6 +5135,67 @@
                 }
             }
         },
+        "/v1/service-schedules/{id}/route": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Routes from the vehicle's CURRENT position to the hangar its service schedule names. Read-only and safe to poll: unlike the dispatch call it records nothing, which is what lets Live View draw the remaining path as the truck moves. The figures stored at dispatch are deliberately not reused — the vehicle has been driving since, so they describe a journey that no longer starts where it starts now. `already_there` means the vehicle is inside the hangar's radius and no line is returned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "maintenance"
+                ],
+                "summary": "The remaining journey from a vehicle to its hangar",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "service schedule id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/maintenance.RouteToHangar"
+                        }
+                    },
+                    "404": {
+                        "description": "no such schedule, or it has no hangar",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "schedule has no vehicle to route",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "routing not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/trackers": {
             "get": {
                 "security": [
@@ -9397,6 +9458,40 @@
                 }
             }
         },
+        "liveview.DispatchTarget": {
+            "type": "object",
+            "properties": {
+                "component": {
+                    "description": "Component is what the vehicle was sent in for, so the map can say\n\"brakes\" rather than only naming a destination.",
+                    "type": "string"
+                },
+                "dispatched_at": {
+                    "description": "DispatchedAt, with DistanceKm and EtaMin, are AS MEASURED WHEN SENT and\nare not refreshed. The vehicle has been moving since, so treating them\nas current would misreport progress; the live position is next to them\nin this same record, and a caller wanting the remaining distance should\nask for a fresh route rather than trust these.",
+                    "type": "string"
+                },
+                "distance_km": {
+                    "type": "number"
+                },
+                "eta_min": {
+                    "type": "number"
+                },
+                "hangar_id": {
+                    "type": "integer"
+                },
+                "hangar_lat": {
+                    "type": "number"
+                },
+                "hangar_lon": {
+                    "type": "number"
+                },
+                "hangar_name": {
+                    "type": "string"
+                },
+                "schedule_id": {
+                    "type": "integer"
+                }
+            }
+        },
         "liveview.Driver": {
             "type": "object",
             "properties": {
@@ -10082,6 +10177,14 @@
                     "description": "CameraDeviceID is the linked dashcam's VSS id, when the vehicle has one.\nPresent whether or not the camera is the position source.",
                     "type": "string"
                 },
+                "dispatch": {
+                    "description": "Dispatch is set while the vehicle is on its way to a hangar for service.\n\nLive View's job is to answer \"where is this truck and what is it doing\".\nA truck taken off the road and sent for repair is doing something, and\nwithout this the map showed it driving with no indication of why or\nwhere to — the dispatch was recorded in Maintenance and invisible here,\nwhich is the one screen an operator actually watches.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/liveview.DispatchTarget"
+                        }
+                    ]
+                },
                 "drive_state": {
                     "type": "string"
                 },
@@ -10397,6 +10500,63 @@
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "maintenance.RouteToHangar": {
+            "type": "object",
+            "properties": {
+                "already_there": {
+                    "description": "AlreadyThere when the vehicle is inside the hangar's radius. No route is\nreturned, because routing a vehicle to where it is standing draws a dot.",
+                    "type": "boolean"
+                },
+                "distance_km": {
+                    "type": "number"
+                },
+                "eta_min": {
+                    "type": "number"
+                },
+                "geometry": {
+                    "description": "Geometry is [lon, lat], ready for a map as a GeoJSON LineString.",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
+                    }
+                },
+                "hangar_id": {
+                    "type": "integer"
+                },
+                "hangar_lat": {
+                    "type": "number"
+                },
+                "hangar_lon": {
+                    "type": "number"
+                },
+                "hangar_name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "schedule_id": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                },
+                "vehicle_lat": {
+                    "description": "VehicleLat/Lon are where the route starts: the vehicle's live position,\nnot where it stood when dispatched.",
+                    "type": "number"
+                },
+                "vehicle_lon": {
+                    "type": "number"
                 }
             }
         },

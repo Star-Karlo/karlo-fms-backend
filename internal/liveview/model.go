@@ -117,6 +117,36 @@ type VehicleLive struct {
 	// unknown; HasServiceRecord=false means no maintenance record exists yet.
 	KmSinceService   *float64 `json:"km_since_service"`
 	HasServiceRecord bool     `json:"has_service_record"`
+
+	// Dispatch is set while the vehicle is on its way to a hangar for service.
+	//
+	// Live View's job is to answer "where is this truck and what is it doing".
+	// A truck taken off the road and sent for repair is doing something, and
+	// without this the map showed it driving with no indication of why or
+	// where to — the dispatch was recorded in Maintenance and invisible here,
+	// which is the one screen an operator actually watches.
+	Dispatch *DispatchTarget `json:"dispatch,omitempty"`
+}
+
+// DispatchTarget is where a vehicle is headed for maintenance, and what was
+// expected of the trip when it was sent.
+type DispatchTarget struct {
+	ScheduleID int64   `json:"schedule_id"`
+	HangarID   int64   `json:"hangar_id"`
+	HangarName string  `json:"hangar_name"`
+	HangarLat  float64 `json:"hangar_lat"`
+	HangarLon  float64 `json:"hangar_lon"`
+	// Component is what the vehicle was sent in for, so the map can say
+	// "brakes" rather than only naming a destination.
+	Component *string `json:"component,omitempty"`
+	// DispatchedAt, with DistanceKm and EtaMin, are AS MEASURED WHEN SENT and
+	// are not refreshed. The vehicle has been moving since, so treating them
+	// as current would misreport progress; the live position is next to them
+	// in this same record, and a caller wanting the remaining distance should
+	// ask for a fresh route rather than trust these.
+	DispatchedAt *time.Time `json:"dispatched_at,omitempty"`
+	DistanceKm   *float64   `json:"distance_km,omitempty"`
+	EtaMin       *float64   `json:"eta_min,omitempty"`
 }
 
 // enrich merges a telemetry fix into the vehicle, computing online + drive state.

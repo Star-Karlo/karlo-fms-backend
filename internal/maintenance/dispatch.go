@@ -344,3 +344,118 @@ func metersBetween(lat1, lon1, lat2, lon2 float64) float64 {
 	h := math.Pow(math.Sin(dLat/2), 2) + math.Cos(p1)*math.Cos(p2)*math.Pow(math.Sin(dLon/2), 2)
 	return earthM * 2 * math.Asin(math.Sqrt(h))
 }
+
+// RouteToHangar is the journey from where a vehicle is NOW to its hangar.
+type RouteToHangar struct {
+	ScheduleID int64   `json:"schedule_id"`
+	Status     string  `json:"status"`
+	HangarID   int64   `json:"hangar_id"`
+	HangarName string  `json:"hangar_name"`
+	HangarLat  float64 `json:"hangar_lat"`
+	HangarLon  float64 `json:"hangar_lon"`
+	VehicleID  *int64  `json:"vehicle_id"`
+
+	// VehicleLat/Lon are where the route starts: the vehicle's live position,
+	// not where it stood when dispatched.
+	VehicleLat *float64 `json:"vehicle_lat,omitempty"`
+	VehicleLon *float64 `json:"vehicle_lon,omitempty"`
+
+	// AlreadyThere when the vehicle is inside the hangar's radius. No route is
+	// returned, because routing a vehicle to where it is standing draws a dot.
+	AlreadyThere bool `json:"already_there"`
+
+	DistanceKm *float64 `json:"distance_km,omitempty"`
+	EtaMin     *float64 `json:"eta_min,omitempty"`
+	// Geometry is [lon, lat], ready for a map as a GeoJSON LineString.
+	Geometry [][2]float64 `json:"geometry,omitempty"`
+	Provider string       `json:"provider,omitempty"`
+}
+
+// routeToHangar godoc
+//
+//	@Summary		The remaining journey from a vehicle to its hangar
+//	@Description	Routes from the vehicle's CURRENT position to the hangar its service schedule names. Read-only and safe to poll: unlike the dispatch call it records nothing, which is what lets Live View draw the remaining path as the truck moves. The figures stored at dispatch are deliberately not reused — the vehicle has been driving since, so they describe a journey that no longer starts where it starts now. `already_there` means the vehicle is inside the hangar's radius and no line is returned.
+//	@Tags			maintenance
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			id	path		int	true	"service schedule id"
+//	@Success		200	{object}	maintenance.RouteToHangar
+//	@Failure		404	{object}	map[string]string	"no such schedule, or it has no hangar"
+//	@Failure		409	{object}	map[string]string	"schedule has no vehicle to route"
+//	@Failure		503	{object}	map[string]string	"routing not configured"
+//	@Router			/v1/service-schedules/{id}/route [get]
+func (h *Handler) routeToHangar(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid schedule id")
+		return
+	}
+	tid := auth.EffectiveTenant(r)
+
+	var out RouteToHangar
+	out.ScheduleID = id
+	var radiusM int32
+	// RLS scopes this to the caller's tenant (0055), so an id from another
+	// tenant returns no rows rather than another company's workshop.
+	err = db.Tx(r.Context(), h.pool, tid, func(tx pgx.Tx) error {
+		return tx.QueryRow(r.Context(), `
+			SELECT sc.status, sc.vehicle_id, sc.hangar_id, h.name, h.lat, h.lon, h.radius_m
+			FROM service_schedules sc
+			JOIN hangars h ON h.id = sc.hangar_id
+			WHERE sc.id = $1`, id).Scan(&out.Status, &out.VehicleID, &out.HangarID,
+			&out.HangarName, &out.HangarLat, &out.HangarLon, &radiusM)
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		httpx.Error(w, http.StatusNotFound, "no such service schedule, or it has no hangar")
+		return
+	case err != nil:
+		httpx.Error(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if out.VehicleID == nil {
+		httpx.Error(w, http.StatusConflict,
+			"this schedule has no vehicle, so there is nothing to route")
+		return
+	}
+	if h.live == nil || h.router == nil {
+		httpx.Error(w, http.StatusServiceUnavailable,
+			"routing is not configured on this deployment")
+		return
+	}
+
+	// One vehicle, not the fleet. The dispatch handler above lists every
+	// vehicle and scans for one, which is wasteful there and would be worse
+	// here because this endpoint is polled while the truck is en route.
+	v, verr := h.live.One(r.Context(), tid, *out.VehicleID)
+	if verr != nil {
+		httpx.Error(w, http.StatusBadGateway, verr.Error())
+		return
+	}
+	if v.Position == nil || v.Position.Lat == nil || v.Position.Lon == nil {
+		// No fix: the hangar and the schedule are still worth returning, so
+		// the map can show the destination without a line to it.
+		httpx.JSON(w, http.StatusOK, out)
+		return
+	}
+	out.VehicleLat, out.VehicleLon = v.Position.Lat, v.Position.Lon
+
+	if metersBetween(*v.Position.Lat, *v.Position.Lon, out.HangarLat, out.HangarLon) <= float64(radiusM) {
+		out.AlreadyThere = true
+		httpx.JSON(w, http.StatusOK, out)
+		return
+	}
+
+	route, rerr := h.router.Route(r.Context(),
+		routing.Point{Lat: *v.Position.Lat, Lon: *v.Position.Lon},
+		routing.Point{Lat: out.HangarLat, Lon: out.HangarLon})
+	if rerr != nil {
+		httpx.Error(w, http.StatusBadGateway, rerr.Error())
+		return
+	}
+	km := float64(int(route.DistanceM/100+0.5)) / 10
+	min := float64(int(route.DurationS/6+0.5)) / 10
+	out.DistanceKm, out.EtaMin = &km, &min
+	out.Geometry, out.Provider = route.Geometry, route.Provider
+	httpx.JSON(w, http.StatusOK, out)
+}

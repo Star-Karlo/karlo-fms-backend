@@ -5,6 +5,7 @@ package liveview
 
 import (
 	"context"
+	"errors"
 	"log"
 	"math"
 	"net/http"
@@ -86,9 +87,16 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 	// the telemetry fetch below instead of after it — the two independent round
 	// trips overlap, so the response returns in max(telemetry, state) not the sum.
 	type telState struct{ mv, gsm, odo, svcKm *float64 }
-	statesCh := make(chan map[int64]telState, 1)
+	type localRows struct {
+		states     map[int64]telState
+		dispatches map[int64]*DispatchTarget
+	}
+	statesCh := make(chan localRows, 1)
 	go func() {
-		states := map[int64]telState{}
+		local := localRows{
+			states:     map[int64]telState{},
+			dispatches: map[int64]*DispatchTarget{},
+		}
 		if err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 			rs, err := tx.Query(ctx, `
 				SELECT s.vehicle_id, s.last_voltage_mv::float8, s.last_gsm_signal::float8,
@@ -108,13 +116,48 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 				if err := rs.Scan(&vid, &st.mv, &st.gsm, &st.odo, &st.svcKm); err != nil {
 					return err
 				}
-				states[vid] = st
+				local.states[vid] = st
 			}
-			return rs.Err()
+			if err := rs.Err(); err != nil {
+				return err
+			}
+
+			// Vehicles currently on their way to a hangar.
+			//
+			// A SEPARATE QUERY rather than another join above, because that one
+			// starts FROM vehicle_telemetry_state and a vehicle with no state
+			// row would drop out of it. A dispatch must not disappear from the
+			// map because a tracker has never reported. The result set is one
+			// row per vehicle under service, so it is small by nature.
+			//
+			// RLS scopes both to the caller's tenant (0055), so this cannot
+			// surface another company's maintenance plan.
+			ds, err := tx.Query(ctx, `
+				SELECT sc.vehicle_id, sc.id, sc.hangar_id, h.name, h.lat, h.lon,
+				       sc.component, sc.dispatched_at,
+				       sc.dispatch_distance_km::float8, sc.dispatch_eta_min::float8
+				FROM service_schedules sc
+				JOIN hangars h ON h.id = sc.hangar_id
+				WHERE sc.status = 'in_service' AND sc.vehicle_id IS NOT NULL`)
+			if err != nil {
+				return err
+			}
+			defer ds.Close()
+			for ds.Next() {
+				var vid int64
+				var d DispatchTarget
+				if err := ds.Scan(&vid, &d.ScheduleID, &d.HangarID, &d.HangarName,
+					&d.HangarLat, &d.HangarLon, &d.Component, &d.DispatchedAt,
+					&d.DistanceKm, &d.EtaMin); err != nil {
+					return err
+				}
+				local.dispatches[vid] = &d
+			}
+			return ds.Err()
 		}); err != nil {
 			log.Printf("liveview: telemetry state join failed: %v", err) // non-fatal
 		}
-		statesCh <- states
+		statesCh <- local
 	}()
 
 	// Fetch live fixes; on telemetry failure, log and return offline vehicles.
@@ -192,9 +235,11 @@ func (s *Service) List(ctx context.Context, tenantID int64, fleetGroupID *int64)
 
 	// Attach collector state (battery / GSM / odometer + latest service odometer),
 	// fetched concurrently above; powers the list filters.
-	states := <-statesCh
+	local := <-statesCh
 	for i := range out {
-		if st, ok := states[out[i].VehicleID]; ok {
+		// Where it is headed for service, when it is headed anywhere.
+		out[i].Dispatch = local.dispatches[out[i].VehicleID]
+		if st, ok := local.states[out[i].VehicleID]; ok {
 			if st.mv != nil {
 				v := math.Round(*st.mv/100) / 10
 				out[i].BatteryV = &v
@@ -261,10 +306,38 @@ func (s *Service) ListAcross(ctx context.Context, only *int64) ([]VehicleLive, e
 
 func (s *Service) One(ctx context.Context, tenantID, vehicleID int64) (*VehicleLive, error) {
 	var row store.GetLiveViewVehicleRow
+	var dispatch *DispatchTarget
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		var err error
 		row, err = store.New(tx).GetLiveViewVehicle(ctx, vehicleID)
-		return err
+		if err != nil {
+			return err
+		}
+		// In the same transaction as the vehicle, so the panel cannot show a
+		// vehicle's state from one instant and its dispatch from another.
+		var d DispatchTarget
+		qerr := tx.QueryRow(ctx, `
+			SELECT sc.id, sc.hangar_id, h.name, h.lat, h.lon, sc.component,
+			       sc.dispatched_at, sc.dispatch_distance_km::float8,
+			       sc.dispatch_eta_min::float8
+			FROM service_schedules sc
+			JOIN hangars h ON h.id = sc.hangar_id
+			WHERE sc.status = 'in_service' AND sc.vehicle_id = $1
+			ORDER BY sc.dispatched_at DESC NULLS LAST
+			LIMIT 1`, vehicleID).Scan(&d.ScheduleID, &d.HangarID, &d.HangarName,
+			&d.HangarLat, &d.HangarLon, &d.Component, &d.DispatchedAt,
+			&d.DistanceKm, &d.EtaMin)
+		switch {
+		case qerr == nil:
+			dispatch = &d
+		case errors.Is(qerr, pgx.ErrNoRows):
+			// Not under service. The common case.
+		default:
+			// Non-fatal: a vehicle's live position matters more than knowing
+			// where it was sent, so the panel still opens.
+			log.Printf("liveview: dispatch lookup failed for vehicle %d: %v", vehicleID, qerr)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -286,6 +359,7 @@ func (s *Service) One(ctx context.Context, tenantID, vehicleID int64) (*VehicleL
 		CameraDeviceID: row.CameraDeviceID,
 		TankLitres:     row.FuelTankLiters,
 		DriveState:     StateOffline,
+		Dispatch:       dispatch,
 	}
 	now := time.Now()
 	var pos *telemetry.Position
