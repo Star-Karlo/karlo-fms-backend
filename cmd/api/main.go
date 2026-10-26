@@ -78,6 +78,7 @@ import (
 	"github.com/karlo/fms-backend/internal/telemetry"
 	"github.com/karlo/fms-backend/internal/telemetrysync"
 	"github.com/karlo/fms-backend/internal/tenantsync"
+	"github.com/karlo/fms-backend/internal/toll"
 	"github.com/karlo/fms-backend/internal/tracker"
 	"github.com/karlo/fms-backend/internal/trackersync"
 	"github.com/karlo/fms-backend/internal/trackinglink"
@@ -408,6 +409,9 @@ func main() {
 	// external call and no per-journey cost; it needs the route geometry,
 	// which the dispatch has. Its tables start empty, and an empty table
 	// refuses to price rather than reporting a journey as toll-free.
+	// internalToll is also served over HTTP further down, so TMS can price
+	// against these tables instead of calling MAPID for figures we hold.
+	var internalToll routing.TollQuoter
 	tollStore := maintenance.NewTollStore(pool)
 	if gates, err := tollStore.LoadTollGates(ctx); err != nil {
 		log.Printf("routing: toll tables unreadable, no in-house pricing: %v", err)
@@ -416,8 +420,8 @@ func main() {
 	} else {
 		cells, _ := tollStore.LoadTollCells(ctx)
 		closed, flat := routing.NewTollTable(cells).Cells()
-		maintenanceH = maintenanceH.WithTollQuoter(
-			routing.NewInternalToll(tollStore, 0))
+		internalToll = routing.NewInternalToll(tollStore, 0)
+		maintenanceH = maintenanceH.WithTollQuoter(internalToll)
 		log.Printf("routing: toll pricing in-house — %d gate(s), %d closed and %d flat usable cell(s)",
 			len(gates), closed, flat)
 	}
@@ -541,6 +545,15 @@ func main() {
 	r.Group(func(ir chi.Router) {
 		ir.Use(apiTokenH.AuthenticatorOr(auth.AuthenticatorWith(tm, sso, tenantDir)))
 		liveH.IntegrationRoutes(ir)
+		// Toll pricing joins the INTEGRATION group, where TMS already
+		// authenticates with its fms_ API key and a signed-in person can try
+		// the same call from the docs page.
+		//
+		// A tariff is a published national figure — the tables carry no
+		// tenant_id and no RLS (migration 0058) — so there is nothing here to
+		// scope per tenant. The auth is about who may spend our compute, not
+		// about whose data is returned.
+		toll.NewHandler(internalToll).Routes(ir)
 	})
 
 	log.Printf("fms-backend api on %s  (swagger: http://localhost%s/swagger/index.html)", cfg.Addr, cfg.Addr)
