@@ -5,6 +5,9 @@
 //	  -tariffs /path/to/tariff-table.csv \
 //	  -source  mapid
 //
+// Jasa Marga's own figures load differently, from the reference file Nathan
+// keeps in TMS/NEW/MICROSERVICES/docs — see reference.go and -reference.
+//
 // INPUTS, both produced by the routing-service scripts:
 //
 //	toll-gates.csv    from extract-toll-gates.py — 1.747 OpenStreetMap toll
@@ -185,7 +188,14 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "report what would be loaded, write nothing")
 	sqlOut := flag.String("sql-out", "",
 		"write an idempotent .sql file instead of connecting — for a database only reachable from inside the VPC")
+	referencePath := flag.String("reference", "",
+		"Jasa Marga's tariff table (tarif_tol_jasamarga_<date>.csv) — replaces source 'jasamarga'; see reference.go")
 	flag.Parse()
+
+	if *referencePath != "" {
+		runReference(*referencePath, *gatesPath, *sqlOut, *sourceRef)
+		return
+	}
 
 	if *gatesPath == "" || *tariffsPath == "" {
 		log.Fatal("both -gates and -tariffs are required")
