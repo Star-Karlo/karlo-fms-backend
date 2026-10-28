@@ -43,6 +43,22 @@ const (
 	// climbs back to the real level. Readings this soon after ignition-on are
 	// the gauge, not the tank.
 	gaugeSettleSec = 120.0
+	// How far apart two readings at the SAME PLACE can be and still be one
+	// fill. Three hours, not one.
+	//
+	// A fill at a pump is over in minutes, and an hour was generous for that.
+	// A fill at a LOADING POINT is not: the truck is fuelled from a bowser
+	// and then loaded for an hour and a half, and a damped sender reports
+	// that climb in pieces across the whole stop. On 28 Oct 2026 the first
+	// piece and the last were sixty-five minutes apart, so they stayed
+	// separate and one visit to one tank was reported as two refuels.
+	//
+	// The risk this accepts is two GENUINE fills at the same place inside
+	// three hours showing as one. On a 340-litre tank that is a truck
+	// filling twice at the same pump in an afternoon, which is not a thing
+	// that happens — and if it did, the litres would still be right, since
+	// the merge sums them.
+	refuelSamePlaceWindow = 3 * time.Hour
 	// Suspected theft: a single-transmission fuel DROP while the truck is STOPPED.
 	// Judged in LITRES when a tank size is set (theftMinLiters — what an operator
 	// actually watches for), falling back to a percentage otherwise. A drop while
@@ -191,10 +207,21 @@ func dedupThefts(ts []TheftEvent) []TheftEvent {
 	return out
 }
 
-// dedupRefuels collapses refuel readings that are the SAME fill — within ~250 m
-// and an hour of an earlier one — summing the rise, so one top-up shows as one
-// event rather than several. Separate fills (a different place or a different
-// time) stay apart.
+// dedupRefuels collapses refuel readings that are the SAME fill — within
+// ~250 m and refuelSamePlaceWindow of an earlier one — summing the rise, so
+// one top-up shows as one event rather than several. Separate fills (a
+// different place or a different time) stay apart.
+//
+// THE SUM IS NOT AN APPROXIMATION, and this is worth stating because the
+// obvious "tidy" is to take the overall climb instead. A tank balance needs
+// the GROSS fuel added: used = start − end + in. Over a long fill the truck
+// is also burning, so the gauge sags between pieces of the ramp, and the
+// overall peak-minus-floor is the fill MINUS that burn. Adding the pieces up
+// is the closer answer, and taking the span instead would understate
+// consumption by exactly the amount the engine used while standing there.
+//
+// So the split was never an arithmetic problem. It was a display one: three
+// events for one visit to one pump.
 func dedupRefuels(rs []RefuelEvent) []RefuelEvent {
 	out := []RefuelEvent{}
 	for _, r := range rs {
@@ -203,7 +230,7 @@ func dedupRefuels(rs []RefuelEvent) []RefuelEvent {
 			k := &out[i]
 			near := r.Lat != nil && r.Lon != nil && k.Lat != nil && k.Lon != nil &&
 				haversine(*r.Lat, *r.Lon, *k.Lat, *k.Lon) < 0.25
-			soon := r.Time.Sub(k.Time) < time.Hour && k.Time.Sub(r.Time) < time.Hour // |Δt| < 1h
+			soon := r.Time.Sub(k.Time) < refuelSamePlaceWindow && k.Time.Sub(r.Time) < refuelSamePlaceWindow
 			if near && soon {
 				k.Pct = round1(k.Pct + r.Pct)
 				k.Liters = round1(k.Liters + r.Liters)
