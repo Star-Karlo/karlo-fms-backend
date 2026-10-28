@@ -161,3 +161,64 @@ func TestAWobbleDoesNotSplitAFill(t *testing.T) {
 		t.Errorf("fill measured at %.1f%%, want 32%% — the whole climb, not a piece of it", rs[0].Pct)
 	}
 }
+
+// A top-up below the sensor-only floor is held back, not thrown away.
+//
+// 20 litres into a 340-litre tank moves the gauge about six points — under
+// refuelMinPct, so the sensor alone cannot tell it from noise. It becomes a
+// candidate rather than a refuel, and only a filling station under the truck
+// promotes it (promoteAtStations). What must never happen is the climb being
+// discarded at this stage, because then no amount of corroboration can bring
+// it back and the balance loses the litres for good.
+func TestASmallTopUpSurvivesAsACandidate(t *testing.T) {
+	tank := 340.0
+	on := true
+	at := time.Date(2026, 10, 28, 3, 0, 0, 0, time.UTC)
+	var ps []telemetry.Position
+	// Standing still for twenty minutes while the gauge climbs 40 → 46.
+	for i, lvl := range []float64{40, 40, 41, 43, 45, 46, 46, 46, 46, 46} {
+		speed := 0.0
+		md, _ := json.Marshal(map[string]any{"Fuel Level (CAN)": lvl})
+		ps = append(ps, telemetry.Position{
+			Time: at.Add(time.Duration(i) * 3 * time.Minute), Speed: &speed, Ignition: &on, Metadata: md,
+		})
+	}
+	trusted := trustedLevels(ps)
+
+	// Not a refuel on the sensor alone.
+	if rs := refuelsFromRises(ps, trusted, &tank); len(rs) != 0 {
+		t.Errorf("a 6-point climb was accepted without corroboration: %+v", rs)
+	}
+	// But still a candidate, with the dwell that lets a station vouch for it.
+	cands := risesInSeries(ps, trusted, &tank)
+	if len(cands) != 1 {
+		t.Fatalf("the top-up was discarded: got %d candidates, want 1", len(cands))
+	}
+	if cands[0].accepted {
+		t.Error("a 6-point climb must not be accepted on the sensor alone")
+	}
+	if cands[0].dwellMin < stationDwellMin {
+		t.Errorf("dwell %.0f min, want at least %.0f so a station can vouch for it",
+			cands[0].dwellMin, stationDwellMin)
+	}
+}
+
+// Noise is still noise. One or two points of sender wobble is below
+// riseMinPct and must not even become a candidate — otherwise every truck
+// parked near a filling station collects phantom top-ups.
+func TestSenderWobbleIsNotEvenACandidate(t *testing.T) {
+	tank := 340.0
+	on := true
+	at := time.Date(2026, 10, 28, 3, 0, 0, 0, time.UTC)
+	var ps []telemetry.Position
+	for i, lvl := range []float64{40, 41, 40, 41, 42, 41, 41, 41} {
+		speed := 0.0
+		md, _ := json.Marshal(map[string]any{"Fuel Level (CAN)": lvl})
+		ps = append(ps, telemetry.Position{
+			Time: at.Add(time.Duration(i) * 3 * time.Minute), Speed: &speed, Ignition: &on, Metadata: md,
+		})
+	}
+	if cands := risesInSeries(ps, trustedLevels(ps), &tank); len(cands) != 0 {
+		t.Errorf("sender wobble became %d candidate(s): %+v", len(cands), cands)
+	}
+}

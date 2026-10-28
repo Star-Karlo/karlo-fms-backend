@@ -615,7 +615,9 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 
 	// Refuels: every climb in the trusted series that sticks. See
 	// refuelsFromRises for why this is no longer judged across stops.
-	out.Refuels = refuelsFromRises(ps, trusted, tank)
+	// A known SPBU under the truck vouches for a fill too small for the
+	// sensor's own floor — it never invents one. See promoteAtStations.
+	out.Refuels = s.promoteAtStations(ctx, tenantID, risesInSeries(ps, trusted, tank))
 	// Two stops at the same pump (the truck pulled forward) are one fill.
 	out.Refuels = dedupRefuels(out.Refuels)
 	out.RefuelEvents = len(out.Refuels)
@@ -669,18 +671,23 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	case tank == nil || *tank == 0:
 		out.Note = "Set a Fuel Tank (L) on the vehicle to convert % used into litres and km/L."
 	case balanceFailed:
-		// Keyed on the BALANCE, not on whether a refuel was detected. The old
-		// condition here was `refuelPct > 0 || theftPct > 0`, which missed the
-		// worse version of the same fault: a fill the detector never saw
-		// leaves refuelPct at 0, so a level that ROSE 18 points fell through
-		// to the sentence below and was reported as "did not change
-		// measurably". Both the number and the explanation were wrong, and
-		// the explanation was the one a reader would have believed.
-		out.Note = "Fuel used could not be worked out for this period: the tank balance " +
-			"(level fall + refuels − suspected losses) came out below zero, which means " +
-			"one of those three is wrong — usually a refuel the sensor reported in several " +
-			"steps, or one taken at the very start of the window. The distance and the level " +
-			"readings are still good; the litres and cost are not."
+		// Deliberately silent, at the product owner's request (28 Oct 2026).
+		//
+		// This branch used to carry a paragraph explaining that the tank
+		// balance had come out below zero. It was accurate and it was the
+		// thing that finally made this fault visible — but it is English, it
+		// is four lines long, and it sits on a panel a customer reads, where
+		// CLAUDE.md asks for Bahasa and for brevity.
+		//
+		// The case is NOT silent to the reader: the console shows a dash
+		// instead of a figure and a one-line Bahasa caveat of its own, so
+		// nothing is reported as measured when it is not. This is the long
+		// English version being dropped, not the warning.
+		//
+		// The branch stays rather than being deleted, so a failed balance
+		// cannot fall through to the sentences below and be described as a
+		// level that did not move — which is exactly the wrong explanation
+		// this branch was added to stop.
 	case usedPct == 0 && start != end:
 		// The sum came out at exactly zero while the gauge moved. Rarer than
 		// the case above and not the same thing: here the terms cancelled
