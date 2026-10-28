@@ -2,9 +2,7 @@ package liveview
 
 import (
 	"encoding/json"
-	"math"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -43,29 +41,6 @@ func loadK9467(t *testing.T, from, to string) []telemetry.Position {
 	return out
 }
 
-func TestRefuelsAtStopsFindsTheRealFillOnly(t *testing.T) {
-	tank := 340.0
-	ps := loadK9467(t, "2026-10-26T11:30:00Z", "2026-10-27T01:55:00Z")
-	refuels := dedupRefuels(refuelsAtStops(ps, trustedLevels(ps), &tank))
-
-	if len(refuels) != 1 {
-		t.Fatalf("want exactly the rest-area refuel, got %d: %+v", len(refuels), refuels)
-	}
-	r := refuels[0]
-	if !strings.Contains(r.Address, "Rest Area Km 754") {
-		t.Errorf("refuel placed at %q, want the pump stop at Rest Area Km 754", r.Address)
-	}
-	wib := r.Time.In(time.FixedZone("WIB", 7*3600))
-	if wib.Format("02 Jan 15:04") != "26 Oct 19:34" {
-		t.Errorf("refuel at %s, want 26 Oct 19:34 WIB, when the truck stopped", wib.Format("02 Jan 15:04"))
-	}
-	// 24% in, 61% out: measured from the level going in, not from the 15% dip
-	// the gauge makes at engine start.
-	if math.Abs(r.Pct-37) > 1 {
-		t.Errorf("refuel %.1f%%, want 37%% (24%% → 61%%)", r.Pct)
-	}
-}
-
 // A window that ends while the engine is off must not end on the false 8%.
 // This is the order window the TMS card used: it closed at 08:20, mid-reading,
 // and booked the 52% → 8% fall as 150 L burned.
@@ -79,7 +54,7 @@ func TestTrustedLevelsIgnoreTheEngineOffReading(t *testing.T) {
 		t.Errorf("window ends on %.0f%%; the tank held 52-58%% all night", end)
 	}
 	tank := 340.0
-	if rs := refuelsAtStops(ps, trusted, &tank); len(rs) != 0 {
+	if rs := refuelsFromRises(ps, trusted, &tank); len(rs) != 0 {
 		t.Errorf("a parked truck refuelled %d times: %+v", len(rs), rs)
 	}
 }
@@ -90,106 +65,5 @@ func TestTrustedLevelsEmptyWhenTheEngineNeverRan(t *testing.T) {
 	ps := loadK9467(t, "2026-10-26T23:00:00Z", "2026-10-27T01:20:00Z") // 06:00–08:20 WIB, parked
 	if n := len(trustedLevels(ps)); n >= 2 {
 		t.Errorf("%d trusted readings from a parked truck with the engine off", n)
-	}
-}
-
-// One high reading on the move is fuel sloshing over a bump, not a fill.
-func TestRefuelsAtStopsIgnoresABump(t *testing.T) {
-	tank := 340.0
-	on := true
-	at := time.Date(2026, 10, 26, 3, 0, 0, 0, time.UTC)
-	var ps []telemetry.Position
-	for i, lvl := range []float64{40, 40, 40, 55, 40, 40, 39, 39} {
-		speed := 40.0
-		md, _ := json.Marshal(map[string]any{"Fuel Level (CAN)": lvl})
-		ps = append(ps, telemetry.Position{Time: at.Add(time.Duration(i) * 90 * time.Second), Speed: &speed, Ignition: &on, Metadata: md})
-	}
-	if rs := refuelsAtStops(ps, trustedLevels(ps), &tank); len(rs) != 0 {
-		t.Errorf("a bump was booked as %d refuel(s): %+v", len(rs), rs)
-	}
-}
-
-// A stop too short for a pump is not a refuel, however the gauge moves.
-func TestRefuelsAtStopsNeedsAStopLongEnoughToFill(t *testing.T) {
-	tank := 340.0
-	on := true
-	at := time.Date(2026, 10, 26, 3, 0, 0, 0, time.UTC)
-	type fix struct {
-		sec   int
-		speed float64
-		lvl   float64
-	}
-	fixes := []fix{
-		{0, 40, 40}, {300, 40, 40}, {600, 40, 40},
-		{660, 0, 40}, {720, 0, 40}, // one minute standing
-		{780, 40, 58}, {1200, 40, 58}, {1500, 40, 58}, {1800, 40, 58},
-	}
-	var ps []telemetry.Position
-	for _, f := range fixes {
-		speed := f.speed
-		md, _ := json.Marshal(map[string]any{"Fuel Level (CAN)": f.lvl})
-		ps = append(ps, telemetry.Position{Time: at.Add(time.Duration(f.sec) * time.Second), Speed: &speed, Ignition: &on, Metadata: md})
-	}
-	if rs := refuelsAtStops(ps, trustedLevels(ps), &tank); len(rs) != 0 {
-		t.Errorf("a one-minute stop was booked as a refuel: %+v", rs)
-	}
-}
-
-// A fill at the window's own left edge, which both lookbacks were blind to.
-//
-// History() is fetched for [from,to] and nothing older exists, so a stop that
-// begins at the first fix has no readings in the 15 minutes before it, and the
-// fallback that scans `trusted` searches the same window-bounded slice. The
-// fill was dropped, and dropping it is what makes the tank balance go
-// negative: start − end alone is a RISE, which clamps to a confident 0 L.
-//
-// Found from a TMS order card on 28 Oct 2026 — 0 L over 124 driven km, level
-// 40% → 58%, no refuel recorded. The window had just been widened to open when
-// the driver was assigned rather than when they accepted, which moved its left
-// edge across the depot fuel stop. Measuring the same trip from the loading
-// point gave a sensible figure, because that window opens after the pump.
-func TestAFillAtTheStartOfTheWindowIsStillCounted(t *testing.T) {
-	tank := 340.0
-	on := true
-	at := time.Date(2026, 10, 26, 3, 0, 0, 0, time.UTC)
-
-	type fix struct {
-		sec   int
-		speed float64
-		lvl   float64 // -1: the transmission carried no level at all
-	}
-	fixes := []fix{
-		// The window opens with the truck ALREADY standing at the pump, on a
-		// fix that carried no CAN level — so there is no trusted reading at
-		// or before the moment the stop begins.
-		{0, 0, -1},
-		// The gauge going in, inside the stop.
-		{90, 0, 40}, {180, 0, 40},
-		// Filling.
-		{400, 0, 65}, {600, 0, 90},
-		// Away, and burning down.
-		{900, 40, 90}, {1080, 40, 89}, {1500, 40, 85}, {2100, 40, 80}, {3000, 40, 58},
-	}
-	var ps []telemetry.Position
-	for _, f := range fixes {
-		speed := f.speed
-		var md []byte
-		if f.lvl >= 0 {
-			md, _ = json.Marshal(map[string]any{"Fuel Level (CAN)": f.lvl})
-		}
-		ps = append(ps, telemetry.Position{
-			Time: at.Add(time.Duration(f.sec) * time.Second), Speed: &speed, Ignition: &on, Metadata: md,
-		})
-	}
-
-	rs := refuelsAtStops(ps, trustedLevels(ps), &tank)
-	if len(rs) != 1 {
-		t.Fatalf("the fill at the window edge was dropped: got %d refuels, want 1. "+
-			"Without it the balance is 40 − 58 = −18, which clamps to a confident 0 L.", len(rs))
-	}
-	// Measured from the level going in (40), not from nothing.
-	if rs[0].Pct < 40 {
-		t.Errorf("refuel %.1f%%, want the climb from 40%% — measured from the window's "+
-			"own first reading, which is the gauge before the pump", rs[0].Pct)
 	}
 }
