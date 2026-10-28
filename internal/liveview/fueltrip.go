@@ -292,6 +292,10 @@ func trustedLevels(ps []telemetry.Position) []fuelPt {
 // the refuelBeforeMin before it; the level coming out is the median of trusted
 // readings from refuelAfterFromMin to refuelAfterToMin after the truck moves
 // again. A rise of refuelMinPct or more is a refuel, placed at the stop.
+//
+// A stop that begins at the window's first fix is the one case neither
+// lookback can serve, and it falls back to the window's own first reading —
+// see the comment at that branch for the trip it was found on.
 func refuelsAtStops(ps []telemetry.Position, trusted []fuelPt, tank *float64) []RefuelEvent {
 	stopped := func(p telemetry.Position) bool { return p.Speed != nil && *p.Speed <= movingSpeed }
 	levelsIn := func(from, to time.Time) []float64 {
@@ -330,6 +334,34 @@ func refuelsAtStops(ps []telemetry.Position, trusted []fuelPt, tank *float64) []
 					before = []float64{f.lvl}
 				}
 			}
+		}
+		if len(before) == 0 && len(trusted) > 0 && !begin.After(trusted[0].p.Time) {
+			// A fill at the WINDOW'S OWN EDGE, which both lookups above are
+			// blind to. History() is fetched for [from,to] and nothing older
+			// exists, so a stop that begins at the first fix has no readings
+			// before it and no earlier trusted point to fall back on — the
+			// loop above scans the same window-bounded slice. The fill was
+			// dropped, and with it the only term that makes the balance add
+			// up.
+			//
+			// The window's first reading IS the level going in: it is the
+			// gauge while the truck sat at the pump, before the fill. Using
+			// it costs no extra query and cannot reach outside the window.
+			//
+			// Seen on a TMS order card, 28 Oct 2026: a truck fuelled at the
+			// depot right after the planner assigned it, the window opened on
+			// 40% and closed on 58%, the fill was never counted, and
+			// start − end came to −18 and clamped to a confident "0 L" over
+			// 124 driven kilometres. Measuring the same trip from the loading
+			// point instead gave a sensible figure, because that window opens
+			// AFTER the pump — which is what showed the edge was the problem
+			// rather than the sensor.
+			//
+			// Under-reads rather than over-reads if the window opens midway
+			// up the ramp: part of the rise then sits before the first fix
+			// and is not counted. That is the right way round for a figure
+			// that becomes a cost.
+			before = []float64{trusted[0].lvl}
 		}
 		var after []float64
 		if i < len(ps) {
@@ -758,6 +790,10 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	// (thefts). This reconciles with the level + refuels a user can see, and does
 	// not accumulate sensor jitter. Clamp at 0 (can't burn a negative amount).
 	usedPct := start - end + refuelPct - theftPct
+	// Kept before the clamp, because the clamp destroys the evidence that the
+	// sum failed: a balance of -18 and a trip that genuinely burned nothing
+	// both leave 0 behind, and they want opposite words.
+	balanceFailed := usedPct < 0
 	if usedPct < 0 {
 		usedPct = 0
 	}
@@ -790,11 +826,26 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	switch {
 	case tank == nil || *tank == 0:
 		out.Note = "Set a Fuel Tank (L) on the vehicle to convert % used into litres and km/L."
-	case usedPct == 0 && (refuelPct > 0 || theftPct > 0):
+	case balanceFailed:
+		// Keyed on the BALANCE, not on whether a refuel was detected. The old
+		// condition here was `refuelPct > 0 || theftPct > 0`, which missed the
+		// worse version of the same fault: a fill the detector never saw
+		// leaves refuelPct at 0, so a level that ROSE 18 points fell through
+		// to the sentence below and was reported as "did not change
+		// measurably". Both the number and the explanation were wrong, and
+		// the explanation was the one a reader would have believed.
 		out.Note = "Fuel used could not be worked out for this period: the tank balance " +
-			"(level fall + refuels − suspected losses) came out at or below zero, which means " +
+			"(level fall + refuels − suspected losses) came out below zero, which means " +
 			"one of those three is wrong — usually a refuel the sensor reported in several " +
-			"steps. The distance and the level readings are still good; the litres and cost are not."
+			"steps, or one taken at the very start of the window. The distance and the level " +
+			"readings are still good; the litres and cost are not."
+	case usedPct == 0 && start != end:
+		// The sum came out at exactly zero while the gauge moved. Rarer than
+		// the case above and not the same thing: here the terms cancelled
+		// rather than went negative.
+		out.Note = "Fuel used came out at zero even though the level moved, so the refuels or " +
+			"suspected losses recorded for this period cancel the fall exactly. The litres and " +
+			"cost cannot be relied on."
 	case usedPct == 0:
 		out.Note = "Fuel level did not change measurably this trip (coarse 1% sensor) — km/L needs a longer trip."
 	}

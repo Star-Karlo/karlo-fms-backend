@@ -134,3 +134,62 @@ func TestRefuelsAtStopsNeedsAStopLongEnoughToFill(t *testing.T) {
 		t.Errorf("a one-minute stop was booked as a refuel: %+v", rs)
 	}
 }
+
+// A fill at the window's own left edge, which both lookbacks were blind to.
+//
+// History() is fetched for [from,to] and nothing older exists, so a stop that
+// begins at the first fix has no readings in the 15 minutes before it, and the
+// fallback that scans `trusted` searches the same window-bounded slice. The
+// fill was dropped, and dropping it is what makes the tank balance go
+// negative: start − end alone is a RISE, which clamps to a confident 0 L.
+//
+// Found from a TMS order card on 28 Oct 2026 — 0 L over 124 driven km, level
+// 40% → 58%, no refuel recorded. The window had just been widened to open when
+// the driver was assigned rather than when they accepted, which moved its left
+// edge across the depot fuel stop. Measuring the same trip from the loading
+// point gave a sensible figure, because that window opens after the pump.
+func TestAFillAtTheStartOfTheWindowIsStillCounted(t *testing.T) {
+	tank := 340.0
+	on := true
+	at := time.Date(2026, 10, 26, 3, 0, 0, 0, time.UTC)
+
+	type fix struct {
+		sec   int
+		speed float64
+		lvl   float64 // -1: the transmission carried no level at all
+	}
+	fixes := []fix{
+		// The window opens with the truck ALREADY standing at the pump, on a
+		// fix that carried no CAN level — so there is no trusted reading at
+		// or before the moment the stop begins.
+		{0, 0, -1},
+		// The gauge going in, inside the stop.
+		{90, 0, 40}, {180, 0, 40},
+		// Filling.
+		{400, 0, 65}, {600, 0, 90},
+		// Away, and burning down.
+		{900, 40, 90}, {1080, 40, 89}, {1500, 40, 85}, {2100, 40, 80}, {3000, 40, 58},
+	}
+	var ps []telemetry.Position
+	for _, f := range fixes {
+		speed := f.speed
+		var md []byte
+		if f.lvl >= 0 {
+			md, _ = json.Marshal(map[string]any{"Fuel Level (CAN)": f.lvl})
+		}
+		ps = append(ps, telemetry.Position{
+			Time: at.Add(time.Duration(f.sec) * time.Second), Speed: &speed, Ignition: &on, Metadata: md,
+		})
+	}
+
+	rs := refuelsAtStops(ps, trustedLevels(ps), &tank)
+	if len(rs) != 1 {
+		t.Fatalf("the fill at the window edge was dropped: got %d refuels, want 1. "+
+			"Without it the balance is 40 − 58 = −18, which clamps to a confident 0 L.", len(rs))
+	}
+	// Measured from the level going in (40), not from nothing.
+	if rs[0].Pct < 40 {
+		t.Errorf("refuel %.1f%%, want the climb from 40%% — measured from the window's "+
+			"own first reading, which is the gauge before the pump", rs[0].Pct)
+	}
+}
