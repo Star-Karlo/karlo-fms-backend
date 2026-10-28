@@ -222,3 +222,65 @@ func TestSenderWobbleIsNotEvenACandidate(t *testing.T) {
 		t.Errorf("sender wobble became %d candidate(s): %+v", len(cands), cands)
 	}
 }
+
+// One visit to one tank is one event, even when the gauge reports the climb
+// in pieces across ninety minutes.
+//
+// 28 Oct 2026: a truck fuelled at its loading point and was then loaded. The
+// damped sender climbed in steps, the walk saw two separate runs, and the
+// first and last were sixty-five minutes apart — outside the old one-hour
+// merge window — so a driver who filled once was shown two refuels.
+//
+// The LITRES must not change. The merge sums the pieces, which is the gross
+// fuel added; taking the overall span instead would quietly understate
+// consumption by whatever the engine burned while standing there.
+func TestOneVisitToOnePumpIsOneEvent(t *testing.T) {
+	lat, lon := -7.45, 112.70
+	at := time.Date(2026, 10, 28, 3, 0, 0, 0, time.UTC)
+	rs := dedupRefuels([]RefuelEvent{
+		{Time: at, Lat: &lat, Lon: &lon, Pct: 18, Liters: 61, CostRp: 414800},
+		// The rest of the same ramp, sixty-five minutes later: one hour apart
+		// was the old cut-off and it fell on the wrong side of it.
+		{Time: at.Add(65 * time.Minute), Lat: &lat, Lon: &lon, Pct: 14, Liters: 48, CostRp: 326400},
+	})
+	if len(rs) != 1 {
+		t.Fatalf("one fill reported as %d events: %+v", len(rs), rs)
+	}
+	if rs[0].Pct != 32 {
+		t.Errorf("merged to %.1f%%, want 32%% — the pieces are summed, because a tank "+
+			"balance needs the gross fuel added, not the net climb", rs[0].Pct)
+	}
+	if rs[0].Liters != 109 {
+		t.Errorf("merged to %.0f L, want 109 L", rs[0].Liters)
+	}
+}
+
+// Two fills at genuinely different places stay apart, however close in time.
+// Widening the window must not start folding a pump on the toll into a bowser
+// at the yard.
+func TestTwoPlacesStayTwoFills(t *testing.T) {
+	lat1, lon1 := -7.45, 112.70
+	lat2, lon2 := -7.50, 112.90 // tens of kilometres away
+	at := time.Date(2026, 10, 28, 3, 0, 0, 0, time.UTC)
+	rs := dedupRefuels([]RefuelEvent{
+		{Time: at, Lat: &lat1, Lon: &lon1, Pct: 18},
+		{Time: at.Add(40 * time.Minute), Lat: &lat2, Lon: &lon2, Pct: 14},
+	})
+	if len(rs) != 2 {
+		t.Errorf("two fills at different places merged into %d: %+v", len(rs), rs)
+	}
+}
+
+// And the same place on a different day is a different fill. The window is
+// three hours, not "anywhere on this trip".
+func TestTheSamePumpTomorrowIsANewFill(t *testing.T) {
+	lat, lon := -7.45, 112.70
+	at := time.Date(2026, 10, 28, 3, 0, 0, 0, time.UTC)
+	rs := dedupRefuels([]RefuelEvent{
+		{Time: at, Lat: &lat, Lon: &lon, Pct: 18},
+		{Time: at.Add(20 * time.Hour), Lat: &lat, Lon: &lon, Pct: 30},
+	})
+	if len(rs) != 2 {
+		t.Errorf("two visits a day apart merged into %d: %+v", len(rs), rs)
+	}
+}
