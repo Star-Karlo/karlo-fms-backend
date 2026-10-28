@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -39,13 +38,6 @@ const (
 	// small blip is NOT a refuel — only a sustained double-digit jump is.
 	refuelMinPct  = 12.0
 	maxTripGapSec = 600.0 // gap between fixes over this = offline, not engine-on time
-
-	// A refuel is judged across a STOP, by the settled level going in against
-	// the settled level coming out — see refuelsAtStops.
-	refuelMinStopMin   = 2.0  // a fill takes minutes; a shorter stop is not a pump
-	refuelBeforeMin    = 15.0 // the level going in: readings in the last 15 min before the stop
-	refuelAfterFromMin = 3.0  // the level coming out: readings 3 to 20 min after the truck
-	refuelAfterToMin   = 20.0 // moves again, once a damped gauge has caught up with the fill
 
 	// After the engine starts, a CAN fuel gauge re-initialises: it dips, then
 	// climbs back to the real level. Readings this soon after ignition-on are
@@ -274,157 +266,6 @@ func trustedLevels(ps []telemetry.Position) []fuelPt {
 		out = append(out, fuelPt{lvl, p})
 	}
 	return out
-}
-
-// refuelsAtStops finds refuels by comparing, across every stop, the settled
-// level going in with the settled level coming out.
-//
-// A fill can only happen with the truck standing still, and it leaves the tank
-// higher for good. A bump or slosh does neither: it is one high reading,
-// usually on the move, gone by the next. Comparing two neighbouring readings
-// cannot tell those apart, and it measured fills from the wrong place: the old
-// walk skipped a rise seen while moving, which is exactly where a damped gauge
-// shows a fill, and then booked the whole climb at the next stop, from the dip
-// the gauge makes at engine start.
-//
-// So: a stop is a run of fixes at walking pace or slower lasting at least
-// refuelMinStopMin. The level going in is the median of trusted readings in
-// the refuelBeforeMin before it; the level coming out is the median of trusted
-// readings from refuelAfterFromMin to refuelAfterToMin after the truck moves
-// again. A rise of refuelMinPct or more is a refuel, placed at the stop.
-//
-// A stop that begins at the window's first fix is the one case neither
-// lookback can serve, and it falls back to the window's own first reading —
-// see the comment at that branch for the trip it was found on.
-func refuelsAtStops(ps []telemetry.Position, trusted []fuelPt, tank *float64) []RefuelEvent {
-	stopped := func(p telemetry.Position) bool { return p.Speed != nil && *p.Speed <= movingSpeed }
-	levelsIn := func(from, to time.Time) []float64 {
-		var out []float64
-		for _, f := range trusted {
-			if !f.p.Time.Before(from) && !f.p.Time.After(to) {
-				out = append(out, f.lvl)
-			}
-		}
-		return out
-	}
-
-	var out []RefuelEvent
-	var lastAfter float64
-	var lastResume time.Time
-	for i := 0; i < len(ps); {
-		if !stopped(ps[i]) {
-			i++
-			continue
-		}
-		si, j := i, i
-		for j+1 < len(ps) && (ps[j+1].Speed == nil || stopped(ps[j+1])) {
-			j++
-		}
-		begin, finish := ps[si].Time, ps[j].Time
-		i = j + 1
-		if finish.Sub(begin).Minutes() < refuelMinStopMin {
-			continue
-		}
-
-		before := levelsIn(begin.Add(-time.Duration(refuelBeforeMin*float64(time.Minute))), begin)
-		if len(before) == 0 {
-			// Nothing shortly before: fall back to the last trusted reading going in.
-			for _, f := range trusted {
-				if f.p.Time.Before(begin) {
-					before = []float64{f.lvl}
-				}
-			}
-		}
-		if len(before) == 0 && len(trusted) > 0 && !begin.After(trusted[0].p.Time) {
-			// A fill at the WINDOW'S OWN EDGE, which both lookups above are
-			// blind to. History() is fetched for [from,to] and nothing older
-			// exists, so a stop that begins at the first fix has no readings
-			// before it and no earlier trusted point to fall back on — the
-			// loop above scans the same window-bounded slice. The fill was
-			// dropped, and with it the only term that makes the balance add
-			// up.
-			//
-			// The window's first reading IS the level going in: it is the
-			// gauge while the truck sat at the pump, before the fill. Using
-			// it costs no extra query and cannot reach outside the window.
-			//
-			// Seen on a TMS order card, 28 Oct 2026: a truck fuelled at the
-			// depot right after the planner assigned it, the window opened on
-			// 40% and closed on 58%, the fill was never counted, and
-			// start − end came to −18 and clamped to a confident "0 L" over
-			// 124 driven kilometres. Measuring the same trip from the loading
-			// point instead gave a sensible figure, because that window opens
-			// AFTER the pump — which is what showed the edge was the problem
-			// rather than the sensor.
-			//
-			// Under-reads rather than over-reads if the window opens midway
-			// up the ramp: part of the rise then sits before the first fix
-			// and is not counted. That is the right way round for a figure
-			// that becomes a cost.
-			before = []float64{trusted[0].lvl}
-		}
-		var after []float64
-		if i < len(ps) {
-			resume := ps[i].Time
-			after = levelsIn(resume.Add(time.Duration(refuelAfterFromMin*float64(time.Minute))),
-				resume.Add(time.Duration(refuelAfterToMin*float64(time.Minute))))
-		} else {
-			// The window ends at this stop: use what the settled gauge read at its end.
-			after = levelsIn(finish.Add(-time.Duration(refuelBeforeMin*float64(time.Minute))), finish)
-		}
-		if len(before) == 0 || len(after) == 0 {
-			continue
-		}
-		lvlIn, lvlOut := median(before), median(after)
-		// A second stop just after a fill (pulled forward at the pump) would see
-		// the gauge still climbing on its way in; the fill is already counted.
-		if !lastResume.IsZero() && begin.Sub(lastResume).Minutes() < refuelAfterToMin && lastAfter > lvlIn {
-			lvlIn = lastAfter
-		}
-		rise := lvlOut - lvlIn
-		if rise < refuelMinPct {
-			continue
-		}
-		at := ps[si] // the refuel is placed where the truck stopped
-		re := RefuelEvent{
-			Time: begin, Lat: at.Lat, Lon: at.Lon,
-			Address:  joinAddr(at.Jalan, at.Kota, at.Provinsi),
-			Province: at.Provinsi, Pct: round1(rise),
-		}
-		if re.Lat == nil || re.Lon == nil {
-			if lat, lon, addr, prov := nearestFixCoords(ps, begin); lat != nil {
-				re.Lat, re.Lon = lat, lon
-				if re.Address == "" {
-					re.Address = addr
-				}
-				if re.Province == "" {
-					re.Province = prov
-				}
-			}
-		}
-		if tank != nil && *tank > 0 {
-			liters := *tank * rise / 100
-			price := fuelPrice(re.Province)
-			re.Liters, re.PriceRp, re.CostRp = round1(liters), price, round0(liters*price)
-		}
-		out = append(out, re)
-		lastAfter = lvlOut
-		if i < len(ps) {
-			lastResume = ps[i].Time
-		}
-	}
-	return out
-}
-
-// median of a non-empty slice; the input is not modified.
-func median(xs []float64) float64 {
-	s := append([]float64(nil), xs...)
-	sort.Float64s(s)
-	n := len(s)
-	if n%2 == 1 {
-		return s[n/2]
-	}
-	return (s[n/2-1] + s[n/2]) / 2
 }
 
 // nearestFixCoords finds the fix closest in time to t that actually has a GPS
@@ -772,8 +613,9 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 	start, end := trusted[0].lvl, trusted[len(trusted)-1].lvl
 	out.FuelStartPct, out.FuelEndPct = &start, &end
 
-	// Refuels: judged across each stop, never between two readings.
-	out.Refuels = refuelsAtStops(ps, trusted, tank)
+	// Refuels: every climb in the trusted series that sticks. See
+	// refuelsFromRises for why this is no longer judged across stops.
+	out.Refuels = refuelsFromRises(ps, trusted, tank)
 	// Two stops at the same pump (the truck pulled forward) are one fill.
 	out.Refuels = dedupRefuels(out.Refuels)
 	out.RefuelEvents = len(out.Refuels)
