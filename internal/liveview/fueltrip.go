@@ -615,7 +615,9 @@ func (s *Service) FuelTrip(ctx context.Context, tenantID, vehicleID int64, from,
 
 	// Refuels: every climb in the trusted series that sticks. See
 	// refuelsFromRises for why this is no longer judged across stops.
-	out.Refuels = refuelsFromRises(ps, trusted, tank)
+	// A known SPBU under the truck vouches for a fill too small for the
+	// sensor's own floor — it never invents one. See promoteAtStations.
+	out.Refuels = s.promoteAtStations(ctx, tenantID, risesInSeries(ps, trusted, tank))
 	// Two stops at the same pump (the truck pulled forward) are one fill.
 	out.Refuels = dedupRefuels(out.Refuels)
 	out.RefuelEvents = len(out.Refuels)

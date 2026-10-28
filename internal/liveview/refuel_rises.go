@@ -22,6 +22,25 @@ const (
 	// again, so the first RISING reading is routinely on the road rather than
 	// at the pump.
 	riseStopLookbackMin = 20.0
+
+	// The smallest climb worth considering at all. The sender's own step is
+	// 1%, so three of them is the floor below which a "rise" is the gauge
+	// talking to itself. Candidates between here and refuelMinPct are only
+	// believed with a filling station under the truck — see stationRadiusM.
+	riseMinPct = 3.0
+	// A truck standing this close to a known SPBU, for this long, is evidence
+	// a fill happened that does not come from the sensor at all. Where it
+	// holds, a climb is believed at riseMinPct instead of refuelMinPct: a
+	// 20-litre top-up moves a 340-litre tank about six points, which the
+	// noise floor would otherwise throw away along with the twenty litres.
+	//
+	// Ten minutes, not two: a fill takes minutes, but so does queueing, and
+	// the dwell is only ever used to LOWER the bar on a climb that already
+	// happened. It never creates a refuel on its own — a rest area is also
+	// lunch, a toilet and a mandatory rest, and a truck that stopped at one
+	// without fuelling must not be charged for a tank.
+	stationRadiusM  = 250.0
+	stationDwellMin = 10.0
 )
 
 // stopRun is one period of the truck standing still.
@@ -52,6 +71,16 @@ func stopRuns(ps []telemetry.Position) []stopRun {
 		i = j + 1
 	}
 	return out
+}
+
+// riseCandidate is one climb that stuck, with what is known about where it
+// happened. Below refuelMinPct it is held back until something other than the
+// sensor agrees — see promoteAtStations.
+type riseCandidate struct {
+	event    RefuelEvent
+	rise     float64
+	dwellMin float64 // how long the truck stood where this is placed
+	accepted bool    // cleared refuelMinPct on the sensor alone
 }
 
 // refuelsFromRises finds fills by walking the trusted level series for climbs
@@ -89,12 +118,24 @@ func stopRuns(ps []telemetry.Position) []stopRun {
 // riseStopLookbackMin before it; failing both, the rising fix itself, which is
 // the honest answer when a truck fuelled without ever registering a stop.
 func refuelsFromRises(ps []telemetry.Position, trusted []fuelPt, tank *float64) []RefuelEvent {
+	var out []RefuelEvent
+	for _, c := range risesInSeries(ps, trusted, tank) {
+		if c.accepted {
+			out = append(out, c.event)
+		}
+	}
+	return out
+}
+
+// risesInSeries is the walk itself, returning every climb that stuck —
+// including the small ones, which only a filling station can vouch for.
+func risesInSeries(ps []telemetry.Position, trusted []fuelPt, tank *float64) []riseCandidate {
 	if len(trusted) < 2 {
 		return nil
 	}
 	stops := stopRuns(ps)
 
-	var out []RefuelEvent
+	var out []riseCandidate
 	for i := 1; i < len(trusted); i++ {
 		if trusted[i].lvl <= trusted[i-1].lvl {
 			continue
@@ -119,8 +160,12 @@ func refuelsFromRises(ps []telemetry.Position, trusted []fuelPt, tank *float64) 
 		}
 
 		rise := peak - floor
-		if rise >= refuelMinPct && risenAndHeld(trusted, peakIdx, floor, rise) {
-			out = append(out, riseEvent(ps, stops, trusted[i], rise, tank))
+		if rise >= riseMinPct && risenAndHeld(trusted, peakIdx, floor, rise) {
+			ev, dwell := riseEvent(ps, stops, trusted[i], rise, tank)
+			out = append(out, riseCandidate{
+				event: ev, rise: rise, dwellMin: dwell,
+				accepted: rise >= refuelMinPct,
+			})
 		}
 		// Resume after the run either way. A climb that failed the test is
 		// still a climb, and re-examining its own steps would find the same
@@ -154,14 +199,15 @@ func risenAndHeld(trusted []fuelPt, peakIdx int, floor, rise float64) bool {
 }
 
 // riseEvent builds the refuel, placed at the stop the climb belongs to.
-func riseEvent(ps []telemetry.Position, stops []stopRun, first fuelPt, rise float64, tank *float64) RefuelEvent {
+func riseEvent(ps []telemetry.Position, stops []stopRun, first fuelPt, rise float64, tank *float64) (RefuelEvent, float64) {
 	at, when := first.p, first.p.Time
+	var dwell float64
 	for _, s := range stops {
 		switch {
 		case !when.Before(s.begin) && !when.After(s.finish):
-			at, when = s.at, s.begin // the climb began while standing here
+			at, when, dwell = s.at, s.begin, s.finish.Sub(s.begin).Minutes() // began while standing here
 		case when.After(s.finish) && when.Sub(s.finish).Minutes() <= riseStopLookbackMin:
-			at, when = s.at, s.begin // the gauge caught up after pulling away
+			at, when, dwell = s.at, s.begin, s.finish.Sub(s.begin).Minutes() // gauge caught up after pulling away
 		}
 	}
 
@@ -186,5 +232,5 @@ func riseEvent(ps []telemetry.Position, stops []stopRun, first fuelPt, rise floa
 		price := fuelPrice(re.Province)
 		re.Liters, re.PriceRp, re.CostRp = round1(liters), price, round0(liters*price)
 	}
-	return re
+	return re, dwell
 }
