@@ -1,0 +1,127 @@
+version: 0.2
+
+# Build, migrate, roll — the whole deploy, in region.
+#
+# This is what .github/workflows/deploy.yml does, moved so CodePipeline runs
+# it inside ap-southeast-3 instead of a human clicking it on a GitHub runner.
+# The manual workflow stays as break-glass: a pipeline cannot deploy when the
+# pipeline itself is broken.
+#
+# WHY THE MOVE IS WORTH ANYTHING. On 29 Oct 2026 a one-line SQL fix to
+# vehiclesync took three merge-then-click rounds, and twice the logs people
+# were reading came from the previous image because merging does not deploy
+# here. Every TMS service deploys on merge; this one did not.
+#
+# Nothing is configured in this file. Every name comes from the project
+# environment in the pipeline's terraform, which reads it from the same
+# locals that registered the task definition and created the ECR repository —
+# so renaming a service cannot leave the deploy pointing at the old one.
+#
+# Supplied by the project environment:
+#   ECS_CLUSTER  SERVICE_NAME  CONTAINER_NAME
+#   ECR_REPOSITORY_URL  ECR_REPOSITORY_NAME
+#   MIGRATE_TASKDEF  TASK_NETWORK   (TASK_NETWORK is the JSON from
+#                                    `terraform output -raw migrate_network`)
+#
+# Supplied per execution by the pipeline's Deploy action:
+#   COMMIT_ID  — the sha the Source stage resolved, as #{SourceVariables.CommitId}
+
+# `pipefail` is a bash builtin and the default shell is not documented, so it
+# is pinned rather than assumed: under dash the build dies on its first line.
+env:
+  shell: bash
+
+phases:
+  pre_build:
+    # Without this, CodeBuild would run post_build — the phase that rolls
+    # production — after a failed build.
+    on-failure: ABORT
+    commands:
+      - |
+        set -euo pipefail
+        SHORT="$(printf '%s' "$COMMIT_ID" | cut -c1-12)"
+        echo "$SHORT" > /tmp/short
+        echo "--- deploying $COMMIT_ID ($SHORT)"
+        aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
+          | docker login --username AWS --password-stdin "$ECR_REPOSITORY_URL"
+
+  build:
+    on-failure: ABORT
+    commands:
+      - |
+        set -euo pipefail
+        SHORT="$(cat /tmp/short)"
+        IMAGE="$ECR_REPOSITORY_URL:sha-$SHORT"
+
+        # Tagged by COMMIT, never :latest. An immutable tag is what makes
+        # "which code is running" answerable from `describe-task-definition`
+        # alone — the check the runbook asks for after every deploy, and the
+        # one that showed e201d41 still serving while 1e69151 was believed
+        # live.
+        echo "--- building $IMAGE"
+        docker build -t "$IMAGE" .
+        docker push "$IMAGE"
+        echo "$IMAGE" > /tmp/image
+
+  post_build:
+    commands:
+      # MIGRATIONS FIRST, INSIDE THE VPC.
+      #
+      # The Jakarta RDS has no public address, so this cannot be a psql from
+      # the build host: it is a one-off Fargate task from the image just
+      # pushed, carrying cmd/migrate-schema and db/migrations and connecting
+      # as the owner role through its own secret.
+      #
+      # It waits, and a non-zero exit fails the deploy — so new code never
+      # rolls onto an old schema.
+      - |
+        set -euo pipefail
+        IMAGE="$(cat /tmp/image)"
+        echo "--- migrations"
+        REV="$(bash scripts/register-revision.sh "$MIGRATE_TASKDEF" "$IMAGE")"
+        ARN="$(aws ecs run-task --cluster "$ECS_CLUSTER" \
+                 --task-definition "$MIGRATE_TASKDEF:$REV" \
+                 --launch-type FARGATE --network-configuration "$TASK_NETWORK" \
+                 --query 'tasks[0].taskArn' --output text)"
+        echo "migrate task: $ARN"
+        aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$ARN"
+        CODE="$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$ARN" \
+                  --query 'tasks[0].containers[0].exitCode' --output text)"
+        REASON="$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$ARN" \
+                    --query 'tasks[0].stoppedReason' --output text)"
+        echo "exit=$CODE reason=$REASON"
+        if [ "$CODE" != "0" ]; then
+          echo "migrations failed (exit $CODE) — see /ecs/karlo-prod-fms-migrate"
+          exit 1
+        fi
+
+      # ROLL THE SERVICE.
+      #
+      # A new revision pinned to this image, not --force-new-deployment: the
+      # service's task_definition is ignored by terraform precisely so this
+      # step owns it. register-revision.sh describes the current revision and
+      # swaps only the image, which is what carries every environment
+      # variable forward.
+      #
+      # THAT CARRYING-FORWARD IS ALSO THE TRAP. terraform will not change an
+      # env var on an existing family — ignore_changes covers the container
+      # definitions — and this step preserves whatever the last revision had.
+      # So an environment change reaches production by registering a revision
+      # by hand, and a `terraform apply` that reports no changes is not
+      # evidence that it took. See the runbook.
+      - |
+        set -euo pipefail
+        IMAGE="$(cat /tmp/image)"
+        echo "--- rolling $SERVICE_NAME"
+        REV="$(bash scripts/register-revision.sh "$SERVICE_NAME" "$IMAGE")"
+        aws ecs update-service --cluster "$ECS_CLUSTER" --service "$SERVICE_NAME" \
+          --task-definition "$SERVICE_NAME:$REV" >/dev/null
+        aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$SERVICE_NAME"
+
+        # Say what is actually running, so the pipeline's own log answers the
+        # question the runbook asks. A green pipeline is not proof.
+        RUNNING="$(aws ecs describe-services --cluster "$ECS_CLUSTER" \
+                     --services "$SERVICE_NAME" \
+                     --query 'services[0].taskDefinition' --output text)"
+        echo "--- deployed: $RUNNING"
+        echo "--- image:    $IMAGE"
