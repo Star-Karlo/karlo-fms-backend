@@ -325,10 +325,24 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 			//    table DOES still allocate its own — unlike tenants, whose ids
 			//    come from upstream. Master data has no bigint to offer, so FMS
 			//    mints one and remembers which ObjectId it belongs to.
+			// $5 is CAST, and it has to be. In `INSERT ... SELECT` Postgres
+			// does not infer a parameter's type from the target column the
+			// way it does for `VALUES` — the select list is planned on its
+			// own — so a bare $5 here has no type at all and the statement
+			// fails with "could not determine data type of parameter $5"
+			// (SQLSTATE 42P08) before it reaches the table.
+			//
+			// It failed for EVERY tenant on EVERY pass, so the whole vehicle
+			// projection was frozen: a truck added in master data never
+			// appeared, a re-plated one kept its old number, and the driver
+			// pairing below was never reached — which is why FMS showed
+			// "Unassigned Driver" for a truck TMS had a driver on. None of it
+			// errored anywhere a person would look; the sync simply logged
+			// and moved to the next tenant.
 			ct, err = tx.Exec(ctx, `
 				INSERT INTO vehicles (tenant_id, license_plate, hull_no, unit_year, status, master_data_id)
-				SELECT $1, $2, NULLIF($3,''), NULLIF($4,0)::int, 'active', $5
-				 WHERE NOT EXISTS (SELECT 1 FROM vehicles w WHERE w.master_data_id = $5)`,
+				SELECT $1, $2, NULLIF($3,''), NULLIF($4,0)::int, 'active', $5::text
+				 WHERE NOT EXISTS (SELECT 1 FROM vehicles w WHERE w.master_data_id = $5::text)`,
 				c.ID, plate, v.ChassisNumber, v.Year, v.ID)
 			if err != nil {
 				return err
