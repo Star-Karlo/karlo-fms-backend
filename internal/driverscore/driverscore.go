@@ -88,9 +88,6 @@ var DefaultPolicy = Policy{
 // internal/scorecard's default so the number the collector writes and the
 // number the scorecard endpoint shows come from the same place.
 const (
-	weightOverspeed = 45.0
-	weightIdle      = 30.0
-	weightLongShift = 25.0
 	// Harsh-driving pillars, fed by the MDVR G-sensor (driving_events). These
 	// are the slots this package reserved: braking / acceleration / cornering.
 	// Additive on top of the GPS pillars and the final score floors at 0, so a

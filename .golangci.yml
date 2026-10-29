@@ -1,0 +1,27 @@
+# What the Test stage runs, beyond golangci-lint's own defaults.
+#
+# ONE EXCLUSION, AND IT IS NOT A STYLE PREFERENCE. internal/platform/ is COPIED
+# into the four TMS services and partly into FMS — the workspace rule is that a
+# change to one copy lands in all of them in the same change set. Which symbols
+# a copy uses therefore differs per service: authctx/features.go declares
+# fmsFeatures and featureRegistry, TMS's authentication-service reads them in
+# IsFeature and FeaturesFor, and nothing in FMS does.
+#
+# `unused` is right about FMS and wrong about the file. Deleting the symbols
+# here would widen a drift between the copies that already exists, and would
+# break the service that does use them. So the shared tree is excluded from
+# that one linter, and only that one: everything else still applies to it.
+#
+# NOT a substitute for the TMS rule set. The four TMS services pin
+# golangci-lint v2.5.0 with a chosen list — errcheck, gosec, revive, unparam
+# and more — and FMS runs v1.62.2 on defaults. Aligning the two is 53 findings
+# and its own change; this file is the minimum that lets a correct build pass.
+
+run:
+  timeout: 5m
+
+issues:
+  exclude-rules:
+    - path: internal/platform/
+      linters:
+        - unused

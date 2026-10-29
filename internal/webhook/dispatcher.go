@@ -221,7 +221,9 @@ func deliver(ctx context.Context, url, secret string, body map[string]any) (int,
 		return 0, err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	// Drain so the connection can be reused; a short read here changes
+	// nothing about the delivery, which is judged on the status code below.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return resp.StatusCode, fmt.Errorf("non-2xx status %d", resp.StatusCode)
 	}

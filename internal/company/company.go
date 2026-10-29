@@ -125,9 +125,6 @@ func (h *Handler) Routes(r chi.Router) {
 	})
 }
 
-const selectCols = `id, name, slug, legal_name, tax_id, address, city, province,
-	postal_code, country, phone, email, website, (logo_key IS NOT NULL AND logo_key <> '')`
-
 // LogoUploadRequest asks for a logo upload slot.
 type LogoUploadRequest struct {
 	Filename string `json:"filename"`

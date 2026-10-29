@@ -138,9 +138,7 @@ func (h *Handler) Narrate(ctx context.Context, d customreport.Digest) (*customre
 	}
 
 	out := &customreport.Narrative{Summary: strings.TrimSpace(str(input["summary"]))}
-	for _, s := range stringList(input["sections"]) {
-		out.Sections = append(out.Sections, s)
-	}
+	out.Sections = append(out.Sections, stringList(input["sections"])...)
 
 	// A narrative with no summary is not worth rendering a heading for; the
 	// tables alone are more honest than an empty "Summary" section.

@@ -69,9 +69,7 @@ func norm(name string) string {
 		}
 	}
 	for _, suf := range suffixes {
-		if strings.HasSuffix(s, suf) {
-			s = s[:len(s)-len(suf)]
-		}
+		s = strings.TrimSuffix(s, suf)
 	}
 	return strings.TrimSpace(spaces.ReplaceAllString(s, " "))
 }

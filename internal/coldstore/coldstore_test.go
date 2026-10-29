@@ -1,6 +1,7 @@
 package coldstore
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -37,7 +38,7 @@ func TestPrefix(t *testing.T) {
 }
 
 func TestNewNilWithoutBucket(t *testing.T) {
-	if New(nil, "ap-southeast-1", "") != nil {
+	if New(context.TODO(), "ap-southeast-1", "") != nil {
 		t.Error("New with empty bucket must return nil (cold disabled)")
 	}
 }

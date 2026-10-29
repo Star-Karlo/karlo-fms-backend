@@ -94,11 +94,6 @@ type DTO struct {
 	Permissions []string `json:"permissions"`
 }
 
-type writeReq struct {
-	Name        string   `json:"name"`
-	Permissions []string `json:"permissions"`
-}
-
 // allowed decides a permission from whichever source is authoritative for this
 // caller.
 //

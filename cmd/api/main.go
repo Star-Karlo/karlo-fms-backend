@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -470,7 +471,19 @@ func main() {
 	go scoreCollector.Run(ctx)
 
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, middleware.Recoverer)
+	// ClientIPFromXFFTrustedProxies(1), NOT RealIP.
+	//
+	// RealIP takes the LEFTMOST X-Forwarded-For entry, which is whatever the
+	// client sent: the ALB appends to that header, it does not replace it. So
+	// the rate limits below — 30 login attempts a minute, 60 on the public
+	// tracking links — could be stepped around by setting one header, and a
+	// brute force would never meet them. chi deprecated RealIP for exactly
+	// this (GHSA-3fxj-6jh8-hvhx).
+	//
+	// One trusted proxy, because fms-api.karlo.id is an alias straight to the
+	// platform ALB and nothing sits between. Counted from the right, so the
+	// entry taken is the one the ALB wrote and the client cannot forge.
+	r.Use(middleware.RequestID, middleware.ClientIPFromXFFTrustedProxies(1), middleware.Logger, middleware.Recoverer)
 	r.Use(httpx.CORS(cfg.CORSOrigins))
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -482,14 +495,16 @@ func main() {
 	// Public (pre-auth) endpoints, rate-limited per client IP. Login is also
 	// throttled by the auth service, but a brute-force or a scraper of public
 	// tracking links should be stopped here before it costs an upstream call.
-	// Keyed by RealIP, which chi's middleware set from X-Forwarded-For (the
-	// ALB) above.
+	//
+	// Keyed by the address the ALB recorded, not by RemoteAddr: LimitByIP
+	// reads RemoteAddr, which behind a load balancer is the balancer, so
+	// every client in the world would share one bucket.
 	r.Group(func(pub chi.Router) {
-		pub.Use(httprate.LimitByIP(30, time.Minute))
+		pub.Use(httprate.LimitBy(30, time.Minute, clientIPKey))
 		authH.PublicRoutes(pub)
 	})
 	r.Group(func(pub chi.Router) {
-		pub.Use(httprate.LimitByIP(60, time.Minute))
+		pub.Use(httprate.LimitBy(60, time.Minute, clientIPKey))
 		trackingH.PublicRoutes(pub)
 	})
 
@@ -594,4 +609,24 @@ func authPublicKey(path, inline string) []byte {
 		log.Fatalf("auth public key %s: %v", path, err)
 	}
 	return b
+}
+
+// clientIPKey buckets a rate limit by the client address the trusted proxy
+// recorded.
+//
+// Falls back to the TCP peer when the header is absent, which happens for a
+// request that did not come through the ALB — a health check from inside the
+// VPC, or anything reaching the task directly. For those the peer IS the
+// client, so it is the right key; httprate.KeyByIP is not used for it because
+// that helper is deprecated precisely for the proxied case this function has
+// already handled above.
+func clientIPKey(r *http.Request) (string, error) {
+	if ip := middleware.GetClientIP(r.Context()); ip != "" {
+		return ip, nil
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr, nil
+	}
+	return host, nil
 }
