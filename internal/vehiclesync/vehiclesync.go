@@ -382,6 +382,25 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 			//    the count means "actually differed" rather than "row visited"
 			//    — a sync that reports 1,988 updates every five minutes tells
 			//    nobody anything.
+			//
+			//    EVERY OPTIONAL FIELD IS COMPARED THROUGH COALESCE, and that
+			//    shape is load-bearing rather than stylistic. It used to read
+			//    `($5 IS NOT NULL AND color IS DISTINCT FROM $5)`, and
+			//    `$5 IS NOT NULL` gives Postgres nothing to infer a type
+			//    from — the COALESCE in the SET clause does not reach it,
+			//    because each expression is analysed on its own. The
+			//    statement failed at PREPARE with "could not determine data
+			//    type of parameter $5" (SQLSTATE 42P08), for every tenant,
+			//    on every pass, and the whole projection stopped here: no
+			//    new vehicle, no re-plate, and never the driver pairing in
+			//    3c — which is what showed up as "Unassigned Driver" in FMS
+			//    for a truck TMS had a driver on.
+			//
+			//    `col IS DISTINCT FROM COALESCE($n, col)` says the same
+			//    thing: nil leaves the column compared against itself, which
+			//    is false, so nil is still a no-op. It takes its type from
+			//    the column, so nothing has to be cast and no Go type has to
+			//    be guessed at.
 			ct, err = tx.Exec(ctx, `
 				UPDATE vehicles SET license_plate    = $2,
 				                    hull_no          = COALESCE(NULLIF($3,''), hull_no),
@@ -397,12 +416,12 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				   AND (license_plate IS DISTINCT FROM $2
 				        OR (NULLIF($3,'') IS NOT NULL AND hull_no   IS DISTINCT FROM $3)
 				        OR (NULLIF($4,0)  IS NOT NULL AND unit_year IS DISTINCT FROM $4::int)
-				        OR ($5  IS NOT NULL AND color            IS DISTINCT FROM $5)
-				        OR ($6  IS NOT NULL AND odometer         IS DISTINCT FROM $6)
-				        OR ($7  IS NOT NULL AND hourmeter        IS DISTINCT FROM $7)
-				        OR ($8  IS NOT NULL AND fuel_tank_liters IS DISTINCT FROM $8)
-				        OR ($9  IS NOT NULL AND fuel_ratio_kmpl  IS DISTINCT FROM $9)
-				        OR ($10 IS NOT NULL AND notes            IS DISTINCT FROM $10))`,
+				        OR color            IS DISTINCT FROM COALESCE($5, color)
+				        OR odometer         IS DISTINCT FROM COALESCE($6, odometer)
+				        OR hourmeter        IS DISTINCT FROM COALESCE($7, hourmeter)
+				        OR fuel_tank_liters IS DISTINCT FROM COALESCE($8, fuel_tank_liters)
+				        OR fuel_ratio_kmpl  IS DISTINCT FROM COALESCE($9, fuel_ratio_kmpl)
+				        OR notes            IS DISTINCT FROM COALESCE($10, notes))`,
 				v.ID, plate, v.ChassisNumber, v.Year,
 				v.Color, v.OdometerKm, v.HourmeterHours,
 				v.FuelTankLiters, v.FuelRatioKmpl, v.Notes)
@@ -468,11 +487,11 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				                    max_weight_kg = COALESCE($6, max_weight_kg),
 				                    updated_at    = now()
 				 WHERE master_data_id = $1
-				   AND (($2 IS NOT NULL AND axles         IS DISTINCT FROM $2)
-				     OR ($3 IS NOT NULL AND length_m      IS DISTINCT FROM $3)
-				     OR ($4 IS NOT NULL AND width_m       IS DISTINCT FROM $4)
-				     OR ($5 IS NOT NULL AND height_m      IS DISTINCT FROM $5)
-				     OR ($6 IS NOT NULL AND max_weight_kg IS DISTINCT FROM $6))`,
+				   AND (axles         IS DISTINCT FROM COALESCE($2, axles)
+				     OR length_m      IS DISTINCT FROM COALESCE($3, length_m)
+				     OR width_m       IS DISTINCT FROM COALESCE($4, width_m)
+				     OR height_m      IS DISTINCT FROM COALESCE($5, height_m)
+				     OR max_weight_kg IS DISTINCT FROM COALESCE($6, max_weight_kg))`,
 				v.ID, v.Axles, v.LengthM, v.WidthM, v.HeightM, v.MaxWeightKg)
 			if err != nil {
 				return fmt.Errorf("update dimensions: %w", err)
