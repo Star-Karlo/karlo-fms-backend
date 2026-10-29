@@ -39,6 +39,7 @@ package vehiclesync
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -315,7 +316,7 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				     = upper(regexp_replace($3,            '[^A-Za-z0-9]', '', 'g'))`,
 				v.ID, c.ID, plate)
 			if err != nil {
-				return err
+				return fmt.Errorf("link by plate: %w", err)
 			}
 			if ct.RowsAffected() > 0 {
 				r.Linked += int(ct.RowsAffected())
@@ -345,7 +346,7 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				 WHERE NOT EXISTS (SELECT 1 FROM vehicles w WHERE w.master_data_id = $5::text)`,
 				c.ID, plate, v.ChassisNumber, v.Year, v.ID)
 			if err != nil {
-				return err
+				return fmt.Errorf("insert: %w", err)
 			}
 			r.Inserted += int(ct.RowsAffected())
 
@@ -406,7 +407,7 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				v.Color, v.OdometerKm, v.HourmeterHours,
 				v.FuelTankLiters, v.FuelRatioKmpl, v.Notes)
 			if err != nil {
-				return err
+				return fmt.Errorf("update projected fields: %w", err)
 			}
 			r.Updated += int(ct.RowsAffected())
 
@@ -437,7 +438,7 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 					     OR (NULLIF($4,'') IS NOT NULL AND vehicle_type IS DISTINCT FROM $4))`,
 					v.ID, brand, body, vtype)
 				if err != nil {
-					return err
+					return fmt.Errorf("update tracker link: %w", err)
 				}
 				r.Updated += int(ct.RowsAffected())
 			}
@@ -474,7 +475,7 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				     OR ($6 IS NOT NULL AND max_weight_kg IS DISTINCT FROM $6))`,
 				v.ID, v.Axles, v.LengthM, v.WidthM, v.HeightM, v.MaxWeightKg)
 			if err != nil {
-				return err
+				return fmt.Errorf("update dimensions: %w", err)
 			}
 			r.Updated += int(ct.RowsAffected())
 
@@ -496,7 +497,7 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 						   AND vehicles.fleet_group_id IS DISTINCT FROM g.id`, v.ID, v.TruckGroupID)
 				}
 				if err != nil {
-					return err
+					return fmt.Errorf("update group membership: %w", err)
 				}
 				r.Grouped += int(ct.RowsAffected())
 			}
@@ -517,7 +518,7 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 				UPDATE vehicles SET status = 'active', updated_at = now()
 				 WHERE master_data_id = $1 AND status = 'archive'`, v.ID)
 			if err != nil {
-				return err
+				return fmt.Errorf("pair current driver: %w", err)
 			}
 			r.Restored += int(ct.RowsAffected())
 
@@ -541,7 +542,7 @@ func (s *Syncer) company(ctx context.Context, c tenantdir.Tenant) (Result, error
 					   AND vehicles.current_driver_id IS DISTINCT FROM e.id`, v.ID, v.DriverIDs[0])
 			}
 			if err != nil {
-				return err
+				return fmt.Errorf("archive or restore: %w", err)
 			}
 			r.Paired += int(ct.RowsAffected())
 		}
