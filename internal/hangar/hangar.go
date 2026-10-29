@@ -329,10 +329,6 @@ type InMaintenance struct {
 	HangarName   string  `json:"hangar_name,omitempty"`
 	Present      bool    `json:"present"`
 	DistanceM    *int    `json:"distance_m,omitempty"`
-
-	// Unexported: needed to compute Present, not worth exposing.
-	hangarLat, hangarLon *float64
-	hangarRadius         *int
 }
 
 // create godoc

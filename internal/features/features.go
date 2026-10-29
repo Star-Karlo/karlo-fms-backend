@@ -227,12 +227,6 @@ func (h *Handler) RequireFeature(key string) func(http.Handler) http.Handler {
 	}
 }
 
-// featureState is one registry entry plus whether it's on for the tenant.
-type featureState struct {
-	Def
-	Enabled bool `json:"enabled"`
-}
-
 // getMine: the caller's own tenant effective features as {key: bool} — the app
 // uses this to hide disabled modules.
 func (h *Handler) getMine(w http.ResponseWriter, r *http.Request) {
