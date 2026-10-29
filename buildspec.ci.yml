@@ -1,0 +1,102 @@
+version: 0.2
+
+# The check suite, as a pipeline stage.
+#
+# WHY IT MOVED HERE FROM .github/workflows/ci.yml.
+#
+# On Actions these ran BESIDE the deploy and gated nothing: ci.yml watched
+# pushes to main, deploy.yml was a separate manual dispatch, and nothing
+# connected them. A red CI run and a green deploy of the same commit were
+# both possible, and the deploy would not have noticed.
+#
+# Here this is the pipeline's Test stage, so the Deploy stage does not start
+# until it passes. That is the whole point of the move — the checks are the
+# same checks.
+#
+# WHAT IS DELIBERATELY NOT HERE.
+#
+# No Postgres, no Redis, no containers. fms-backend's tests are pure: the
+# whole suite runs green with no database on a laptop, and nothing carries an
+# `integration` build tag. Standing a database up to run tests that never
+# touch one would add two minutes to every build and prove nothing. When the
+# first integration test arrives, copy business-service's buildspec.ci.yml —
+# it has the sibling-container pattern worked out, including the cleanup that
+# has to run on the abort path.
+#
+# Supplied by the project environment:
+#   TEST_IMAGE        the toolchain image, pinned to the Dockerfile's Go
+#   GOLANGCI_VERSION  pinned, so a lint release cannot redden an untouched repo
+
+env:
+  shell: bash
+
+# Caches the module and compile caches between builds on the same host, which
+# is most of the wall clock. Best-effort: a cold host starts from scratch and
+# nothing below depends on a hit.
+cache:
+  paths:
+    - '/root/.cache/karlo-fms-gomod/**/*'
+    - '/root/.cache/karlo-fms-gobuild/**/*'
+
+phases:
+  build:
+    on-failure: ABORT
+    commands:
+      # One container for every check, so the Go that compiles the tests is
+      # the Go the Dockerfile builds with rather than whatever the managed
+      # image happens to ship.
+      #
+      # `sh -c`, never `sh -lc`: a login shell re-reads /etc/profile and drops
+      # /usr/local/go/bin from PATH, which reports `go: not found` and sends
+      # whoever reads it looking in the wrong place.
+      - |
+        set -euo pipefail
+        docker run --rm \
+          -v "$PWD":/src -w /src \
+          -v /root/.cache/karlo-fms-gomod:/go/pkg/mod \
+          -v /root/.cache/karlo-fms-gobuild:/root/.cache/go-build \
+          -e GOLANGCI_VERSION="$GOLANGCI_VERSION" \
+          "$TEST_IMAGE" sh -c '
+            set -eu
+
+            # gcc and musl-dev are for -race, which needs cgo. Without them
+            # the race detector fails to link and the flag buys nothing while
+            # still appearing on the command line.
+            echo "--- toolchain"
+            apk add --no-cache gcc musl-dev git >/dev/null
+
+            echo "--- build"
+            go build ./...
+
+            echo "--- vet"
+            go vet ./...
+
+            echo "--- test"
+            go test -race ./...
+
+            echo "--- lint"
+            go install github.com/golangci/golangci-lint/cmd/golangci-lint@"$GOLANGCI_VERSION"
+            golangci-lint run ./...
+
+            # The module graph must be what go.mod and go.sum say it is. A
+            # drifted go.sum builds here and fails in the Deploy stage, where
+            # the image is built from a clean checkout — a failure that names
+            # Docker rather than the dependency somebody added without
+            # running `go mod tidy`.
+            echo "--- tidy is clean"
+            cp go.mod /tmp/go.mod.before
+            cp go.sum /tmp/go.sum.before
+            go mod tidy
+            diff -u /tmp/go.mod.before go.mod
+            diff -u /tmp/go.sum.before go.sum
+          '
+
+      # -race is ON above, and it is worth saying why rather than leaving it
+      # to be removed by someone shaving a minute off the build.
+      #
+      # This service runs a telemetry ingest, a geofence worker and a sync
+      # loop that wakes every two minutes, all sharing one pool. The failures
+      # that class of code produces do not reproduce on a laptop and do not
+      # announce themselves in production either: they corrupt a figure or
+      # drop a position. The race detector is the only thing that looks.
+      - echo "checks passed"
