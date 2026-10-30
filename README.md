@@ -170,16 +170,32 @@ lookup (permitted by a bootstrap RLS policy).
 
 ## Checks: what CI runs, and what it does not
 
-`.github/workflows/ci.yml` builds, vets and tests. It runs **no lint**, and
-there is no `.golangci.yml` and no `make lint` here either — the only lint in
-the Makefile is `buf lint` inside `proto`. Running golangci-lint against this
-module by hand on 23 Oct 2026 reports **46 issues**: 22 `errcheck`, 16
-`unused`, 8 `staticcheck`. All pre-existing, and none of them has ever gated
-anything, which is the part worth writing down rather than the number. The four
-TMS services share a byte-identical config and report 0, so adopting it here
-means either clearing 46 findings or starting from a `//nolint` baseline — a
-decision nobody has made, so this is a gap rather than a policy.
+The gate is the pipeline's **Test stage**, defined in `buildspec.ci.yml`. It
+builds, vets, runs the tests with `-race`, lints, and asserts that `go mod
+tidy` leaves `go.mod` and `go.sum` untouched. All of it runs inside
+`TEST_IMAGE` (`golang:1.25-alpine`, pinned to the Dockerfile), so the Go that
+compiles the tests is the Go that builds the image. The Deploy stage does not
+start until Test passes.
 
-Deploying is `workflow_dispatch` only: Actions → **deploy-api** → Run workflow,
-tick the checklist, type `DEPLOY`. That click is the approval, and it is the
-gate — a push to `main` runs CI and ships nothing.
+Lint is golangci-lint, pinned to `GOLANGCI_VERSION` (v1.62.2) by the CodeBuild
+project rather than by this repo, so a linter release cannot redden an
+untouched commit. The rule set is golangci-lint's defaults plus one exclusion,
+in `.golangci.yml`: `unused` is off for `internal/platform/`, because that tree
+is copied into the four TMS services and which symbols a copy uses differs per
+service. The four TMS services run v2.5.0 with a chosen rule list instead;
+aligning FMS to it is 53 findings and its own change.
+
+The check script reaches the container through a shell variable filled by a
+quoted heredoc, and `internal/ci/buildspec_test.go` fails the build if anyone
+inlines it between single quotes again. That is not a style rule: inline, an
+apostrophe in a comment ends the quoted argument, and on 30 Oct 2026 it moved
+the lint and tidy steps out of the container and onto the CodeBuild host with
+nothing in the output saying so.
+
+`.github/workflows/ci.yml` still runs build and vet on every push to `main`,
+duplicating two of the steps above.
+
+Deploying is the pipeline's Deploy stage, which runs once Test passes. A green
+pipeline is not proof the new code is running — check the running ECS task's
+image tag. `.github/workflows/deploy.yml` is still present so an old manual run
+can be reproduced.
