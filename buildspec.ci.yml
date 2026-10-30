@@ -75,45 +75,22 @@ phases:
             go test -race ./...
 
             echo "--- lint"
-            # The published binary, not `go install`.
+            # go install, NOT the published binary — and that is the whole
+            # point of this line.
             #
-            # `go install github.com/golangci/golangci-lint/v2/cmd/...@v2.5.0`
-            # fails here, and only here, with:
+            # golangci-lint v1.62.2's release binary is built with go1.23.3
+            # and cannot parse this module's `go 1.25.0`: "invalid go version
+            # '1.25.0': must match format 1.23". `go install` BUILDS it with
+            # the toolchain in TEST_IMAGE instead, so the linter inherits a
+            # parser new enough to read its own target.
             #
-            #   go.mod:3: invalid go version '1.24.0': must match format 1.23
-            #
-            # which is a Go older than 1.21 reading the linter's own go.mod.
-            # Ruled out as causes, each by reproduction on the instance rather
-            # than by reading: the image (a clean golang:1.26-alpine installs
-            # it fine, go1.26.10), the version, running inside a module
-            # directory, and the mounted module cache. The TMS services run
-            # the identical image and version and lint cleanly, so whatever is
-            # left is particular to this repository's dependency graph.
-            #
-            # Building the linter from source was never the point. The release
-            # binary is what golangci-lint documents, it cannot be derailed by
-            # anything in this module, and it is faster.
-            GOBIN="$(go env GOPATH)/bin"
-            mkdir -p "$GOBIN"
-            arch="$(go env GOARCH)"
-            ver="${GOLANGCI_VERSION#v}"
-            pkg="golangci-lint-${ver}-linux-${arch}"
-            wget -qO /tmp/gcl.tar.gz \
-              "https://github.com/golangci/golangci-lint/releases/download/${GOLANGCI_VERSION}/${pkg}.tar.gz"
-            tar -xzf /tmp/gcl.tar.gz -C /tmp
-            install -m 0755 "/tmp/${pkg}/golangci-lint" "$GOBIN/golangci-lint"
-            # By absolute path. $GOBIN is on PATH in this image interactively
-            # and was not inside the build's shell — "golangci-lint: command
-            # not found" on the line right after a successful install. The
-            # path is known, so there is no reason to ask PATH about it.
-            "$GOBIN/golangci-lint" --version
-            "$GOBIN/golangci-lint" run ./...
+            # Swapped for the binary on 2026-10-30 while chasing a staging
+            # failure that was really a wrong TEST_IMAGE and GOLANGCI_VERSION,
+            # and swapped back once production's own CI — same file, same
+            # repository — was found passing with exactly this.
+            go install github.com/golangci/golangci-lint/cmd/golangci-lint@"$GOLANGCI_VERSION"
+            golangci-lint run ./...
 
-            # The module graph must be what go.mod and go.sum say it is. A
-            # drifted go.sum builds here and fails in the Deploy stage, where
-            # the image is built from a clean checkout — a failure that names
-            # Docker rather than the dependency somebody added without
-            # running `go mod tidy`.
             echo "--- tidy is clean"
             cp go.mod /tmp/go.mod.before
             cp go.sum /tmp/go.sum.before
