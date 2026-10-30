@@ -102,8 +102,12 @@ phases:
               "https://github.com/golangci/golangci-lint/releases/download/${GOLANGCI_VERSION}/${pkg}.tar.gz"
             tar -xzf /tmp/gcl.tar.gz -C /tmp
             install -m 0755 "/tmp/${pkg}/golangci-lint" "$GOBIN/golangci-lint"
-            golangci-lint --version
-            golangci-lint run ./...
+            # By absolute path. $GOBIN is on PATH in this image interactively
+            # and was not inside the build's shell — "golangci-lint: command
+            # not found" on the line right after a successful install. The
+            # path is known, so there is no reason to ask PATH about it.
+            "$GOBIN/golangci-lint" --version
+            "$GOBIN/golangci-lint" run ./...
 
             # The module graph must be what go.mod and go.sum say it is. A
             # drifted go.sum builds here and fails in the Deploy stage, where
