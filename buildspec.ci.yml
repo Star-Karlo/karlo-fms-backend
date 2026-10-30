@@ -42,62 +42,87 @@ phases:
   build:
     on-failure: ABORT
     commands:
-      # One container for every check, so the Go that compiles the tests is
-      # the Go the Dockerfile builds with rather than whatever the managed
-      # image happens to ship.
+      # The check script is assembled in a quoted heredoc and handed to the
+      # container as a single argument.
+      #
+      # WHY THE SCRIPT IS NOT INLINED INSIDE SINGLE QUOTES, WHICH IS SHORTER.
+      #
+      # Because one apostrophe anywhere inside it closes the quote. On
+      # 2026-10-30 a comment containing "this module's go 1.25.0" did exactly
+      # that: the container got a script truncated mid-comment, so it ran
+      # build, vet and test, echoed "--- lint" and exited 0 — while the lint,
+      # the linter install and the tidy check fell out of the quotes and ran
+      # on the CodeBuild host instead. That host image carries Go 1.20, which
+      # rejects golangci-lint's three-part `go 1.22.1` directive, so the build
+      # failed naming a go.mod in a module nobody had touched, and four
+      # diagnoses went past the real cause. A quoted heredoc ends only at its
+      # own terminator, so prose inside the script can no longer reach the
+      # shell.
       #
       # `sh -c`, never `sh -lc`: a login shell re-reads /etc/profile and drops
       # /usr/local/go/bin from PATH, which reports `go: not found` and sends
       # whoever reads it looking in the wrong place.
       - |
         set -euo pipefail
+
+        checks=$(cat <<'CHECKS'
+          set -eu
+
+          # gcc and musl-dev are for -race, which needs cgo. Without them
+          # the race detector fails to link and the flag buys nothing while
+          # still appearing on the command line.
+          echo "--- toolchain"
+          apk add --no-cache gcc musl-dev git >/dev/null
+
+          # Printed so a failure below can be read against the Go that
+          # produced it. The 2026-10-30 failure was a message from a Go
+          # nobody thought was involved, and this line would have shown it.
+          go version
+
+          echo "--- build"
+          go build ./...
+
+          echo "--- vet"
+          go vet ./...
+
+          echo "--- test"
+          go test -race ./...
+
+          echo "--- lint"
+          # go install, NOT the published binary — and that is the whole
+          # point of this line.
+          #
+          # golangci-lint v1.62.2's release binary is built with go1.23.3 and
+          # cannot parse this module's `go 1.25.0`: "invalid go version
+          # '1.25.0': must match format 1.23". `go install` BUILDS it with
+          # the toolchain in TEST_IMAGE instead, so the linter inherits a
+          # parser new enough to read its own target.
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@"$GOLANGCI_VERSION"
+          golangci-lint run ./...
+
+          # The module graph must be what go.mod and go.sum say it is. A
+          # drifted go.sum builds here and fails in the Deploy stage, where
+          # the image is built from a clean checkout — a failure that names
+          # Docker rather than the dependency somebody added without running
+          # `go mod tidy`.
+          echo "--- tidy is clean"
+          cp go.mod /tmp/go.mod.before
+          cp go.sum /tmp/go.sum.before
+          go mod tidy
+          diff -u /tmp/go.mod.before go.mod
+          diff -u /tmp/go.sum.before go.sum
+        CHECKS
+        )
+
+        # One container for every check, so the Go that compiles the tests is
+        # the Go the Dockerfile builds with rather than whatever the managed
+        # image happens to ship.
         docker run --rm \
           -v "$PWD":/src -w /src \
           -v /root/.cache/karlo-fms-gomod:/go/pkg/mod \
           -v /root/.cache/karlo-fms-gobuild:/root/.cache/go-build \
           -e GOLANGCI_VERSION="$GOLANGCI_VERSION" \
-          "$TEST_IMAGE" sh -c '
-            set -eu
-
-            # gcc and musl-dev are for -race, which needs cgo. Without them
-            # the race detector fails to link and the flag buys nothing while
-            # still appearing on the command line.
-            echo "--- toolchain"
-            apk add --no-cache gcc musl-dev git >/dev/null
-
-            echo "--- build"
-            go build ./...
-
-            echo "--- vet"
-            go vet ./...
-
-            echo "--- test"
-            go test -race ./...
-
-            echo "--- lint"
-            # go install, NOT the published binary — and that is the whole
-            # point of this line.
-            #
-            # golangci-lint v1.62.2's release binary is built with go1.23.3
-            # and cannot parse this module's `go 1.25.0`: "invalid go version
-            # '1.25.0': must match format 1.23". `go install` BUILDS it with
-            # the toolchain in TEST_IMAGE instead, so the linter inherits a
-            # parser new enough to read its own target.
-            #
-            # Swapped for the binary on 2026-10-30 while chasing a staging
-            # failure that was really a wrong TEST_IMAGE and GOLANGCI_VERSION,
-            # and swapped back once production's own CI — same file, same
-            # repository — was found passing with exactly this.
-            go install github.com/golangci/golangci-lint/cmd/golangci-lint@"$GOLANGCI_VERSION"
-            golangci-lint run ./...
-
-            echo "--- tidy is clean"
-            cp go.mod /tmp/go.mod.before
-            cp go.sum /tmp/go.sum.before
-            go mod tidy
-            diff -u /tmp/go.mod.before go.mod
-            diff -u /tmp/go.sum.before go.sum
-          '
+          "$TEST_IMAGE" sh -c "$checks"
 
       # -race is ON above, and it is worth saying why rather than leaving it
       # to be removed by someone shaving a minute off the build.
