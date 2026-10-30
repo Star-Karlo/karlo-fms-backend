@@ -58,8 +58,22 @@ phases:
         # alone — the check the runbook asks for after every deploy, and the
         # one that showed e201d41 still serving while 1e69151 was believed
         # live.
+        # SERVICE names the directory under ./cmd to build, and the Dockerfile
+        # refuses to build without it — one repo, twelve binaries, so there is
+        # nothing sensible to default to inside the image.
+        #
+        # The Actions workflow this replaced passed it
+        # (`--build-arg SERVICE=api`, .github/workflows/deploy.yml) and the
+        # move to CodePipeline dropped it. Nothing noticed for as long as it
+        # took to reach this stage: the Test stage was failing for an unrelated
+        # reason, so Deploy had never run once, in staging OR production. The
+        # first two times it ran, both failed here.
+        #
+        # BUILD_SERVICE, not SERVICE: staging's deployer already uses SERVICE
+        # for the compose service name (`fms-api`), and ./cmd/fms-api does not
+        # exist.
         echo "--- building $IMAGE"
-        docker build -t "$IMAGE" .
+        docker build --build-arg SERVICE="${BUILD_SERVICE:-api}" -t "$IMAGE" .
         docker push "$IMAGE"
         echo "$IMAGE" > /tmp/image
 
