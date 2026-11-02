@@ -11,8 +11,9 @@
 //
 // Shape mirrors vehiclesync: one transaction per company as that tenant,
 // pair by master_data_id, adopt by device id once, insert when unknown,
-// keep the projected fields in step, and — the part that matters — set the
-// fitting: master data's current_vehicle_id becomes trackers.vehicle_id and
+// keep the projected fields in step (including who OWNS the device — karlo,
+// a customer or a vendor, which is what tells our own hardware apart from a
+// third party's feed), and — the part that matters — set the fitting: master data's current_vehicle_id becomes trackers.vehicle_id and
 // vehicles.tracker_id (which is what the live map keys on), through the
 // same statements the vehicle form uses so the assignment-history trigger
 // records the change.
@@ -272,26 +273,35 @@ func (s *Syncer) gps(ctx context.Context, tx pgx.Tx, tenantID int64, d mdclient.
 	// 2. Insert when unknown. A retired device is not worth a row.
 	if !d.Deleted && d.Status != "retired" {
 		ct, err = tx.Exec(ctx, `
-			INSERT INTO trackers (tenant_id, imei, phone_no, status, master_data_id)
-			SELECT $1, $2, NULLIF($3,''), $4, $5
+			INSERT INTO trackers (tenant_id, imei, phone_no, status, master_data_id, owner, owner_name)
+			SELECT $1, $2, NULLIF($3,''), $4, $5, NULLIF($6,''), NULLIF($7,'')
 			 WHERE NOT EXISTS (SELECT 1 FROM trackers w WHERE w.master_data_id = $5)`,
-			tenantID, imei, d.PhoneNo, localStatus(d), d.ID)
+			tenantID, imei, d.PhoneNo, localStatus(d), d.ID, d.Owner, d.OwnerName)
 		if err != nil {
 			return err
 		}
 		r.Inserted += int(ct.RowsAffected())
 	}
 
-	// 3. Projected fields: imei (a device re-keyed upstream), phone, status.
+	// 3. Projected fields: imei (a device re-keyed upstream), phone, status,
+	//    and ownership. Owner is taken straight from master data rather than
+	//    merged like phone_no: master data is its only writer, so an empty
+	//    value upstream means "not stated", and keeping a stale local answer
+	//    would be worse than admitting that.
 	ct, err = tx.Exec(ctx, `
 		UPDATE trackers SET imei = $2,
 		                    phone_no = COALESCE(NULLIF($3,''), phone_no),
-		                    status = $4, updated_at = now()
+		                    status = $4,
+		                    owner = NULLIF($5,''),
+		                    owner_name = NULLIF($6,''),
+		                    updated_at = now()
 		 WHERE master_data_id = $1
 		   AND (imei IS DISTINCT FROM $2
 		        OR (NULLIF($3,'') IS NOT NULL AND phone_no IS DISTINCT FROM $3)
-		        OR status IS DISTINCT FROM $4)`,
-		d.ID, imei, d.PhoneNo, localStatus(d))
+		        OR status IS DISTINCT FROM $4
+		        OR owner IS DISTINCT FROM NULLIF($5,'')
+		        OR owner_name IS DISTINCT FROM NULLIF($6,''))`,
+		d.ID, imei, d.PhoneNo, localStatus(d), d.Owner, d.OwnerName)
 	if err != nil {
 		return err
 	}

@@ -34,7 +34,14 @@ type DTO struct {
 	VehiclePlate *string `json:"vehicle_plate"`
 	// IsDemo marks a copy of a device that really belongs to another account
 	// (shown here for a demo). Never paired with or written to master data.
-	IsDemo    bool       `json:"is_demo"`
+	IsDemo bool `json:"is_demo"`
+	// Owner is who owns the hardware — "karlo", "customer" or "vendor" — and
+	// OwnerName is that third party when it is not Karlo's own unit. Both are
+	// projected from master data, which is their only writer, so they are
+	// read-only here and nil for a device master data has not labelled.
+	// This is the field that separates our own trackers from a vendor's feed.
+	Owner     *string    `json:"owner"`
+	OwnerName *string    `json:"owner_name"`
 	CreatedAt *time.Time `json:"created_at"`
 	UpdatedAt *time.Time `json:"updated_at"`
 }
@@ -59,13 +66,15 @@ type UpdateRequest struct {
 }
 
 func fromRow(t store.Tracker) DTO {
-	return DTO{ID: t.ID, Imei: t.Imei, PhoneNo: t.PhoneNo, VehicleID: t.VehicleID, Status: t.Status, IsDemo: t.IsDemo, CreatedAt: conv.Time(t.CreatedAt), UpdatedAt: conv.Time(t.UpdatedAt)}
+	return DTO{ID: t.ID, Imei: t.Imei, PhoneNo: t.PhoneNo, VehicleID: t.VehicleID, Status: t.Status, IsDemo: t.IsDemo,
+		Owner: t.Owner, OwnerName: t.OwnerName, CreatedAt: conv.Time(t.CreatedAt), UpdatedAt: conv.Time(t.UpdatedAt)}
 }
 
 // fromListRow is the same, plus the joined plate.
 func fromListRow(t store.ListTrackersRow) DTO {
 	return DTO{ID: t.ID, Imei: t.Imei, PhoneNo: t.PhoneNo, VehicleID: t.VehicleID, VehiclePlate: t.VehiclePlate,
-		Status: t.Status, IsDemo: t.IsDemo, CreatedAt: conv.Time(t.CreatedAt), UpdatedAt: conv.Time(t.UpdatedAt)}
+		Status: t.Status, IsDemo: t.IsDemo, Owner: t.Owner, OwnerName: t.OwnerName,
+		CreatedAt: conv.Time(t.CreatedAt), UpdatedAt: conv.Time(t.UpdatedAt)}
 }
 
 func iface(s *string) interface{} {
