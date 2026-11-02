@@ -5203,6 +5203,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/toll/quote": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "toll"
+                ],
+                "summary": "Price a route's tolls against Karlo's own tariff tables",
+                "parameters": [
+                    {
+                        "description": "route",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/toll.QuoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/toll.Quote"
+                        }
+                    },
+                    "422": {
+                        "description": "no usable tariff data",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/trackers": {
             "get": {
                 "security": [
@@ -11365,6 +11409,25 @@ const docTemplate = `{
                 }
             }
         },
+        "routing.TollSegment": {
+            "type": "object",
+            "properties": {
+                "by_golongan": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "from_gate": {
+                    "description": "FromGate is empty on a flat-fee charge. An open or integrated system —\nJORR, for instance — takes one tap and a fixed amount, so there is no\nexit to name. Those are real charges, not truncated records: one\nmeasured journey carried five of them in a row.",
+                    "type": "string"
+                },
+                "to_gate": {
+                    "type": "string"
+                }
+            }
+        },
         "scorecard.Band": {
             "type": "object",
             "properties": {
@@ -11710,6 +11773,64 @@ const docTemplate = `{
                 }
             }
         },
+        "toll.Quote": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "by_golongan": {
+                    "description": "ByGolongan is ALL FIVE classes, always, even when axles were supplied.\n\nA caller with an axle count reads its own; one without shows the range\nand says which it is. Collapsing to a single figure would mean this\nendpoint picking a class on the caller's behalf, silently, for the 47%\nof trucks that cannot be classified — and a toll figure becomes a\ndriver's cash advance.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "complete": {
+                    "description": "Complete is UnpricedGates being empty, stated positively so a client\ncannot read a missing array as \"all good\" by accident.",
+                    "type": "boolean"
+                },
+                "golongan": {
+                    "description": "Golongan is the class implied by the axles supplied, 0 when none were.\nAmount is that class's figure, nil when the class is unknown — never\nzero, which would read as a free journey.",
+                    "type": "integer"
+                },
+                "segments": {
+                    "description": "Segments are the individual charges in travel order. A journey is not\none transaction, and a disputed figure is argued about per gate.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routing.TollSegment"
+                    }
+                },
+                "unpriced_gates": {
+                    "description": "UnpricedGates names gates no tariff covered.\n\nWHEN THIS IS NON-EMPTY THE TOTALS ARE AN UNDERSTATEMENT: those gates\ncontributed nothing, so the real cost is higher by whatever they charge.\nCarried rather than swallowed because a caller must be able to tell a\ncheap route from an unmeasured one, which the figure alone cannot.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "toll.QuoteRequest": {
+            "type": "object",
+            "properties": {
+                "axles": {
+                    "description": "Axles narrows the answer to one class, when the caller knows it.\n\nOPTIONAL, and omitting it is a normal case rather than a lapse: 47% of\nthe legacy fleet has no axle count recorded. The response carries all\nfive classes either way — see Quote.",
+                    "type": "integer"
+                },
+                "geometry": {
+                    "description": "Geometry is the routed line, [lon, lat] in TRAVEL ORDER. GeoJSON order,\nmatching what every router here returns, so a caller passes a route's\ngeometry through untouched.",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
+                    }
+                }
+            }
+        },
         "tracker.CreateRequest": {
             "type": "object",
             "properties": {
@@ -11746,6 +11867,13 @@ const docTemplate = `{
                 "is_demo": {
                     "description": "IsDemo marks a copy of a device that really belongs to another account\n(shown here for a demo). Never paired with or written to master data.",
                     "type": "boolean"
+                },
+                "owner": {
+                    "description": "Owner is who owns the hardware — \"karlo\", \"customer\" or \"vendor\" — and\nOwnerName is that third party when it is not Karlo's own unit. Both are\nprojected from master data, which is their only writer, so they are\nread-only here and nil for a device master data has not labelled.\nThis is the field that separates our own trackers from a vendor's feed.",
+                    "type": "string"
+                },
+                "owner_name": {
+                    "type": "string"
                 },
                 "phone_no": {
                     "type": "string"
@@ -11821,6 +11949,13 @@ const docTemplate = `{
                 "is_demo": {
                     "description": "IsDemo marks a copy of a device that really belongs to another account\n(shown here for a demo). Never paired with or written to master data.",
                     "type": "boolean"
+                },
+                "owner": {
+                    "description": "Owner is who owns the hardware — \"karlo\", \"customer\" or \"vendor\" — and\nOwnerName is that third party when it is not Karlo's own unit. Both are\nprojected from master data, which is their only writer, so they are\nread-only here and nil for a device master data has not labelled.\nThis is the field that separates our own trackers from a vendor's feed.",
+                    "type": "string"
+                },
+                "owner_name": {
+                    "type": "string"
                 },
                 "phone_no": {
                     "type": "string"
