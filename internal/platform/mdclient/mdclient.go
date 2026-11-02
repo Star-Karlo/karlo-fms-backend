@@ -304,12 +304,18 @@ func (c *Client) ListVehicles(ctx context.Context, companyID string) ([]Vehicle,
 // Tracker is a master-data device: a GPS unit (DeviceID = IMEI) or a
 // dashcam (DeviceID = VSS device id).
 type Tracker struct {
-	ID               string
-	CompanyID        string
-	Kind             string // gps | dashcam
-	DeviceID         string
-	PhoneNo          string
-	Status           string // active | inactive | retired
+	ID        string
+	CompanyID string
+	Kind      string // gps | dashcam
+	DeviceID  string
+	PhoneNo   string
+	Status    string // active | inactive | retired
+	// Owner is who OWNS the device — karlo | customer | vendor — which is a
+	// different question from CompanyID, where it is deployed. Karlo lends
+	// units out and customers bring their own, so the two differ constantly.
+	// Empty when master data does not state it.
+	Owner            string
+	OwnerName        string // the third party's name when Owner is not "karlo"
 	CurrentVehicleID string // master-data vehicle id; empty when in stock
 	FittedAt         time.Time
 	Deleted          bool
@@ -339,6 +345,8 @@ func (c *Client) ListTrackers(ctx context.Context, companyID, kind string) ([]Tr
 				DeviceID:         t.GetDeviceId(),
 				PhoneNo:          t.GetPhoneNo(),
 				Status:           t.GetStatus(),
+				Owner:            t.GetOwner(),
+				OwnerName:        t.GetOwnerName(),
 				CurrentVehicleID: t.GetCurrentVehicleId(),
 				FittedAt:         t.GetFittedAt().AsTime(),
 				Deleted:          t.GetDeleted(),

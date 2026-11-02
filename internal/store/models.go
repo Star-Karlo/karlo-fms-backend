@@ -291,6 +291,8 @@ type Tracker struct {
 	ExternalRef  *string            `json:"external_ref"`
 	MasterDataID *string            `json:"master_data_id"`
 	IsDemo       bool               `json:"is_demo"`
+	Owner        *string            `json:"owner"`
+	OwnerName    *string            `json:"owner_name"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }

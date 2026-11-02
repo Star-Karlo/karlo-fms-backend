@@ -76,6 +76,8 @@ CREATE TABLE trackers (
   external_ref text,
   master_data_id text,
   is_demo     boolean NOT NULL DEFAULT false,
+  owner       text,
+  owner_name  text,
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
