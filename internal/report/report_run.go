@@ -93,11 +93,15 @@ var catalogColumns = map[string][]Column{
 // ColumnsFor returns a report's columns, or nil for an unknown key.
 func ColumnsFor(key string) []Column { return catalogColumns[key] }
 
+// Telemetry and Postgres return UTC, but fleets read reports in WIB. A fixed
+// offset is exact (Indonesia has no DST) and needs no tzdata in the image.
+var wib = time.FixedZone("WIB", 7*3600)
+
 func ts(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format("2006-01-02 15:04")
+	return t.In(wib).Format("2006-01-02 15:04")
 }
 
 func hav(aLat, aLon, bLat, bLon float64) float64 {
@@ -747,7 +751,7 @@ func usageByDay(pos []telemetry.Position) []dayUsage {
 		if p.Lat == nil || p.Lon == nil || prev.Lat == nil || prev.Lon == nil {
 			continue
 		}
-		day := p.Time.Format("2006-01-02")
+		day := p.Time.In(wib).Format("2006-01-02")
 		u := byDay[day]
 		if u == nil {
 			u = &dayUsage{day: day}
