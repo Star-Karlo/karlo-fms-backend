@@ -5813,7 +5813,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the hull number (nomor lambung) in place of the id. Spacing, dashes and case are ignored. A hull number shared by more than one vehicle in the account is refused with 409 rather than answered for one of them.",
+                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the hull number (nomor lambung) in place of the id. Spacing, dashes and case are ignored. The response carries the truck's ` + "`" + `license_plate` + "`" + ` beside its ` + "`" + `hull_no` + "`" + `. A hull number shared by more than one vehicle in the account is refused with 409 rather than answered for one of them.",
                 "produces": [
                     "application/json"
                 ],
@@ -5927,7 +5927,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored. The response leads with the vehicle's ` + "`" + `hull_no` + "`" + ` (nomor lambung), null when none is set.",
+                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored. The response leads with the vehicle's ` + "`" + `hull_no` + "`" + ` (nomor lambung), null when none is set, then its ` + "`" + `license_plate` + "`" + `.",
                 "produces": [
                     "application/json"
                 ],
@@ -9512,6 +9512,10 @@ const docTemplate = `{
                 },
                 "idle_threshold_min": {
                     "type": "number"
+                },
+                "license_plate": {
+                    "description": "The truck's nomor polisi, so a caller that asked by hull number can\ntell which truck answered.",
+                    "type": "string"
                 },
                 "overspeed_limit": {
                     "type": "number"

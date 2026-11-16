@@ -501,10 +501,11 @@ func (q *Queries) GetVehicle(ctx context.Context, id int64) (GetVehicleRow, erro
 }
 
 const getVehicleBehaviorConfig = `-- name: GetVehicleBehaviorConfig :one
-SELECT hull_no, fuel_ratio_kmpl, fuel_tank_liters FROM vehicles WHERE id = $1
+SELECT license_plate, hull_no, fuel_ratio_kmpl, fuel_tank_liters FROM vehicles WHERE id = $1
 `
 
 type GetVehicleBehaviorConfigRow struct {
+	LicensePlate   string   `json:"license_plate"`
 	HullNo         *string  `json:"hull_no"`
 	FuelRatioKmpl  *float64 `json:"fuel_ratio_kmpl"`
 	FuelTankLiters *float64 `json:"fuel_tank_liters"`
@@ -514,7 +515,12 @@ type GetVehicleBehaviorConfigRow struct {
 func (q *Queries) GetVehicleBehaviorConfig(ctx context.Context, id int64) (GetVehicleBehaviorConfigRow, error) {
 	row := q.db.QueryRow(ctx, getVehicleBehaviorConfig, id)
 	var i GetVehicleBehaviorConfigRow
-	err := row.Scan(&i.HullNo, &i.FuelRatioKmpl, &i.FuelTankLiters)
+	err := row.Scan(
+		&i.LicensePlate,
+		&i.HullNo,
+		&i.FuelRatioKmpl,
+		&i.FuelTankLiters,
+	)
 	return i, err
 }
 

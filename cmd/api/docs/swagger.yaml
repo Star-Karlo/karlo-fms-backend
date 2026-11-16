@@ -1623,6 +1623,11 @@ definitions:
         type: string
       idle_threshold_min:
         type: number
+      license_plate:
+        description: |-
+          The truck's nomor polisi, so a caller that asked by hull number can
+          tell which truck answered.
+        type: string
       overspeed_limit:
         type: number
       stops:
@@ -8269,8 +8274,9 @@ paths:
     get:
       description: Identical to /v1/vehicles/{vehicle_id}/behavior, with the hull
         number (nomor lambung) in place of the id. Spacing, dashes and case are ignored.
-        A hull number shared by more than one vehicle in the account is refused with
-        409 rather than answered for one of them.
+        The response carries the truck's `license_plate` beside its `hull_no`. A hull
+        number shared by more than one vehicle in the account is refused with 409
+        rather than answered for one of them.
       parameters:
       - description: hull number (nomor lambung), e.g. S3487
         in: path
@@ -8349,7 +8355,7 @@ paths:
         in place of the id: overspeed events, harsh acceleration and braking, idle
         stops and distance, derived from the GPS track. Spacing, dashes and case in
         the plate are ignored. The response leads with the vehicle''s `hull_no` (nomor
-        lambung), null when none is set.'
+        lambung), null when none is set, then its `license_plate`.'
       parameters:
       - description: nomor polisi, e.g. B 9012 UBC
         in: path
