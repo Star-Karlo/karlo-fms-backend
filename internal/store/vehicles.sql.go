@@ -500,6 +500,24 @@ func (q *Queries) GetVehicle(ctx context.Context, id int64) (GetVehicleRow, erro
 	return i, err
 }
 
+const getVehicleBehaviorConfig = `-- name: GetVehicleBehaviorConfig :one
+SELECT hull_no, fuel_ratio_kmpl, fuel_tank_liters FROM vehicles WHERE id = $1
+`
+
+type GetVehicleBehaviorConfigRow struct {
+	HullNo         *string  `json:"hull_no"`
+	FuelRatioKmpl  *float64 `json:"fuel_ratio_kmpl"`
+	FuelTankLiters *float64 `json:"fuel_tank_liters"`
+}
+
+// What the behaviour report echoes about the vehicle itself.
+func (q *Queries) GetVehicleBehaviorConfig(ctx context.Context, id int64) (GetVehicleBehaviorConfigRow, error) {
+	row := q.db.QueryRow(ctx, getVehicleBehaviorConfig, id)
+	var i GetVehicleBehaviorConfigRow
+	err := row.Scan(&i.HullNo, &i.FuelRatioKmpl, &i.FuelTankLiters)
+	return i, err
+}
+
 const getVehicleRow = `-- name: GetVehicleRow :one
 SELECT id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, axles, golongan_override, length_m, width_m, height_m, max_weight_kg, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at FROM vehicles WHERE id = $1
 `
@@ -820,6 +838,40 @@ func (q *Queries) ListVehicles(ctx context.Context, arg ListVehiclesParams) ([]L
 			&i.DriverName,
 			&i.TrackerImei,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVehiclesByHull = `-- name: ListVehiclesByHull :many
+SELECT id, license_plate, status FROM vehicles
+ WHERE upper(regexp_replace(hull_no, '[^A-Za-z0-9]', '', 'g')) = $1::text
+ ORDER BY id
+`
+
+type ListVehiclesByHullRow struct {
+	ID           int64  `json:"id"`
+	LicensePlate string `json:"license_plate"`
+	Status       string `json:"status"`
+}
+
+// Matched loosely, like plates: case and separators are ignored, because a
+// hull number is transcribed with whatever grouping the typist chose.
+func (q *Queries) ListVehiclesByHull(ctx context.Context, hull string) ([]ListVehiclesByHullRow, error) {
+	rows, err := q.db.Query(ctx, listVehiclesByHull, hull)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVehiclesByHullRow{}
+	for rows.Next() {
+		var i ListVehiclesByHullRow
+		if err := rows.Scan(&i.ID, &i.LicensePlate, &i.Status); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
