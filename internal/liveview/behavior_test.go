@@ -6,17 +6,18 @@ import (
 	"testing"
 )
 
-// hull_no is a published field: integrations are told it is null when unset
-// and that it leads the response, so both are part of the contract.
-func TestBehaviorResultHullNo(t *testing.T) {
+// hull_no and license_plate are published fields: integrations are told
+// hull_no is null when unset and that the two lead the response, so all of
+// that is part of the contract.
+func TestBehaviorResultVehicleFields(t *testing.T) {
 	hull := "S3487"
 	cases := []struct {
 		name string
 		res  BehaviorResult
 		want string
 	}{
-		{"unset is null, not omitted", BehaviorResult{}, `"hull_no":null`},
-		{"set", BehaviorResult{HullNo: &hull}, `"hull_no":"S3487"`},
+		{"unset hull is null, not omitted", BehaviorResult{LicensePlate: "H 9049 OH"}, `"hull_no":null,"license_plate":"H 9049 OH"`},
+		{"set", BehaviorResult{HullNo: &hull, LicensePlate: "H 9049 OH"}, `"hull_no":"S3487","license_plate":"H 9049 OH"`},
 	}
 	for _, c := range cases {
 		b, err := json.Marshal(c.res)

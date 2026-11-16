@@ -24,7 +24,7 @@ SELECT * FROM vehicles WHERE id = $1;
 
 -- name: GetVehicleBehaviorConfig :one
 -- What the behaviour report echoes about the vehicle itself.
-SELECT hull_no, fuel_ratio_kmpl, fuel_tank_liters FROM vehicles WHERE id = $1;
+SELECT license_plate, hull_no, fuel_ratio_kmpl, fuel_tank_liters FROM vehicles WHERE id = $1;
 
 -- name: ListVehiclesByHull :many
 -- Matched loosely, like plates: case and separators are ignored, because a

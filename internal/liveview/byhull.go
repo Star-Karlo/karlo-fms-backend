@@ -104,7 +104,7 @@ func (h *Handler) resolveHull(w http.ResponseWriter, r *http.Request) (int64, bo
 // behaviorByHull godoc
 //
 //	@Summary		Driving behaviour for a window, addressed by hull number
-//	@Description	Identical to /v1/vehicles/{vehicle_id}/behavior, with the hull number (nomor lambung) in place of the id. Spacing, dashes and case are ignored. A hull number shared by more than one vehicle in the account is refused with 409 rather than answered for one of them.
+//	@Description	Identical to /v1/vehicles/{vehicle_id}/behavior, with the hull number (nomor lambung) in place of the id. Spacing, dashes and case are ignored. The response carries the truck's `license_plate` beside its `hull_no`. A hull number shared by more than one vehicle in the account is refused with 409 rather than answered for one of them.
 //	@Tags			live-view
 //	@Security		BearerAuth
 //	@Produce		json

@@ -702,7 +702,10 @@ ORDER BY id LIMIT 1`, lat, lon).Scan(&name)
 // BehaviorResult is the per-vehicle behavior analysis.
 type BehaviorResult struct {
 	// HullNo is the truck's hull number (nomor lambung) as set on the vehicle. Null when none is set.
-	HullNo         *string         `json:"hull_no"`
+	HullNo *string `json:"hull_no"`
+	// The truck's nomor polisi, so a caller that asked by hull number can
+	// tell which truck answered.
+	LicensePlate   string          `json:"license_plate"`
 	OverspeedLimit float64         `json:"overspeed_limit"`
 	IdleThreshold  float64         `json:"idle_threshold_min"`
 	Summary        BehaviorSummary `json:"summary"`
@@ -716,24 +719,24 @@ type BehaviorResult struct {
 }
 
 // behaviorConfig reads what the behaviour report echoes about the vehicle,
-// tenant-scoped. Returns nils when the vehicle has none set, or when the
-// lookup fails: a missing figure never fails the report, so a failure is
-// logged instead of returned.
-func (s *Service) behaviorConfig(ctx context.Context, tenantID, vehicleID int64) (hull *string, ratio, tank *float64) {
+// tenant-scoped. Returns the zero row when the lookup fails: a missing figure
+// never fails the report, so a failure is logged instead of returned.
+func (s *Service) behaviorConfig(ctx context.Context, tenantID, vehicleID int64) store.GetVehicleBehaviorConfigRow {
+	var c store.GetVehicleBehaviorConfigRow
 	err := db.Tx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		c, err := store.New(tx).GetVehicleBehaviorConfig(ctx, vehicleID)
-		if err != nil {
-			return err
-		}
-		hull, ratio, tank = c.HullNo, c.FuelRatioKmpl, c.FuelTankLiters
-		return nil
+		var err error
+		c, err = store.New(tx).GetVehicleBehaviorConfig(ctx, vehicleID)
+		return err
 	})
-	// No rows is an unknown id from the caller, not a failure worth a log line.
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		slog.WarnContext(ctx, "vehicle config lookup failed; hull_no and fuel figures returned as null",
-			"error", err, "vehicle_id", vehicleID)
+	if err != nil {
+		// No rows is an unknown id from the caller, not a failure worth a log line.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.WarnContext(ctx, "vehicle config lookup failed; plate, hull_no and fuel figures returned empty",
+				"error", err, "vehicle_id", vehicleID)
+		}
+		return store.GetVehicleBehaviorConfigRow{}
 	}
-	return hull, ratio, tank
+	return c
 }
 
 // haversine returns the great-circle distance in km between two lat/lon points.
@@ -915,7 +918,9 @@ func (s *Service) Behavior(ctx context.Context, tenantID, vehicleID int64, from,
 	}
 	res.Summary.TotalIdleMin = math.Round(res.Summary.TotalIdleMin*10) / 10
 
-	res.HullNo, res.FuelRatioKmpl, res.FuelTankLiters = s.behaviorConfig(ctx, tenantID, vehicleID)
+	cfg := s.behaviorConfig(ctx, tenantID, vehicleID)
+	res.HullNo, res.LicensePlate = cfg.HullNo, cfg.LicensePlate
+	res.FuelRatioKmpl, res.FuelTankLiters = cfg.FuelRatioKmpl, cfg.FuelTankLiters
 	s.trueUpFromRollup(ctx, tenantID, vehicleID, from, to, pts, &res)
 	return &res, nil
 }
