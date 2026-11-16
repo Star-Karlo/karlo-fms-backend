@@ -1617,6 +1617,10 @@ definitions:
         type: number
       fuel_tank_liters:
         type: number
+      hull_no:
+        description: HullNo is the truck's hull number (nomor lambung) as set on the
+          vehicle. Null when none is set.
+        type: string
       idle_threshold_min:
         type: number
       overspeed_limit:
@@ -3218,6 +3222,23 @@ definitions:
         description: YYYY-MM-DD (inclusive)
         type: string
     type: object
+  routing.TollSegment:
+    properties:
+      by_golongan:
+        additionalProperties:
+          format: int64
+          type: integer
+        type: object
+      from_gate:
+        description: |-
+          FromGate is empty on a flat-fee charge. An open or integrated system —
+          JORR, for instance — takes one tap and a fixed amount, so there is no
+          exit to name. Those are real charges, not truncated records: one
+          measured journey carried five of them in a row.
+        type: string
+      to_gate:
+        type: string
+    type: object
   scorecard.Band:
     properties:
       index:
@@ -3460,6 +3481,75 @@ definitions:
       odometer_km:
         description: latest telemetry odometer
         type: number
+    type: object
+  toll.Quote:
+    properties:
+      amount:
+        type: integer
+      by_golongan:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: |-
+          ByGolongan is ALL FIVE classes, always, even when axles were supplied.
+
+          A caller with an axle count reads its own; one without shows the range
+          and says which it is. Collapsing to a single figure would mean this
+          endpoint picking a class on the caller's behalf, silently, for the 47%
+          of trucks that cannot be classified — and a toll figure becomes a
+          driver's cash advance.
+        type: object
+      complete:
+        description: |-
+          Complete is UnpricedGates being empty, stated positively so a client
+          cannot read a missing array as "all good" by accident.
+        type: boolean
+      golongan:
+        description: |-
+          Golongan is the class implied by the axles supplied, 0 when none were.
+          Amount is that class's figure, nil when the class is unknown — never
+          zero, which would read as a free journey.
+        type: integer
+      segments:
+        description: |-
+          Segments are the individual charges in travel order. A journey is not
+          one transaction, and a disputed figure is argued about per gate.
+        items:
+          $ref: '#/definitions/routing.TollSegment'
+        type: array
+      unpriced_gates:
+        description: |-
+          UnpricedGates names gates no tariff covered.
+
+          WHEN THIS IS NON-EMPTY THE TOTALS ARE AN UNDERSTATEMENT: those gates
+          contributed nothing, so the real cost is higher by whatever they charge.
+          Carried rather than swallowed because a caller must be able to tell a
+          cheap route from an unmeasured one, which the figure alone cannot.
+        items:
+          type: string
+        type: array
+    type: object
+  toll.QuoteRequest:
+    properties:
+      axles:
+        description: |-
+          Axles narrows the answer to one class, when the caller knows it.
+
+          OPTIONAL, and omitting it is a normal case rather than a lapse: 47% of
+          the legacy fleet has no axle count recorded. The response carries all
+          five classes either way — see Quote.
+        type: integer
+      geometry:
+        description: |-
+          Geometry is the routed line, [lon, lat] in TRAVEL ORDER. GeoJSON order,
+          matching what every router here returns, so a caller passes a route's
+          geometry through untouched.
+        items:
+          items:
+            format: float64
+            type: number
+          type: array
+        type: array
     type: object
   tracker.CreateRequest:
     properties:
@@ -7330,6 +7420,33 @@ paths:
       summary: The remaining journey from a vehicle to its hangar
       tags:
       - maintenance
+  /v1/toll/quote:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: route
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/toll.QuoteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/toll.Quote'
+        "422":
+          description: no usable tariff data
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Price a route's tolls against Karlo's own tariff tables
+      tags:
+      - toll
   /v1/trackers:
     get:
       parameters:
@@ -8148,12 +8265,91 @@ paths:
         battery)
       tags:
       - live-view
+  /v1/vehicles/by-hull/{hull_number}/behavior:
+    get:
+      description: Identical to /v1/vehicles/{vehicle_id}/behavior, with the hull
+        number (nomor lambung) in place of the id. Spacing, dashes and case are ignored.
+        A hull number shared by more than one vehicle in the account is refused with
+        409 rather than answered for one of them.
+      parameters:
+      - description: hull number (nomor lambung), e.g. S3487
+        in: path
+        name: hull_number
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: overspeed limit km/h (default 60)
+        in: query
+        name: limit
+        type: number
+      - description: minutes a stop must exceed to count as idle (default 120)
+        in: query
+        name: idle_threshold
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/liveview.BehaviorResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Driving behaviour for a window, addressed by hull number
+      tags:
+      - live-view
   /v1/vehicles/by-plate/{plate}/behavior:
     get:
       description: 'Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate
         in place of the id: overspeed events, harsh acceleration and braking, idle
         stops and distance, derived from the GPS track. Spacing, dashes and case in
-        the plate are ignored.'
+        the plate are ignored. The response leads with the vehicle''s `hull_no` (nomor
+        lambung), null when none is set.'
       parameters:
       - description: nomor polisi, e.g. B 9012 UBC
         in: path

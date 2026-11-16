@@ -5196,6 +5196,50 @@
                 }
             }
         },
+        "/v1/toll/quote": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "toll"
+                ],
+                "summary": "Price a route's tolls against Karlo's own tariff tables",
+                "parameters": [
+                    {
+                        "description": "route",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/toll.QuoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/toll.Quote"
+                        }
+                    },
+                    "422": {
+                        "description": "no usable tariff data",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/trackers": {
             "get": {
                 "security": [
@@ -5755,6 +5799,120 @@
                 }
             }
         },
+        "/v1/vehicles/by-hull/{hull_number}/behavior": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the hull number (nomor lambung) in place of the id. Spacing, dashes and case are ignored. A hull number shared by more than one vehicle in the account is refused with 409 rather than answered for one of them.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Driving behaviour for a window, addressed by hull number",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "hull number (nomor lambung), e.g. S3487",
+                        "name": "hull_number",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "overspeed limit km/h (default 60)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "minutes a stop must exceed to count as idle (default 120)",
+                        "name": "idle_threshold",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.BehaviorResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/vehicles/by-plate/{plate}/behavior": {
             "get": {
                 "security": [
@@ -5762,7 +5920,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored.",
+                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored. The response leads with the vehicle's `hull_no` (nomor lambung), null when none is set.",
                 "produces": [
                     "application/json"
                 ],
@@ -9341,6 +9499,10 @@
                 "fuel_tank_liters": {
                     "type": "number"
                 },
+                "hull_no": {
+                    "description": "HullNo is the truck's hull number (nomor lambung) as set on the vehicle. Null when none is set.",
+                    "type": "string"
+                },
                 "idle_threshold_min": {
                     "type": "number"
                 },
@@ -11358,6 +11520,25 @@
                 }
             }
         },
+        "routing.TollSegment": {
+            "type": "object",
+            "properties": {
+                "by_golongan": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "from_gate": {
+                    "description": "FromGate is empty on a flat-fee charge. An open or integrated system —\nJORR, for instance — takes one tap and a fixed amount, so there is no\nexit to name. Those are real charges, not truncated records: one\nmeasured journey carried five of them in a row.",
+                    "type": "string"
+                },
+                "to_gate": {
+                    "type": "string"
+                }
+            }
+        },
         "scorecard.Band": {
             "type": "object",
             "properties": {
@@ -11700,6 +11881,64 @@
                 "odometer_km": {
                     "description": "latest telemetry odometer",
                     "type": "number"
+                }
+            }
+        },
+        "toll.Quote": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "by_golongan": {
+                    "description": "ByGolongan is ALL FIVE classes, always, even when axles were supplied.\n\nA caller with an axle count reads its own; one without shows the range\nand says which it is. Collapsing to a single figure would mean this\nendpoint picking a class on the caller's behalf, silently, for the 47%\nof trucks that cannot be classified — and a toll figure becomes a\ndriver's cash advance.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "complete": {
+                    "description": "Complete is UnpricedGates being empty, stated positively so a client\ncannot read a missing array as \"all good\" by accident.",
+                    "type": "boolean"
+                },
+                "golongan": {
+                    "description": "Golongan is the class implied by the axles supplied, 0 when none were.\nAmount is that class's figure, nil when the class is unknown — never\nzero, which would read as a free journey.",
+                    "type": "integer"
+                },
+                "segments": {
+                    "description": "Segments are the individual charges in travel order. A journey is not\none transaction, and a disputed figure is argued about per gate.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/routing.TollSegment"
+                    }
+                },
+                "unpriced_gates": {
+                    "description": "UnpricedGates names gates no tariff covered.\n\nWHEN THIS IS NON-EMPTY THE TOTALS ARE AN UNDERSTATEMENT: those gates\ncontributed nothing, so the real cost is higher by whatever they charge.\nCarried rather than swallowed because a caller must be able to tell a\ncheap route from an unmeasured one, which the figure alone cannot.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "toll.QuoteRequest": {
+            "type": "object",
+            "properties": {
+                "axles": {
+                    "description": "Axles narrows the answer to one class, when the caller knows it.\n\nOPTIONAL, and omitting it is a normal case rather than a lapse: 47% of\nthe legacy fleet has no axle count recorded. The response carries all\nfive classes either way — see Quote.",
+                    "type": "integer"
+                },
+                "geometry": {
+                    "description": "Geometry is the routed line, [lon, lat] in TRAVEL ORDER. GeoJSON order,\nmatching what every router here returns, so a caller passes a route's\ngeometry through untouched.",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
+                    }
                 }
             }
         },
