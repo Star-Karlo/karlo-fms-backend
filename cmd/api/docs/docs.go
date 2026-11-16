@@ -5806,6 +5806,120 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/vehicles/by-hull/{hull_number}/behavior": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the hull number (nomor lambung) in place of the id. Spacing, dashes and case are ignored. The response carries the truck's ` + "`" + `license_plate` + "`" + ` beside its ` + "`" + `hull_no` + "`" + `. A hull number shared by more than one vehicle in the account is refused with 409 rather than answered for one of them.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Driving behaviour for a window, addressed by hull number",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "hull number (nomor lambung), e.g. S3487",
+                        "name": "hull_number",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "overspeed limit km/h (default 60)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "minutes a stop must exceed to count as idle (default 120)",
+                        "name": "idle_threshold",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.BehaviorResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/vehicles/by-plate/{plate}/behavior": {
             "get": {
                 "security": [
@@ -5813,7 +5927,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored.",
+                "description": "Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored. The response leads with the vehicle's ` + "`" + `hull_no` + "`" + ` (nomor lambung), null when none is set, then its ` + "`" + `license_plate` + "`" + `.",
                 "produces": [
                     "application/json"
                 ],
@@ -9392,8 +9506,16 @@ const docTemplate = `{
                 "fuel_tank_liters": {
                     "type": "number"
                 },
+                "hull_no": {
+                    "description": "HullNo is the truck's hull number (nomor lambung) as set on the vehicle. Null when none is set.",
+                    "type": "string"
+                },
                 "idle_threshold_min": {
                     "type": "number"
+                },
+                "license_plate": {
+                    "description": "The truck's nomor polisi, so a caller that asked by hull number can\ntell which truck answered.",
+                    "type": "string"
                 },
                 "overspeed_limit": {
                     "type": "number"

@@ -22,6 +22,17 @@ RETURNING *;
 -- a write so the upstream mirror targets the record this row is paired with.
 SELECT * FROM vehicles WHERE id = $1;
 
+-- name: GetVehicleBehaviorConfig :one
+-- What the behaviour report echoes about the vehicle itself.
+SELECT license_plate, hull_no, fuel_ratio_kmpl, fuel_tank_liters FROM vehicles WHERE id = $1;
+
+-- name: ListVehiclesByHull :many
+-- Matched loosely, like plates: case and separators are ignored, because a
+-- hull number is transcribed with whatever grouping the typist chose.
+SELECT id, license_plate, status FROM vehicles
+ WHERE upper(regexp_replace(hull_no, '[^A-Za-z0-9]', '', 'g')) = sqlc.arg(hull)::text
+ ORDER BY id;
+
 -- name: PairVehicle :one
 -- Attach an existing local vehicle to its master-data record, for rows created
 -- before write-through existed. Fills a NULL only: re-pointing a paired vehicle

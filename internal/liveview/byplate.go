@@ -140,7 +140,7 @@ func (h *Handler) liveByPlate(w http.ResponseWriter, r *http.Request) {
 // behaviorByPlate godoc
 //
 //	@Summary		Driving behaviour for a window, addressed by nomor polisi
-//	@Description	Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored.
+//	@Description	Identical to /v1/vehicles/{vehicle_id}/behavior, with the plate in place of the id: overspeed events, harsh acceleration and braking, idle stops and distance, derived from the GPS track. Spacing, dashes and case in the plate are ignored. The response leads with the vehicle's `hull_no` (nomor lambung), null when none is set, then its `license_plate`.
 //	@Tags			live-view
 //	@Security		BearerAuth
 //	@Produce		json
