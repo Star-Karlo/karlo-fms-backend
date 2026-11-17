@@ -4,6 +4,7 @@
 package config
 
 import (
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -156,6 +157,9 @@ type Config struct {
 	// window disables that table's prune. See defaults in Load.
 	Retention RetentionConfig
 
+	// DashcamAutosave saves every camera event clip of the listed customers.
+	DashcamAutosave DashcamAutosaveConfig
+
 	// Routing provider for vehicle-to-hangar directions.
 	//
 	// "geoapify" (default) is the hosted option whose free tier permits
@@ -236,6 +240,18 @@ type RetentionConfig struct {
 	DrivingEventDays int // driving_events, by occurred_at
 }
 
+// DashcamAutosaveConfig drives the automatic dashcam clip save.
+//
+// shortcut: per-customer settings live in env vars while SIBA is the only
+// customer; move them to a per-tenant settings table when a second one joins.
+type DashcamAutosaveConfig struct {
+	Tenants     []int64          // customers with auto-save on; empty = off
+	Buckets     map[int64]string // customer -> clip bucket (manual saves too); missing = telemetry's default
+	Interval    time.Duration
+	Lookback    time.Duration
+	MaxInflight int // downloads running at once per customer
+}
+
 // Load reads configuration from the environment, applying sane local-dev
 // defaults so `go run ./cmd/api` works against the compose stack out of the box.
 func Load() Config {
@@ -255,6 +271,13 @@ func Load() Config {
 			DeadClipDays:     EnvInt("RETENTION_DEAD_CLIP_DAYS", 7),
 			AlertDays:        EnvInt("RETENTION_ALERT_DAYS", 548),         // ~18 months
 			DrivingEventDays: EnvInt("RETENTION_DRIVING_EVENT_DAYS", 365), // 12 months
+		},
+		DashcamAutosave: DashcamAutosaveConfig{
+			Tenants:     tenantIDs(Env("DASHCAM_AUTOSAVE_TENANTS", "")),
+			Buckets:     tenantBuckets(Env("DASHCAM_TENANT_BUCKETS", "")),
+			Interval:    EnvDuration("DASHCAM_AUTOSAVE_INTERVAL", 30*time.Minute),
+			Lookback:    EnvDuration("DASHCAM_AUTOSAVE_LOOKBACK", 72*time.Hour),
+			MaxInflight: EnvInt("DASHCAM_AUTOSAVE_MAX_INFLIGHT", 20),
 		},
 		RoutingProvider:      Env("ROUTING_PROVIDER", "geoapify"),
 		RouteCacheURL:        Env("ROUTE_CACHE_URL", ""),
@@ -315,6 +338,35 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// tenantIDs parses "1,1000". A bad entry is logged and skipped, never guessed.
+func tenantIDs(s string) []int64 {
+	var out []int64
+	for _, p := range splitCSV(s) {
+		id, err := strconv.ParseInt(p, 10, 64)
+		if err != nil {
+			log.Printf("config: DASHCAM_AUTOSAVE_TENANTS: ignoring %q", p)
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// tenantBuckets parses "1=sibasuryastorage,1000=karlo-fms-cold-storage".
+func tenantBuckets(s string) map[int64]string {
+	out := map[int64]string{}
+	for _, p := range splitCSV(s) {
+		k, v, ok := strings.Cut(p, "=")
+		id, err := strconv.ParseInt(strings.TrimSpace(k), 10, 64)
+		if !ok || err != nil || strings.TrimSpace(v) == "" {
+			log.Printf("config: DASHCAM_TENANT_BUCKETS: ignoring %q", p)
+			continue
+		}
+		out[id] = strings.TrimSpace(v)
+	}
+	return out
+}
+
 // Env returns the value of environment variable k, or def if unset/empty.
 func Env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -329,6 +381,17 @@ func EnvInt(k string, def int) int {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
+	}
+	return def
+}
+
+// EnvDuration returns environment variable k parsed as a Go duration ("30m"), or def.
+func EnvDuration(k string, def time.Duration) time.Duration {
+	if v := os.Getenv(k); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+		log.Printf("config: %s: ignoring %q, using %s", k, v, def)
 	}
 	return def
 }

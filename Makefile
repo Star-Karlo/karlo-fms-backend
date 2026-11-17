@@ -1,4 +1,4 @@
-.PHONY: up up-app down migrate migrate-remote seed reset psql redis-cli logs run-api swagger sqlc tidy proto
+.PHONY: up up-app down migrate migrate-remote seed reset psql redis-cli logs run-api swagger sqlc tidy proto test-integration seed-dashcam
 
 # Regenerate the gRPC bindings from proto/.
 #
@@ -44,6 +44,11 @@ seed:
 	docker compose exec -T db psql -U postgres -d fms_app -v ON_ERROR_STOP=1 -f - < seed/seed.sql
 	@echo "seeded (admin@karlo.id / admin123)."
 
+# Local only: two trucks with the fake camera platform's cameras, plus sample
+# automatic saves (see seed/dashcam-autosave.sql). Run after `make seed`.
+seed-dashcam:
+	docker compose exec -T db psql -U postgres -d fms_app -v ON_ERROR_STOP=1 -f - < seed/dashcam-autosave.sql
+
 # Wipe volumes and rebuild from scratch (infra + migrate + seed).
 reset: down
 	docker compose down -v
@@ -55,6 +60,11 @@ reset: down
 # Run the API service (Swagger UI at http://localhost:8080/swagger/index.html)
 run-api:
 	@set -a; . ./.env 2>/dev/null || true; set +a; go run ./cmd/api
+
+# Integration tests (build tag "integration") against the compose PostGIS, as
+# fms_app so RLS applies. Run `make up && make migrate` first.
+test-integration:
+	go test -tags=integration -count=1 ./...
 
 # Regenerate type-safe DB code from db/migrations + internal/**/queries.sql
 sqlc:

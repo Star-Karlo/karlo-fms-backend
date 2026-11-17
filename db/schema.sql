@@ -325,6 +325,31 @@ CREATE TABLE dashcams (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 
+-- Saved dashcam clips (0029, 0036, 0065). Table only; RLS and the indexes live
+-- in the migrations.
+CREATE TABLE video_clips (
+  id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tenant_id     bigint NOT NULL REFERENCES tenants(id),
+  vehicle_id    bigint REFERENCES vehicles(id) ON DELETE SET NULL,
+  vss_device_id text   NOT NULL,
+  channel       int    NOT NULL,
+  clip_start    timestamptz NOT NULL,
+  clip_stop     timestamptz,
+  s3_bucket     text,
+  s3_key        text,
+  size_bytes    bigint,
+  lat           double precision,
+  lon           double precision,
+  reason        text NOT NULL DEFAULT 'manual',
+  note          text,
+  created_by    bigint REFERENCES users(id) ON DELETE SET NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  status        text NOT NULL DEFAULT 'ready',
+  job_id        text,
+  error         text,
+  alarm_id      text
+);
+
 -- Tracker↔vehicle assignment history (see 0040). Table only; the maintenance
 -- trigger + RLS live in the migration and aren't needed for codegen.
 CREATE TABLE tracker_assignments (
