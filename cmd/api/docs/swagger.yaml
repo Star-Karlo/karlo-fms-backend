@@ -661,6 +661,11 @@ definitions:
     type: object
   dashcam.ClipDTO:
     properties:
+      alarm_id:
+        description: |-
+          AlarmID is the camera event an auto-saved clip belongs to; EventCode and
+          EventName name it. All nil for manual saves.
+        type: string
       channel:
         type: integer
       clip_start:
@@ -668,6 +673,10 @@ definitions:
       created_at:
         type: string
       error:
+        type: string
+      event_code:
+        type: integer
+      event_name:
         type: string
       id:
         type: integer
@@ -692,12 +701,88 @@ definitions:
       size_bytes:
         type: integer
       status:
-        description: pending | ready | failed. s3_key/bucket are null until ready.
+        description: pending | ready | failed | no_clip | deleted. s3_key/bucket are
+          null until ready.
         type: string
       vehicle_id:
         type: integer
       vss_device_id:
         type: string
+    type: object
+  dashcam.ClipDayDTO:
+    properties:
+      bytes:
+        type: integer
+      clips:
+        type: integer
+      day:
+        type: string
+      events:
+        type: integer
+      failed:
+        type: integer
+      no_clip:
+        type: integer
+    type: object
+  dashcam.ClipSummaryDTO:
+    properties:
+      days:
+        items:
+          $ref: '#/definitions/dashcam.ClipDayDTO'
+        type: array
+      from:
+        type: string
+      to:
+        type: string
+      totals:
+        $ref: '#/definitions/dashcam.ClipTotalsDTO'
+      trucks:
+        items:
+          $ref: '#/definitions/dashcam.ClipTruckDTO'
+        type: array
+    type: object
+  dashcam.ClipTotalsDTO:
+    properties:
+      avg_bytes_per_clip:
+        type: number
+      avg_bytes_per_truck_day:
+        type: number
+      avg_events_per_truck_day:
+        description: Averages over the trucks with events and every day of the window.
+        type: number
+      bytes:
+        type: integer
+      clips:
+        type: integer
+      events:
+        type: integer
+      failed:
+        type: integer
+      no_clip:
+        type: integer
+      pending:
+        type: integer
+      trucks:
+        type: integer
+    type: object
+  dashcam.ClipTruckDTO:
+    properties:
+      bytes:
+        type: integer
+      clips:
+        type: integer
+      events:
+        type: integer
+      failed:
+        type: integer
+      last_event:
+        type: string
+      license_plate:
+        type: string
+      no_clip:
+        type: integer
+      vehicle_id:
+        type: integer
     type: object
   dashcam.DTO:
     properties:
@@ -8619,10 +8704,33 @@ paths:
       - live-view
   /v1/video-clips:
     get:
+      description: Newest first. Deleted auto-saved clips are hidden unless status=deleted.
+        from/to are WIB days (YYYY-MM-DD) on the clip time. Without limit it returns
+        up to 500, as before.
       parameters:
       - description: filter by vehicle
         in: query
         name: vehicle_id
+        type: integer
+      - description: first day, YYYY-MM-DD
+        in: query
+        name: from
+        type: string
+      - description: last day, YYYY-MM-DD
+        in: query
+        name: to
+        type: string
+      - description: pending | ready | failed | no_clip | deleted
+        in: query
+        name: status
+        type: string
+      - description: page size (max 500)
+        in: query
+        name: limit
+        type: integer
+      - description: rows to skip
+        in: query
+        name: offset
         type: integer
       produces:
       - application/json
@@ -8631,6 +8739,12 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-dashcam_ClipDTO'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       security:
       - BearerAuth: []
       summary: Saved clips (accident evidence)
@@ -8638,7 +8752,9 @@ paths:
       - dashcams
   /v1/video-clips/{id}:
     delete:
-      description: Removes the video_clips record and its S3 object. Manager+.
+      description: Removes the S3 object, and the video_clips record (an auto-saved
+        clip keeps it as 'deleted' so it isn't saved again). 409 while the clip is
+        still downloading. Manager+.
       parameters:
       - description: clip id
         in: path
@@ -8648,6 +8764,18 @@ paths:
       responses:
         "204":
           description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       security:
       - BearerAuth: []
       summary: Delete a saved evidence clip
@@ -8680,6 +8808,45 @@ paths:
       security:
       - BearerAuth: []
       summary: A short-lived URL to view or download a saved clip
+      tags:
+      - dashcams
+  /v1/video-clips/summary:
+    get:
+      description: Totals, per WIB day and per truck for automatically saved clips.
+        Each event + camera counts once by its latest row; deleted clips are left
+        out; still-downloading clips are left out of the sizes. Same access as the
+        clip list.
+      parameters:
+      - description: first day, YYYY-MM-DD
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: last day, YYYY-MM-DD
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: one truck
+        in: query
+        name: vehicle_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dashcam.ClipSummaryDTO'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Saved Evidence summary (automatic saves)
       tags:
       - dashcams
   /v1/webhooks:

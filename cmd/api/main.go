@@ -320,7 +320,8 @@ func main() {
 	maintenanceH := maintenance.NewHandler(pool)
 	scorecardH := scorecard.NewHandler(pool)
 	trackingH := trackinglink.NewHandler(pool, liveSvc)
-	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion).WithMasterData(mdWriter, companyDir)
+	dashcamH := dashcam.NewHandler(ctx, pool, tel, cfg.AWSRegion).WithMasterData(mdWriter, companyDir).
+		WithTenantBuckets(cfg.DashcamAutosave.Buckets)
 	featureH := features.NewHandler(pool)
 	rolesH := roles.NewHandler(pool)
 	platformH := platformadmin.NewHandler(pool, liveSvc).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(syncWakers...).WithAuthUpstream(authUp).WithCatalog(cat).WithMasterDataClient(mdRead)
@@ -454,6 +455,8 @@ func main() {
 	go dashcam.NewAlarmPoller(pool, tel).Run(ctx)
 	// Completes pending clip saves in the background (start Save -> ready/failed).
 	go dashcamH.ReconcileClips(ctx)
+	// Saves every camera event clip of DASHCAM_AUTOSAVE_TENANTS (no-op when empty).
+	go dashcam.NewAutosaver(pool, tel, cfg.DashcamAutosave).Run(ctx)
 	// Retention sweeper: the app DB has no cold tier of its own, so this bounds
 	// the append-only tables — pruning zero-value logs and archiving aged
 	// alerts/driving_events to the cold bucket before deleting them. The same

@@ -161,6 +161,43 @@ nil and defaults to enabled, which is the old behaviour.
 Four tests in `internal/apitoken/grant_test.go`. The Karlo-side treatment is
 `MICROSERVICES/docs/authentication/API_KEYS.md` §7.
 
+## Dashcam auto-save
+
+`internal/dashcam/autosave.go` copies every camera event clip of the customers in
+`DASHCAM_AUTOSAVE_TENANTS` to S3 (empty = off). It reads the events telemetry
+already stored (`GET /v1/dashcams/alarms?device_id=…`), asks telemetry to copy
+each clip by event id (never from the SD card), and records it as `pending`;
+`ReconcileClips` finishes it. One backend instance runs it at a time (advisory
+lock). Settings: `DASHCAM_TENANT_BUCKETS` (customer=bucket, manual saves too),
+`DASHCAM_AUTOSAVE_INTERVAL` (30m), `DASHCAM_AUTOSAVE_LOOKBACK` (72h),
+`DASHCAM_AUTOSAVE_MAX_INFLIGHT` (20). Saved Evidence reads
+`GET /v1/video-clips/summary`.
+
+Local loop, with telemetry's fake camera platform and LocalStack running (see
+the telemetry README) and ingest started with `INGEST_API_KEY=local-dev-key`:
+
+```bash
+make seed-dashcam   # two trucks with FAKE-CAM-1/2 + sample saves (local only)
+TELEMETRY_API_KEY=local-dev-key DASHCAM_AUTOSAVE_TENANTS=1 \
+DASHCAM_TENANT_BUCKETS=1=karlo-fms-local-video DASHCAM_AUTOSAVE_INTERVAL=1m \
+DASHCAM_AUTOSAVE_MAX_INFLIGHT=2 \
+AWS_ENDPOINT_URL_S3=http://s3.localhost.localstack.cloud:4566 \
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test go run ./cmd/api
+```
+
+The first run starts a minute after boot; its log line is
+`dashcam autosave: tenant 1: … events, … downloads started, …`.
+
+## Integration tests
+
+```bash
+make up && make migrate
+make test-integration   # go test -tags=integration ./... as fms_app
+```
+
+They connect as `fms_app` (so RLS applies) with an Asia/Jakarta session time
+zone, and create and remove their own tenants. CI does not run them yet.
+
 ## Multi-tenancy
 
 Every table carries `tenant_id` and is protected by RLS. The API connects as the
