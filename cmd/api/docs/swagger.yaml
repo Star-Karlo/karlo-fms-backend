@@ -760,6 +760,12 @@ definitions:
         type: integer
       events:
         type: integer
+      events_camera_didnt_send:
+        type: integer
+      events_save_failed:
+        type: integer
+      events_with_video:
+        type: integer
       failed:
         type: integer
       no_clip:
@@ -776,6 +782,12 @@ definitions:
       clips:
         type: integer
       events:
+        type: integer
+      events_camera_didnt_send:
+        type: integer
+      events_save_failed:
+        type: integer
+      events_with_video:
         type: integer
       failed:
         type: integer
@@ -797,6 +809,12 @@ definitions:
       code:
         type: integer
       events:
+        type: integer
+      events_camera_didnt_send:
+        type: integer
+      events_save_failed:
+        type: integer
+      events_with_video:
         type: integer
       failed:
         type: integer
@@ -834,6 +852,12 @@ definitions:
     type: object
   dashcam.DownloadRequest:
     properties:
+      alarm_id:
+        description: |-
+          AlarmID links an SD-card pull to the camera event it replaces, so the
+          Saved Evidence summary counts that event as saved. Optional; it must be
+          an event this camera already has a clip row for.
+        type: string
       channel:
         type: integer
       lat:
@@ -5172,7 +5196,8 @@ paths:
       - application/json
       description: Asks the telemetry service to pull the clip to S3; returns a job
         id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records
-        the clip in video_clips.
+        the clip in video_clips. With alarm_id, the clip is recorded against that
+        camera event (an SD-card pull for an event without a saved video).
       parameters:
       - description: dashcam id
         in: path
@@ -5190,6 +5215,18 @@ paths:
       responses:
         "202":
           description: Accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: alarm_id is not an event of this camera
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: the event already has a video for that camera
           schema:
             additionalProperties:
               type: string
@@ -8726,8 +8763,10 @@ paths:
   /v1/video-clips:
     get:
       description: Newest first. Deleted auto-saved clips are hidden unless status=deleted.
-        from/to are WIB days (YYYY-MM-DD) on the clip time. Without limit it returns
-        up to 500, as before.
+        Without a status filter, an event's "no clip" or failed row is also hidden
+        once that event has a saved or downloading video (any camera for "no clip",
+        the same camera for failed). from/to are WIB days (YYYY-MM-DD) on the clip
+        time. Without limit it returns up to 500, as before.
       parameters:
       - description: filter by vehicle
         in: query
@@ -8835,8 +8874,9 @@ paths:
     get:
       description: Totals, per WIB day, per event type and per truck for automatically
         saved clips. Each event + camera counts once by its latest row; deleted clips
-        are left out; still-downloading clips are left out of the sizes. Same access
-        as the clip list.
+        are left out; still-downloading clips are left out of the sizes. events_with_video
+        / events_camera_didnt_send / events_save_failed put each event in one outcome,
+        however many cameras it has. Same access as the clip list.
       parameters:
       - description: first day, YYYY-MM-DD
         in: query
@@ -8868,6 +8908,48 @@ paths:
       security:
       - BearerAuth: []
       summary: Saved Evidence summary (automatic saves)
+      tags:
+      - dashcams
+  /v1/video-clips/summary/export:
+    get:
+      description: 'The same numbers as /v1/video-clips/summary for the same window
+        and customer, as a PDF: overview, per event type, per truck, and what every
+        term means. English, no AI text.'
+      parameters:
+      - description: first day, YYYY-MM-DD
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: last day, YYYY-MM-DD
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: pdf, the only format
+        in: query
+        name: format
+        type: string
+      - description: one truck
+        in: query
+        name: vehicle_id
+        type: integer
+      produces:
+      - application/pdf
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Saved Evidence summary as a PDF
       tags:
       - dashcams
   /v1/webhooks:

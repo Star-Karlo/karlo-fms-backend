@@ -1645,7 +1645,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Asks the telemetry service to pull the clip to S3; returns a job id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records the clip in video_clips.",
+                "description": "Asks the telemetry service to pull the clip to S3; returns a job id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records the clip in video_clips. With alarm_id, the clip is recorded against that camera event (an SD-card pull for an event without a saved video).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1677,6 +1677,24 @@ const docTemplate = `{
                 "responses": {
                     "202": {
                         "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "alarm_id is not an event of this camera",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "the event already has a video for that camera",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6955,7 +6973,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Newest first. Deleted auto-saved clips are hidden unless status=deleted. from/to are WIB days (YYYY-MM-DD) on the clip time. Without limit it returns up to 500, as before.",
+                "description": "Newest first. Deleted auto-saved clips are hidden unless status=deleted. Without a status filter, an event's \"no clip\" or failed row is also hidden once that event has a saved or downloading video (any camera for \"no clip\", the same camera for failed). from/to are WIB days (YYYY-MM-DD) on the clip time. Without limit it returns up to 500, as before.",
                 "produces": [
                     "application/json"
                 ],
@@ -7027,7 +7045,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Totals, per WIB day, per event type and per truck for automatically saved clips. Each event + camera counts once by its latest row; deleted clips are left out; still-downloading clips are left out of the sizes. Same access as the clip list.",
+                "description": "Totals, per WIB day, per event type and per truck for automatically saved clips. Each event + camera counts once by its latest row; deleted clips are left out; still-downloading clips are left out of the sizes. events_with_video / events_camera_didnt_send / events_save_failed put each event in one outcome, however many cameras it has. Same access as the clip list.",
                 "produces": [
                     "application/json"
                 ],
@@ -7062,6 +7080,68 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/dashcam.ClipSummaryDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/video-clips/summary/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The same numbers as /v1/video-clips/summary for the same window and customer, as a PDF: overview, per event type, per truck, and what every term means. English, no AI text.",
+                "produces": [
+                    "application/pdf"
+                ],
+                "tags": [
+                    "dashcams"
+                ],
+                "summary": "Saved Evidence summary as a PDF",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "first day, YYYY-MM-DD",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "last day, YYYY-MM-DD",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "pdf, the only format",
+                        "name": "format",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "one truck",
+                        "name": "vehicle_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
                         }
                     },
                     "400": {
@@ -8392,6 +8472,15 @@ const docTemplate = `{
                 "events": {
                     "type": "integer"
                 },
+                "events_camera_didnt_send": {
+                    "type": "integer"
+                },
+                "events_save_failed": {
+                    "type": "integer"
+                },
+                "events_with_video": {
+                    "type": "integer"
+                },
                 "failed": {
                     "type": "integer"
                 },
@@ -8416,6 +8505,15 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "events": {
+                    "type": "integer"
+                },
+                "events_camera_didnt_send": {
+                    "type": "integer"
+                },
+                "events_save_failed": {
+                    "type": "integer"
+                },
+                "events_with_video": {
                     "type": "integer"
                 },
                 "failed": {
@@ -8448,6 +8546,15 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "events": {
+                    "type": "integer"
+                },
+                "events_camera_didnt_send": {
+                    "type": "integer"
+                },
+                "events_save_failed": {
+                    "type": "integer"
+                },
+                "events_with_video": {
                     "type": "integer"
                 },
                 "failed": {
@@ -8503,6 +8610,10 @@ const docTemplate = `{
         "dashcam.DownloadRequest": {
             "type": "object",
             "properties": {
+                "alarm_id": {
+                    "description": "AlarmID links an SD-card pull to the camera event it replaces, so the\nSaved Evidence summary counts that event as saved. Optional; it must be\nan event this camera already has a clip row for.",
+                    "type": "string"
+                },
                 "channel": {
                     "type": "integer"
                 },
