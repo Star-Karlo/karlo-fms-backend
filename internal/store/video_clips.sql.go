@@ -52,22 +52,39 @@ func (q *Queries) AutoClipStates(ctx context.Context, arg AutoClipStatesParams) 
 const autoClipSummary = `-- name: AutoClipSummary :one
 WITH latest AS (
   SELECT DISTINCT ON (c.vss_device_id, c.alarm_id, c.channel)
-         c.vss_device_id, c.alarm_id, c.channel, c.vehicle_id, c.status, c.size_bytes
+         c.vss_device_id, c.alarm_id, c.channel, c.vehicle_id, c.reason, c.status, c.size_bytes, c.clip_start
   FROM video_clips c
   WHERE c.alarm_id IS NOT NULL
     AND c.clip_start >= $1 AND c.clip_start < $2
     AND ($3::bigint IS NULL OR c.vehicle_id = $3)
   ORDER BY c.vss_device_id, c.alarm_id, c.channel, c.created_at DESC, c.id DESC
+),
+per_event AS (
+  SELECT vss_device_id, alarm_id, max(vehicle_id) AS vehicle_id,
+         count(*) FILTER (WHERE status = 'ready')                        AS clips,
+         COALESCE(sum(size_bytes) FILTER (WHERE status = 'ready'), 0)    AS bytes,
+         count(*) FILTER (WHERE status = 'failed')                       AS failed,
+         count(*) FILTER (WHERE status = 'no_clip')                      AS no_clip,
+         count(*) FILTER (WHERE status = 'pending')                      AS pending,
+         CASE WHEN bool_or(status = 'ready')   THEN 'with_video'
+              WHEN bool_or(status = 'pending') THEN 'downloading'
+              WHEN bool_or(status = 'no_clip') THEN 'camera_didnt_send'
+              ELSE 'save_failed' END                                     AS outcome
+  FROM latest
+  WHERE status <> 'deleted'
+  GROUP BY vss_device_id, alarm_id
 )
-SELECT count(DISTINCT vss_device_id || '/' || alarm_id)::bigint                          AS events,
-       count(*) FILTER (WHERE status = 'ready')::bigint                                  AS clips,
-       COALESCE(sum(size_bytes) FILTER (WHERE status = 'ready'), 0)::bigint              AS bytes,
-       count(*) FILTER (WHERE status = 'failed')::bigint                                 AS failed,
-       count(*) FILTER (WHERE status = 'no_clip')::bigint                                AS no_clip,
-       count(*) FILTER (WHERE status = 'pending')::bigint                                AS pending,
-       count(DISTINCT vehicle_id)::bigint                                                AS trucks
-FROM latest
-WHERE status <> 'deleted'
+SELECT count(*)::bigint                       AS events,
+       COALESCE(sum(clips), 0)::bigint        AS clips,
+       COALESCE(sum(bytes), 0)::bigint        AS bytes,
+       COALESCE(sum(failed), 0)::bigint       AS failed,
+       COALESCE(sum(no_clip), 0)::bigint      AS no_clip,
+       COALESCE(sum(pending), 0)::bigint      AS pending,
+       count(DISTINCT vehicle_id)::bigint     AS trucks,
+       count(*) FILTER (WHERE outcome = 'with_video')::bigint   AS events_with_video,
+       count(*) FILTER (WHERE outcome = 'camera_didnt_send')::bigint     AS events_camera_didnt_send,
+       count(*) FILTER (WHERE outcome = 'save_failed')::bigint  AS events_save_failed
+FROM per_event
 `
 
 type AutoClipSummaryParams struct {
@@ -77,18 +94,25 @@ type AutoClipSummaryParams struct {
 }
 
 type AutoClipSummaryRow struct {
-	Events  int64 `json:"events"`
-	Clips   int64 `json:"clips"`
-	Bytes   int64 `json:"bytes"`
-	Failed  int64 `json:"failed"`
-	NoClip  int64 `json:"no_clip"`
-	Pending int64 `json:"pending"`
-	Trucks  int64 `json:"trucks"`
+	Events                int64 `json:"events"`
+	Clips                 int64 `json:"clips"`
+	Bytes                 int64 `json:"bytes"`
+	Failed                int64 `json:"failed"`
+	NoClip                int64 `json:"no_clip"`
+	Pending               int64 `json:"pending"`
+	Trucks                int64 `json:"trucks"`
+	EventsWithVideo       int64 `json:"events_with_video"`
+	EventsCameraDidntSend int64 `json:"events_camera_didnt_send"`
+	EventsSaveFailed      int64 `json:"events_save_failed"`
 }
 
 // Each event + camera counts once, by its latest row: a clip that failed twice
 // and then saved is one saved clip. clip_start holds WIB clock time labelled
 // UTC, so the window bounds are WIB midnights labelled UTC.
+//
+// per_event puts each event in exactly one outcome, so with video + camera didn't send it +
+// save failed + still downloading always adds up to events, however many
+// cameras the event has.
 func (q *Queries) AutoClipSummary(ctx context.Context, arg AutoClipSummaryParams) (AutoClipSummaryRow, error) {
 	row := q.db.QueryRow(ctx, autoClipSummary, arg.FromTs, arg.ToTs, arg.VehicleID)
 	var i AutoClipSummaryRow
@@ -100,6 +124,9 @@ func (q *Queries) AutoClipSummary(ctx context.Context, arg AutoClipSummaryParams
 		&i.NoClip,
 		&i.Pending,
 		&i.Trucks,
+		&i.EventsWithVideo,
+		&i.EventsCameraDidntSend,
+		&i.EventsSaveFailed,
 	)
 	return i, err
 }
@@ -172,21 +199,39 @@ func (q *Queries) AutoClipSummaryByDay(ctx context.Context, arg AutoClipSummaryB
 const autoClipSummaryByType = `-- name: AutoClipSummaryByType :many
 WITH latest AS (
   SELECT DISTINCT ON (c.vss_device_id, c.alarm_id, c.channel)
-         c.vss_device_id, c.alarm_id, c.reason, c.status, c.size_bytes
+         c.vss_device_id, c.alarm_id, c.reason, c.status, c.size_bytes,
+         max(c.reason) FILTER (WHERE c.reason LIKE 'auto:%') OVER (PARTITION BY c.vss_device_id, c.alarm_id) AS auto_reason
   FROM video_clips c
   WHERE c.alarm_id IS NOT NULL
     AND c.clip_start >= $1 AND c.clip_start < $2
     AND ($3::bigint IS NULL OR c.vehicle_id = $3)
   ORDER BY c.vss_device_id, c.alarm_id, c.channel, c.created_at DESC, c.id DESC
+),
+per_event AS (
+  SELECT COALESCE(max(auto_reason), max(reason)) AS reason,
+         count(*) FILTER (WHERE status = 'ready')                        AS clips,
+         COALESCE(sum(size_bytes) FILTER (WHERE status = 'ready'), 0)    AS bytes,
+         count(*) FILTER (WHERE status = 'failed')                       AS failed,
+         count(*) FILTER (WHERE status = 'no_clip')                      AS no_clip,
+         count(*) FILTER (WHERE status = 'pending')                      AS pending,
+         CASE WHEN bool_or(status = 'ready')   THEN 'with_video'
+              WHEN bool_or(status = 'pending') THEN 'downloading'
+              WHEN bool_or(status = 'no_clip') THEN 'camera_didnt_send'
+              ELSE 'save_failed' END                                     AS outcome
+  FROM latest
+  WHERE status <> 'deleted'
+  GROUP BY vss_device_id, alarm_id
 )
-SELECT reason,
-       count(DISTINCT vss_device_id || '/' || alarm_id)::bigint              AS events,
-       count(*) FILTER (WHERE status = 'ready')::bigint                      AS clips,
-       COALESCE(sum(size_bytes) FILTER (WHERE status = 'ready'), 0)::bigint  AS bytes,
-       count(*) FILTER (WHERE status = 'failed')::bigint                     AS failed,
-       count(*) FILTER (WHERE status = 'no_clip')::bigint                    AS no_clip
-FROM latest
-WHERE status <> 'deleted'
+SELECT reason::text                  AS reason,
+       count(*)::bigint              AS events,
+       sum(clips)::bigint            AS clips,
+       sum(bytes)::bigint            AS bytes,
+       sum(failed)::bigint           AS failed,
+       sum(no_clip)::bigint          AS no_clip,
+       count(*) FILTER (WHERE outcome = 'with_video')::bigint   AS events_with_video,
+       count(*) FILTER (WHERE outcome = 'camera_didnt_send')::bigint     AS events_camera_didnt_send,
+       count(*) FILTER (WHERE outcome = 'save_failed')::bigint  AS events_save_failed
+FROM per_event
 GROUP BY reason
 ORDER BY events DESC, reason
 `
@@ -198,15 +243,22 @@ type AutoClipSummaryByTypeParams struct {
 }
 
 type AutoClipSummaryByTypeRow struct {
-	Reason string `json:"reason"`
-	Events int64  `json:"events"`
-	Clips  int64  `json:"clips"`
-	Bytes  int64  `json:"bytes"`
-	Failed int64  `json:"failed"`
-	NoClip int64  `json:"no_clip"`
+	Reason                string `json:"reason"`
+	Events                int64  `json:"events"`
+	Clips                 int64  `json:"clips"`
+	Bytes                 int64  `json:"bytes"`
+	Failed                int64  `json:"failed"`
+	NoClip                int64  `json:"no_clip"`
+	EventsWithVideo       int64  `json:"events_with_video"`
+	EventsCameraDidntSend int64  `json:"events_camera_didnt_send"`
+	EventsSaveFailed      int64  `json:"events_save_failed"`
 }
 
-// reason is "auto:<event code>" on every automatic save, so it is the event type.
+// reason is "auto:<event code>" on every automatic save, so it is the event
+// type. An SD-card pull linked to an event is "manual": the event keeps the
+// type of its automatic rows, so a pull never adds a "manual" type. The type is
+// read over all of the event's rows, before latest drops the older ones: a pull
+// that replaces a failed save on the same camera is that camera's latest row.
 func (q *Queries) AutoClipSummaryByType(ctx context.Context, arg AutoClipSummaryByTypeParams) ([]AutoClipSummaryByTypeRow, error) {
 	rows, err := q.db.Query(ctx, autoClipSummaryByType, arg.FromTs, arg.ToTs, arg.VehicleID)
 	if err != nil {
@@ -223,6 +275,9 @@ func (q *Queries) AutoClipSummaryByType(ctx context.Context, arg AutoClipSummary
 			&i.Bytes,
 			&i.Failed,
 			&i.NoClip,
+			&i.EventsWithVideo,
+			&i.EventsCameraDidntSend,
+			&i.EventsSaveFailed,
 		); err != nil {
 			return nil, err
 		}
@@ -237,25 +292,42 @@ func (q *Queries) AutoClipSummaryByType(ctx context.Context, arg AutoClipSummary
 const autoClipSummaryByVehicle = `-- name: AutoClipSummaryByVehicle :many
 WITH latest AS (
   SELECT DISTINCT ON (c.vss_device_id, c.alarm_id, c.channel)
-         c.vss_device_id, c.alarm_id, c.vehicle_id, c.status, c.size_bytes, c.clip_start
+         c.vss_device_id, c.alarm_id, c.channel, c.vehicle_id, c.reason, c.status, c.size_bytes, c.clip_start
   FROM video_clips c
   WHERE c.alarm_id IS NOT NULL
     AND c.clip_start >= $1 AND c.clip_start < $2
     AND ($3::bigint IS NULL OR c.vehicle_id = $3)
   ORDER BY c.vss_device_id, c.alarm_id, c.channel, c.created_at DESC, c.id DESC
+),
+per_event AS (
+  SELECT vehicle_id, max(clip_start) AS last_start,
+         count(*) FILTER (WHERE status = 'ready')                        AS clips,
+         COALESCE(sum(size_bytes) FILTER (WHERE status = 'ready'), 0)    AS bytes,
+         count(*) FILTER (WHERE status = 'failed')                       AS failed,
+         count(*) FILTER (WHERE status = 'no_clip')                      AS no_clip,
+         count(*) FILTER (WHERE status = 'pending')                      AS pending,
+         CASE WHEN bool_or(status = 'ready')   THEN 'with_video'
+              WHEN bool_or(status = 'pending') THEN 'downloading'
+              WHEN bool_or(status = 'no_clip') THEN 'camera_didnt_send'
+              ELSE 'save_failed' END                                     AS outcome
+  FROM latest
+  WHERE status <> 'deleted'
+  GROUP BY vss_device_id, alarm_id, vehicle_id
 )
-SELECT l.vehicle_id,
+SELECT a.vehicle_id,
        v.license_plate,
-       count(DISTINCT l.vss_device_id || '/' || l.alarm_id)::bigint              AS events,
-       count(*) FILTER (WHERE l.status = 'ready')::bigint                        AS clips,
-       COALESCE(sum(l.size_bytes) FILTER (WHERE l.status = 'ready'), 0)::bigint  AS bytes,
-       count(*) FILTER (WHERE l.status = 'failed')::bigint                       AS failed,
-       count(*) FILTER (WHERE l.status = 'no_clip')::bigint                      AS no_clip,
-       max(l.clip_start)::timestamptz                                            AS last_event
-FROM latest l
-LEFT JOIN vehicles v ON v.id = l.vehicle_id
-WHERE l.status <> 'deleted'
-GROUP BY l.vehicle_id, v.license_plate
+       count(*)::bigint                    AS events,
+       sum(a.clips)::bigint                AS clips,
+       sum(a.bytes)::bigint                AS bytes,
+       sum(a.failed)::bigint               AS failed,
+       sum(a.no_clip)::bigint              AS no_clip,
+       max(a.last_start)::timestamptz      AS last_event,
+       count(*) FILTER (WHERE a.outcome = 'with_video')::bigint   AS events_with_video,
+       count(*) FILTER (WHERE a.outcome = 'camera_didnt_send')::bigint     AS events_camera_didnt_send,
+       count(*) FILTER (WHERE a.outcome = 'save_failed')::bigint  AS events_save_failed
+FROM per_event a
+LEFT JOIN vehicles v ON v.id = a.vehicle_id
+GROUP BY a.vehicle_id, v.license_plate
 ORDER BY v.license_plate NULLS LAST
 `
 
@@ -266,14 +338,17 @@ type AutoClipSummaryByVehicleParams struct {
 }
 
 type AutoClipSummaryByVehicleRow struct {
-	VehicleID    *int64             `json:"vehicle_id"`
-	LicensePlate *string            `json:"license_plate"`
-	Events       int64              `json:"events"`
-	Clips        int64              `json:"clips"`
-	Bytes        int64              `json:"bytes"`
-	Failed       int64              `json:"failed"`
-	NoClip       int64              `json:"no_clip"`
-	LastEvent    pgtype.Timestamptz `json:"last_event"`
+	VehicleID             *int64             `json:"vehicle_id"`
+	LicensePlate          *string            `json:"license_plate"`
+	Events                int64              `json:"events"`
+	Clips                 int64              `json:"clips"`
+	Bytes                 int64              `json:"bytes"`
+	Failed                int64              `json:"failed"`
+	NoClip                int64              `json:"no_clip"`
+	LastEvent             pgtype.Timestamptz `json:"last_event"`
+	EventsWithVideo       int64              `json:"events_with_video"`
+	EventsCameraDidntSend int64              `json:"events_camera_didnt_send"`
+	EventsSaveFailed      int64              `json:"events_save_failed"`
 }
 
 func (q *Queries) AutoClipSummaryByVehicle(ctx context.Context, arg AutoClipSummaryByVehicleParams) ([]AutoClipSummaryByVehicleRow, error) {
@@ -294,6 +369,9 @@ func (q *Queries) AutoClipSummaryByVehicle(ctx context.Context, arg AutoClipSumm
 			&i.Failed,
 			&i.NoClip,
 			&i.LastEvent,
+			&i.EventsWithVideo,
+			&i.EventsCameraDidntSend,
+			&i.EventsSaveFailed,
 		); err != nil {
 			return nil, err
 		}

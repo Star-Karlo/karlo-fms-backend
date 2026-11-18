@@ -3,12 +3,14 @@
 package dashcam
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/karlo/fms-backend/internal/auth"
 	"github.com/karlo/fms-backend/internal/platform/db"
 	"github.com/karlo/fms-backend/internal/platform/dbtest"
+	"github.com/karlo/fms-backend/internal/telemetry"
 )
 
 // fleet is one test tenant with one truck and its camera.
@@ -101,8 +104,10 @@ func TestClipSummaryIntegration(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
+	// E1 and E6 have video, E3 none from the camera, E2 failed, E4 is still downloading.
 	want := ClipTotalsDTO{Events: 5, Clips: 3, Bytes: 5_500_000, Failed: 1, NoClip: 1, Pending: 1, Trucks: 1,
-		AvgEventsPerTruckDay: 2.5, AvgBytesPerTruckDay: 2_750_000, AvgBytesPerClip: 5_500_000.0 / 3}
+		AvgEventsPerTruckDay: 2.5, AvgBytesPerTruckDay: 2_750_000, AvgBytesPerClip: 5_500_000.0 / 3,
+		EventOutcomesDTO: EventOutcomesDTO{EventsWithVideo: 2, EventsCameraDidntSend: 1, EventsSaveFailed: 1}}
 	if got.Totals != want {
 		t.Fatalf("totals\n got %+v\nwant %+v", got.Totals, want)
 	}
@@ -117,8 +122,8 @@ func TestClipSummaryIntegration(t *testing.T) {
 	_, n124, _ := alarmMeta(124)
 	_, n25, _ := alarmMeta(25)
 	wantTypes := []ClipTypeDTO{
-		{Code: &c124, Name: n124, Events: 3, Clips: 3, Bytes: 5_500_000},
-		{Code: &c25, Name: n25, Events: 2, Failed: 1, NoClip: 1},
+		{Code: &c124, Name: n124, Events: 3, Clips: 3, Bytes: 5_500_000, EventOutcomesDTO: EventOutcomesDTO{EventsWithVideo: 2}},
+		{Code: &c25, Name: n25, Events: 2, Failed: 1, NoClip: 1, EventOutcomesDTO: EventOutcomesDTO{EventsCameraDidntSend: 1, EventsSaveFailed: 1}},
 	}
 	if len(got.Types) != 2 {
 		t.Fatalf("types %+v", got.Types)
@@ -126,12 +131,13 @@ func TestClipSummaryIntegration(t *testing.T) {
 	for i, w := range wantTypes {
 		g := got.Types[i]
 		if g.Code == nil || *g.Code != *w.Code || g.Name != w.Name || g.Events != w.Events || g.Clips != w.Clips ||
-			g.Bytes != w.Bytes || g.Failed != w.Failed || g.NoClip != w.NoClip {
+			g.Bytes != w.Bytes || g.Failed != w.Failed || g.NoClip != w.NoClip || g.EventOutcomesDTO != w.EventOutcomesDTO {
 			t.Fatalf("types[%d]\n got %+v\nwant %+v", i, g, w)
 		}
 	}
 	if len(got.Trucks) != 1 || *got.Trucks[0].VehicleID != a.vehicle || got.Trucks[0].Bytes != 5_500_000 ||
-		got.Trucks[0].LastEvent != "2026-11-11T23:30:00+00:00" {
+		got.Trucks[0].LastEvent != "2026-11-11T23:30:00+00:00" ||
+		got.Trucks[0].EventOutcomesDTO != (EventOutcomesDTO{EventsWithVideo: 2, EventsCameraDidntSend: 1, EventsSaveFailed: 1}) {
 		t.Fatalf("trucks %+v", got.Trucks)
 	}
 
@@ -140,6 +146,191 @@ func TestClipSummaryIntegration(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if got.Totals.Clips != 1 || got.Totals.Bytes != 7_000_000 {
 		t.Fatalf("tenant B totals %+v", got.Totals)
+	}
+}
+
+// setReason overrides a row's reason, e.g. to make an alarm-linked SD-card pull "manual".
+func (f fleet) setReason(t *testing.T, pool *db.Pool, id int64, reason string) {
+	t.Helper()
+	if err := db.Tx(context.Background(), pool, f.tenant, func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(), `UPDATE video_clips SET reason = $2 WHERE id = $1`, id, reason)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClipSummaryPerAlarmIntegration(t *testing.T) {
+	pool := dbtest.Open(t)
+	a := newFleet(t, pool, "per alarm A")
+	s := func(v string) *string { return &v }
+	n := func(v int64) *int64 { return &v }
+
+	// P1: two cameras, one saved and one failed: the event has video.
+	a.clip(t, pool, s("P1"), 1, "2026-11-10 08:00:00", "ready", n(1_000_000), 1)
+	a.clip(t, pool, s("P1"), 2, "2026-11-10 08:00:00", "failed", nil, 2)
+	// P2: the camera sent nothing, then an SD-card pull linked to the event saved it.
+	noClip := a.clip(t, pool, s("P2"), 0, "2026-11-10 09:00:00", "no_clip", nil, 3)
+	a.setReason(t, pool, noClip, "auto:25")
+	pull := a.clip(t, pool, s("P2"), 1, "2026-11-10 08:59:45", "ready", n(2_000_000), 4)
+	a.setReason(t, pool, pull, "manual")
+	// P3: the save failed, and a linked pull is still downloading.
+	a.clip(t, pool, s("P3"), 1, "2026-11-10 10:00:00", "failed", nil, 5)
+	pending := a.clip(t, pool, s("P3"), 1, "2026-11-10 09:59:45", "pending", nil, 6)
+	a.setReason(t, pool, pending, "manual")
+
+	h := &Handler{pool: pool}
+	w := request(t, h, a.tenant, http.MethodGet, "/v1/video-clips/summary?from=2026-11-10&to=2026-11-10")
+	if w.Code != http.StatusOK {
+		t.Fatalf("summary: %d %s", w.Code, w.Body.String())
+	}
+	var got ClipSummaryDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Totals.Events != 3 || got.Totals.EventOutcomesDTO != (EventOutcomesDTO{EventsWithVideo: 2}) {
+		t.Fatalf("totals %+v, want 3 events, 2 with video, P3 downloading", got.Totals)
+	}
+	// The pull keeps its event's type: no "manual" type, and P2 counted once under 25.
+	if len(got.Types) != 2 {
+		t.Fatalf("types %+v, want 124 and 25 only", got.Types)
+	}
+	for _, ty := range got.Types {
+		switch {
+		case ty.Code == nil:
+			t.Fatalf("a type without a code: %+v", ty)
+		case *ty.Code == 124 && (ty.Events != 2 || ty.EventsWithVideo != 1):
+			t.Fatalf("type 124 %+v, want P1 and P3, one with video", ty)
+		case *ty.Code == 25 && (ty.Events != 1 || ty.EventsWithVideo != 1 || ty.Bytes != 2_000_000):
+			t.Fatalf("type 25 %+v, want P2 with its pulled video", ty)
+		}
+	}
+}
+
+func TestClipListHidesReplacedRowsIntegration(t *testing.T) {
+	pool := dbtest.Open(t)
+	a := newFleet(t, pool, "list replaced A")
+	s := func(v string) *string { return &v }
+	a.clip(t, pool, s("L1"), 0, "2026-11-10 08:00:00", "no_clip", nil, 1) // replaced by the pull below
+	a.clip(t, pool, s("L1"), 1, "2026-11-10 07:59:45", "ready", nil, 2)
+	a.clip(t, pool, s("L2"), 1, "2026-11-10 09:00:00", "failed", nil, 3) // an earlier attempt of a saved clip
+	a.clip(t, pool, s("L2"), 1, "2026-11-10 09:00:00", "ready", nil, 4)
+	a.clip(t, pool, s("L3"), 2, "2026-11-10 10:00:00", "failed", nil, 5) // another camera: still missing
+	a.clip(t, pool, s("L3"), 1, "2026-11-10 10:00:00", "ready", nil, 6)
+	a.clip(t, pool, s("L4"), 0, "2026-11-10 11:00:00", "no_clip", nil, 7) // nothing replaced it
+	h := &Handler{pool: pool}
+
+	list := func(q string) httpxList {
+		w := request(t, h, a.tenant, http.MethodGet, "/v1/video-clips"+q)
+		if w.Code != http.StatusOK {
+			t.Fatalf("list %s: %d %s", q, w.Code, w.Body.String())
+		}
+		var l httpxList
+		_ = json.Unmarshal(w.Body.Bytes(), &l)
+		return l
+	}
+	l := list("")
+	if l.Total != 5 || len(l.Items) != 5 {
+		t.Fatalf("default list: total %d, items %+v; want L1, L2 and L3 ready, L3's failed camera 2, L4", l.Total, l.Items)
+	}
+	for _, c := range l.Items {
+		if (*c.AlarmID == "L1" && c.Status == "no_clip") || (*c.AlarmID == "L2" && c.Status == "failed") {
+			t.Fatalf("replaced row still listed: %+v", c)
+		}
+	}
+	if l := list("?status=failed"); l.Total != 2 {
+		t.Fatalf("status=failed shows every failed row: total %d", l.Total)
+	}
+	if l := list("?status=no_clip"); l.Total != 2 {
+		t.Fatalf("status=no_clip shows every no-clip row: total %d", l.Total)
+	}
+}
+
+func TestClipSummaryExportIntegration(t *testing.T) {
+	pool := dbtest.Open(t)
+	a := newFleet(t, pool, "export A")
+	s := func(v string) *string { return &v }
+	n := func(v int64) *int64 { return &v }
+	a.clip(t, pool, s("X1"), 1, "2026-11-10 08:00:00", "ready", n(1_000_000), 1)
+	h := &Handler{pool: pool}
+
+	w := request(t, h, a.tenant, http.MethodGet, "/v1/video-clips/summary/export?from=2026-11-10&to=2026-11-11&format=pdf")
+	if w.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/pdf" {
+		t.Fatalf("content type %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); cd != `attachment; filename="saved-evidence-2026-11-10-to-2026-11-11.pdf"` {
+		t.Fatalf("content disposition %q", cd)
+	}
+	if !bytes.HasPrefix(w.Body.Bytes(), []byte("%PDF")) {
+		t.Fatalf("body is not a PDF: %q", w.Body.Bytes()[:min(16, w.Body.Len())])
+	}
+	for _, q := range []string{"?from=2026-11-10", "?from=10-11-2026&to=2026-11-11", "?from=2026-11-10&to=2026-11-11&format=csv"} {
+		if w := request(t, h, a.tenant, http.MethodGet, "/v1/video-clips/summary/export"+q); w.Code != http.StatusBadRequest {
+			t.Fatalf("export %s: %d, want 400", q, w.Code)
+		}
+	}
+}
+
+func TestDownloadLinkedToAlarmIntegration(t *testing.T) {
+	pool := dbtest.Open(t)
+	a := newFleet(t, pool, "pull A")
+	b := newFleet(t, pool, "pull B")
+	s := func(v string) *string { return &v }
+	a.clip(t, pool, s("D1"), 0, "2026-11-10 08:00:00", "no_clip", nil, 1)
+	a.clip(t, pool, s("D2"), 1, "2026-11-10 09:00:00", "ready", nil, 2)
+	b.clip(t, pool, s("B1"), 0, "2026-11-10 08:00:00", "no_clip", nil, 3)
+
+	var calls int
+	var sent map[string]any
+	tel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewDecoder(r.Body).Decode(&sent)
+		_, _ = w.Write([]byte(`{"job_id":"job-pull"}`))
+	}))
+	defer tel.Close()
+	h := &Handler{pool: pool, tel: telemetry.NewClient(tel.URL, "", 5*time.Second)}
+	camID := dbtest.QueryID(t, pool, a.tenant, `SELECT id FROM dashcams WHERE vss_device_id = $1`, a.device)
+	pull := func(body string) *httptest.ResponseRecorder {
+		r := chi.NewRouter()
+		h.Routes(r)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/dashcams/%d/download", camID), strings.NewReader(body))
+		req = req.WithContext(auth.WithClaims(req.Context(), &auth.Claims{TenantID: a.tenant, Role: auth.RoleManager}))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	for body, want := range map[string]int{
+		`{"channel":1,"start":"2026-11-10 07:59:45","stop":"2026-11-10 08:00:15","alarm_id":"NOPE"}`: http.StatusBadRequest,
+		`{"channel":1,"start":"2026-11-10 07:59:45","stop":"2026-11-10 08:00:15","alarm_id":"B1"}`:   http.StatusBadRequest, // B's event
+		`{"channel":1,"start":"2026-11-10 08:59:45","stop":"2026-11-10 09:00:15","alarm_id":"D2"}`:   http.StatusConflict,
+	} {
+		if w := pull(body); w.Code != want {
+			t.Fatalf("%s: %d %s, want %d", body, w.Code, w.Body.String(), want)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("telemetry was asked %d times for refused pulls", calls)
+	}
+
+	w := pull(`{"channel":1,"start":"2026-11-10 07:59:45","stop":"2026-11-10 08:00:15","alarm_id":"D1"}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("pull: %d %s", w.Code, w.Body.String())
+	}
+	if _, ok := sent["alarm_id"]; ok || calls != 1 {
+		t.Fatalf("telemetry got %+v (%d calls); alarm_id must not be sent, or it skips the SD card", sent, calls)
+	}
+	var alarmID, reason string
+	var vehicleID int64
+	_ = db.Tx(context.Background(), pool, a.tenant, func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(),
+			`SELECT alarm_id, reason, vehicle_id FROM video_clips WHERE job_id = 'job-pull'`).Scan(&alarmID, &reason, &vehicleID)
+	})
+	if alarmID != "D1" || reason != "manual" || vehicleID != a.vehicle {
+		t.Fatalf("pulled row: alarm %q reason %q vehicle %d", alarmID, reason, vehicleID)
 	}
 }
 

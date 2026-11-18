@@ -161,6 +161,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/dashcams/downloads/{jobId}", h.downloadStatus)
 	r.Get("/v1/video-clips", h.listClips)
 	r.Get("/v1/video-clips/summary", h.clipSummary)
+	r.Get("/v1/video-clips/summary/export", h.clipSummaryExport)
 	r.Get("/v1/video-clips/{id}/url", h.clipURL)
 	r.Group(func(ar chi.Router) {
 		ar.Use(auth.RequireRole(auth.RoleManager))
@@ -594,12 +595,16 @@ type DownloadRequest struct {
 	Lat     *float64 `json:"lat"`
 	Lon     *float64 `json:"lon"`
 	Note    string   `json:"note"`
+	// AlarmID links an SD-card pull to the camera event it replaces, so the
+	// Saved Evidence summary counts that event as saved. Optional; it must be
+	// an event this camera already has a clip row for.
+	AlarmID *string `json:"alarm_id,omitempty"`
 }
 
 // download godoc
 //
 //	@Summary		Save a clip to S3 (async)
-//	@Description	Asks the telemetry service to pull the clip to S3; returns a job id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records the clip in video_clips.
+//	@Description	Asks the telemetry service to pull the clip to S3; returns a job id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records the clip in video_clips. With alarm_id, the clip is recorded against that camera event (an SD-card pull for an event without a saved video).
 //	@Tags			dashcams
 //	@Security		BearerAuth
 //	@Accept			json
@@ -607,6 +612,8 @@ type DownloadRequest struct {
 //	@Param			id		path	int						true	"dashcam id"
 //	@Param			body	body	dashcam.DownloadRequest	true	"clip"
 //	@Success		202		{object}	map[string]string
+//	@Failure		400		{object}	map[string]string	"alarm_id is not an event of this camera"
+//	@Failure		409		{object}	map[string]string	"the event already has a video for that camera"
 //	@Router			/v1/dashcams/{id}/download [post]
 func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	dc, ok := h.resolve(w, r)
@@ -630,6 +637,18 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusOK, map[string]any{"job_id": existing.JobID, "clip_id": existing.ID, "status": existing.Status, "existing": true})
 		return
 	}
+	vehicleID := dc.vehicleID
+	if req.AlarmID != nil {
+		v, status, msg := h.checkPullAlarm(r.Context(), auth.EffectiveTenant(r), dc.deviceID, *req.AlarmID, req.Channel)
+		if status != 0 {
+			httpx.Error(w, status, msg)
+			return
+		}
+		// The event's own truck, so the pull is counted where the event is.
+		vehicleID = v
+	}
+	// AlarmID is deliberately not sent: with it, telemetry copies the event's
+	// uploaded clip only and never reads the SD card, which is what a pull is for.
 	jobID, err := h.tel.StartDashcamDownload(r.Context(), dc.deviceID, telemetry.DashcamDownloadReq{
 		Channel: req.Channel, Path: req.Path, Start: req.Start, Stop: req.Stop,
 		Bucket: h.buckets[auth.EffectiveTenant(r)],
@@ -642,9 +661,10 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	// instant the operator clicks Save. The reconciler flips it to ready/failed
 	// when the background download finishes — the client need not wait or poll.
 	pc := pendingClip{
-		tenantID: auth.EffectiveTenant(r), dashcamID: dc.id, vehicleID: dc.vehicleID,
+		tenantID: auth.EffectiveTenant(r), dashcamID: dc.id, vehicleID: vehicleID,
 		deviceID: dc.deviceID, channel: req.Channel, start: req.Start, stop: req.Stop,
 		lat: req.Lat, lon: req.Lon, note: req.Note, userID: auth.UserID(r.Context()),
+		alarmID: req.AlarmID,
 	}
 	clipID, err := h.insertPendingClip(r.Context(), pc, jobID)
 	if err != nil {
@@ -653,6 +673,33 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusAccepted, map[string]any{"job_id": jobID, "clip_id": clipID, "status": "pending", "existing": false})
+}
+
+// checkPullAlarm vets an SD-card pull's alarm_id before anything is
+// downloaded. The event must already have a clip row on this camera (RLS
+// keeps it to the caller's fleet), and that camera channel must not already
+// have a saved or downloading video for it. Returns the event's truck, or an
+// HTTP status and message to refuse with.
+func (h *Handler) checkPullAlarm(ctx context.Context, tenantID int64, deviceID, alarmID string, channel int) (*int64, int, string) {
+	var rows int64
+	var vehicleID *int64
+	var taken *bool
+	err := db.Tx(ctx, h.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+SELECT count(*), max(vehicle_id), bool_or(status IN ('ready', 'pending') AND channel = $3)
+FROM video_clips
+WHERE vss_device_id = $1 AND alarm_id = $2`, deviceID, alarmID, channel).Scan(&rows, &vehicleID, &taken)
+	})
+	switch {
+	case err != nil:
+		log.Printf("dashcam: check pull alarm %s: %v", alarmID, err)
+		return nil, http.StatusInternalServerError, "could not start the save"
+	case rows == 0:
+		return nil, http.StatusBadRequest, "alarm_id is not an event of this camera"
+	case taken != nil && *taken:
+		return nil, http.StatusConflict, "this event already has a video for that camera"
+	}
+	return vehicleID, 0, ""
 }
 
 // findClip godoc
@@ -721,7 +768,7 @@ func (h *Handler) downloadStatus(w http.ResponseWriter, r *http.Request) {
 // listClips godoc
 //
 //	@Summary		Saved clips (accident evidence)
-//	@Description	Newest first. Deleted auto-saved clips are hidden unless status=deleted. from/to are WIB days (YYYY-MM-DD) on the clip time. Without limit it returns up to 500, as before.
+//	@Description	Newest first. Deleted auto-saved clips are hidden unless status=deleted. Without a status filter, an event's "no clip" or failed row is also hidden once that event has a saved or downloading video (any camera for "no clip", the same camera for failed). from/to are WIB days (YYYY-MM-DD) on the clip time. Without limit it returns up to 500, as before.
 //	@Tags			dashcams
 //	@Security		BearerAuth
 //	@Produce		json
@@ -759,7 +806,11 @@ func (h *Handler) listClips(w http.ResponseWriter, r *http.Request) {
 WHERE ($1::bigint IS NULL OR c.vehicle_id = $1)
   AND ($2::timestamptz IS NULL OR c.clip_start >= $2)
   AND ($3::timestamptz IS NULL OR c.clip_start < $3)
-  AND (($4::text IS NULL AND c.status <> 'deleted') OR c.status = $4)`
+  AND (($4::text IS NULL AND c.status <> 'deleted') OR c.status = $4)
+  AND ($4::text IS NOT NULL OR c.status NOT IN ('no_clip', 'failed') OR c.alarm_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM video_clips s
+        WHERE s.vss_device_id = c.vss_device_id AND s.alarm_id = c.alarm_id
+          AND s.status IN ('ready', 'pending') AND (c.status = 'no_clip' OR s.channel = c.channel)))`
 	var items []ClipDTO
 	var total int64
 	err = db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
