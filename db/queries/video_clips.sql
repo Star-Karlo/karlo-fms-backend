@@ -72,6 +72,28 @@ WHERE status <> 'deleted'
 GROUP BY day
 ORDER BY day;
 
+-- name: AutoClipSummaryByType :many
+-- reason is "auto:<event code>" on every automatic save, so it is the event type.
+WITH latest AS (
+  SELECT DISTINCT ON (c.vss_device_id, c.alarm_id, c.channel)
+         c.vss_device_id, c.alarm_id, c.reason, c.status, c.size_bytes
+  FROM video_clips c
+  WHERE c.alarm_id IS NOT NULL
+    AND c.clip_start >= sqlc.arg('from_ts') AND c.clip_start < sqlc.arg('to_ts')
+    AND (sqlc.narg('vehicle_id')::bigint IS NULL OR c.vehicle_id = sqlc.narg('vehicle_id'))
+  ORDER BY c.vss_device_id, c.alarm_id, c.channel, c.created_at DESC, c.id DESC
+)
+SELECT reason,
+       count(DISTINCT vss_device_id || '/' || alarm_id)::bigint              AS events,
+       count(*) FILTER (WHERE status = 'ready')::bigint                      AS clips,
+       COALESCE(sum(size_bytes) FILTER (WHERE status = 'ready'), 0)::bigint  AS bytes,
+       count(*) FILTER (WHERE status = 'failed')::bigint                     AS failed,
+       count(*) FILTER (WHERE status = 'no_clip')::bigint                    AS no_clip
+FROM latest
+WHERE status <> 'deleted'
+GROUP BY reason
+ORDER BY events DESC, reason;
+
 -- name: AutoClipSummaryByVehicle :many
 WITH latest AS (
   SELECT DISTINCT ON (c.vss_device_id, c.alarm_id, c.channel)

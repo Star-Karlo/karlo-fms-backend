@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/karlo/fms-backend/internal/platform/config"
+	"github.com/karlo/fms-backend/internal/store"
 	"github.com/karlo/fms-backend/internal/telemetry"
 )
 
@@ -319,6 +320,16 @@ func TestEventOfReadsAutoReasons(t *testing.T) {
 	}
 	if c, n := eventOf("manual"); c != nil || n != nil {
 		t.Fatalf("manual -> %v %v", c, n)
+	}
+}
+
+func TestTypeOfKeepsUnparsedReasons(t *testing.T) {
+	if got := typeOf(store.AutoClipSummaryByTypeRow{Reason: "auto:x", Events: 2}); got.Code != nil || got.Name != "auto:x" || got.Events != 2 {
+		t.Fatalf("unparsed reason -> %+v", got)
+	}
+	_, want, _ := alarmMeta(25)
+	if got := typeOf(store.AutoClipSummaryByTypeRow{Reason: "auto:25"}); got.Code == nil || *got.Code != 25 || got.Name != want {
+		t.Fatalf("auto:25 -> %+v", got)
 	}
 }
 
