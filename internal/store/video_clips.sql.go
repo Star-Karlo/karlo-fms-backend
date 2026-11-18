@@ -169,6 +169,71 @@ func (q *Queries) AutoClipSummaryByDay(ctx context.Context, arg AutoClipSummaryB
 	return items, nil
 }
 
+const autoClipSummaryByType = `-- name: AutoClipSummaryByType :many
+WITH latest AS (
+  SELECT DISTINCT ON (c.vss_device_id, c.alarm_id, c.channel)
+         c.vss_device_id, c.alarm_id, c.reason, c.status, c.size_bytes
+  FROM video_clips c
+  WHERE c.alarm_id IS NOT NULL
+    AND c.clip_start >= $1 AND c.clip_start < $2
+    AND ($3::bigint IS NULL OR c.vehicle_id = $3)
+  ORDER BY c.vss_device_id, c.alarm_id, c.channel, c.created_at DESC, c.id DESC
+)
+SELECT reason,
+       count(DISTINCT vss_device_id || '/' || alarm_id)::bigint              AS events,
+       count(*) FILTER (WHERE status = 'ready')::bigint                      AS clips,
+       COALESCE(sum(size_bytes) FILTER (WHERE status = 'ready'), 0)::bigint  AS bytes,
+       count(*) FILTER (WHERE status = 'failed')::bigint                     AS failed,
+       count(*) FILTER (WHERE status = 'no_clip')::bigint                    AS no_clip
+FROM latest
+WHERE status <> 'deleted'
+GROUP BY reason
+ORDER BY events DESC, reason
+`
+
+type AutoClipSummaryByTypeParams struct {
+	FromTs    pgtype.Timestamptz `json:"from_ts"`
+	ToTs      pgtype.Timestamptz `json:"to_ts"`
+	VehicleID *int64             `json:"vehicle_id"`
+}
+
+type AutoClipSummaryByTypeRow struct {
+	Reason string `json:"reason"`
+	Events int64  `json:"events"`
+	Clips  int64  `json:"clips"`
+	Bytes  int64  `json:"bytes"`
+	Failed int64  `json:"failed"`
+	NoClip int64  `json:"no_clip"`
+}
+
+// reason is "auto:<event code>" on every automatic save, so it is the event type.
+func (q *Queries) AutoClipSummaryByType(ctx context.Context, arg AutoClipSummaryByTypeParams) ([]AutoClipSummaryByTypeRow, error) {
+	rows, err := q.db.Query(ctx, autoClipSummaryByType, arg.FromTs, arg.ToTs, arg.VehicleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AutoClipSummaryByTypeRow{}
+	for rows.Next() {
+		var i AutoClipSummaryByTypeRow
+		if err := rows.Scan(
+			&i.Reason,
+			&i.Events,
+			&i.Clips,
+			&i.Bytes,
+			&i.Failed,
+			&i.NoClip,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const autoClipSummaryByVehicle = `-- name: AutoClipSummaryByVehicle :many
 WITH latest AS (
   SELECT DISTINCT ON (c.vss_device_id, c.alarm_id, c.channel)

@@ -84,6 +84,13 @@ func TestClipSummaryIntegration(t *testing.T) {
 	a.clip(t, pool, s("E6"), 1, "2026-11-11 23:30:00", "ready", n(500_000), 10)
 	// Another customer's clip on the same day must never show up for A.
 	b.clip(t, pool, s("E1"), 1, "2026-11-10 08:00:00", "ready", n(7_000_000), 11)
+	// E2 and E3 are a second event type.
+	if err := db.Tx(context.Background(), pool, a.tenant, func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(), `UPDATE video_clips SET reason = 'auto:25' WHERE alarm_id IN ('E2', 'E3')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	h := &Handler{pool: pool}
 	w := request(t, h, a.tenant, http.MethodGet, "/v1/video-clips/summary?from=2026-11-10&to=2026-11-11")
@@ -105,6 +112,23 @@ func TestClipSummaryIntegration(t *testing.T) {
 	}
 	if len(got.Days) != 2 || got.Days[0] != wantDays[0] || got.Days[1] != wantDays[1] {
 		t.Fatalf("days\n got %+v\nwant %+v", got.Days, wantDays)
+	}
+	c124, c25 := 124, 25
+	_, n124, _ := alarmMeta(124)
+	_, n25, _ := alarmMeta(25)
+	wantTypes := []ClipTypeDTO{
+		{Code: &c124, Name: n124, Events: 3, Clips: 3, Bytes: 5_500_000},
+		{Code: &c25, Name: n25, Events: 2, Failed: 1, NoClip: 1},
+	}
+	if len(got.Types) != 2 {
+		t.Fatalf("types %+v", got.Types)
+	}
+	for i, w := range wantTypes {
+		g := got.Types[i]
+		if g.Code == nil || *g.Code != *w.Code || g.Name != w.Name || g.Events != w.Events || g.Clips != w.Clips ||
+			g.Bytes != w.Bytes || g.Failed != w.Failed || g.NoClip != w.NoClip {
+			t.Fatalf("types[%d]\n got %+v\nwant %+v", i, g, w)
+		}
 	}
 	if len(got.Trucks) != 1 || *got.Trucks[0].VehicleID != a.vehicle || got.Trucks[0].Bytes != 5_500_000 ||
 		got.Trucks[0].LastEvent != "2026-11-11T23:30:00+00:00" {

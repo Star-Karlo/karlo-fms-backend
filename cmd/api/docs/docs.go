@@ -7027,7 +7027,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Totals, per WIB day and per truck for automatically saved clips. Each event + camera counts once by its latest row; deleted clips are left out; still-downloading clips are left out of the sizes. Same access as the clip list.",
+                "description": "Totals, per WIB day, per event type and per truck for automatically saved clips. Each event + camera counts once by its latest row; deleted clips are left out; still-downloading clips are left out of the sizes. Same access as the clip list.",
                 "produces": [
                     "application/json"
                 ],
@@ -8361,6 +8361,12 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/dashcam.ClipTruckDTO"
                     }
+                },
+                "types": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dashcam.ClipTypeDTO"
+                    }
                 }
             }
         },
@@ -8425,6 +8431,32 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dashcam.ClipTypeDTO": {
+            "type": "object",
+            "properties": {
+                "bytes": {
+                    "type": "integer"
+                },
+                "clips": {
+                    "type": "integer"
+                },
+                "code": {
+                    "type": "integer"
+                },
+                "events": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "no_clip": {
                     "type": "integer"
                 }
             }

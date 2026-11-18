@@ -20,6 +20,7 @@ type ClipSummaryDTO struct {
 	To     string         `json:"to"`
 	Totals ClipTotalsDTO  `json:"totals"`
 	Days   []ClipDayDTO   `json:"days"`
+	Types  []ClipTypeDTO  `json:"types"`
 	Trucks []ClipTruckDTO `json:"trucks"`
 }
 
@@ -48,6 +49,18 @@ type ClipDayDTO struct {
 	NoClip int64  `json:"no_clip"`
 }
 
+// ClipTypeDTO is one camera event type, most events first. Name is the same
+// display name Recordings and the clip list show.
+type ClipTypeDTO struct {
+	Code   *int   `json:"code"`
+	Name   string `json:"name"`
+	Events int64  `json:"events"`
+	Clips  int64  `json:"clips"`
+	Bytes  int64  `json:"bytes"`
+	Failed int64  `json:"failed"`
+	NoClip int64  `json:"no_clip"`
+}
+
 // ClipTruckDTO is one truck. LastEvent is camera-local time, like clip_start.
 type ClipTruckDTO struct {
 	VehicleID    *int64  `json:"vehicle_id"`
@@ -63,7 +76,7 @@ type ClipTruckDTO struct {
 // clipSummary godoc
 //
 //	@Summary		Saved Evidence summary (automatic saves)
-//	@Description	Totals, per WIB day and per truck for automatically saved clips. Each event + camera counts once by its latest row; deleted clips are left out; still-downloading clips are left out of the sizes. Same access as the clip list.
+//	@Description	Totals, per WIB day, per event type and per truck for automatically saved clips. Each event + camera counts once by its latest row; deleted clips are left out; still-downloading clips are left out of the sizes. Same access as the clip list.
 //	@Tags			dashcams
 //	@Security		BearerAuth
 //	@Produce		json
@@ -92,7 +105,7 @@ func (h *Handler) clipSummary(w http.ResponseWriter, r *http.Request) {
 	fromTs := pgtype.Timestamptz{Time: *from, Valid: true}
 	toTs := pgtype.Timestamptz{Time: *to, Valid: true}
 
-	out := ClipSummaryDTO{From: q.Get("from"), To: q.Get("to"), Days: []ClipDayDTO{}, Trucks: []ClipTruckDTO{}}
+	out := ClipSummaryDTO{From: q.Get("from"), To: q.Get("to"), Days: []ClipDayDTO{}, Types: []ClipTypeDTO{}, Trucks: []ClipTruckDTO{}}
 	err = db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		st := store.New(tx)
 		t, err := st.AutoClipSummary(r.Context(), store.AutoClipSummaryParams{FromTs: fromTs, ToTs: toTs, VehicleID: vehicleID})
@@ -107,6 +120,13 @@ func (h *Handler) clipSummary(w http.ResponseWriter, r *http.Request) {
 		for _, d := range days {
 			out.Days = append(out.Days, ClipDayDTO{Day: d.Day.Time.Format("2006-01-02"), Events: d.Events,
 				Clips: d.Clips, Bytes: d.Bytes, Failed: d.Failed, NoClip: d.NoClip})
+		}
+		types, err := st.AutoClipSummaryByType(r.Context(), store.AutoClipSummaryByTypeParams{FromTs: fromTs, ToTs: toTs, VehicleID: vehicleID})
+		if err != nil {
+			return err
+		}
+		for _, ty := range types {
+			out.Types = append(out.Types, typeOf(ty))
 		}
 		trucks, err := st.AutoClipSummaryByVehicle(r.Context(), store.AutoClipSummaryByVehicleParams{FromTs: fromTs, ToTs: toTs, VehicleID: vehicleID})
 		if err != nil {
@@ -124,6 +144,16 @@ func (h *Handler) clipSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// typeOf keeps a row whose reason isn't "auto:<code>" under its raw reason, so
+// the per-type events still add up to the totals.
+func typeOf(r store.AutoClipSummaryByTypeRow) ClipTypeDTO {
+	out := ClipTypeDTO{Name: r.Reason, Events: r.Events, Clips: r.Clips, Bytes: r.Bytes, Failed: r.Failed, NoClip: r.NoClip}
+	if code, name := eventOf(r.Reason); code != nil {
+		out.Code, out.Name = code, *name
+	}
+	return out
 }
 
 func totalsOf(t store.AutoClipSummaryRow, days int64) ClipTotalsDTO {
