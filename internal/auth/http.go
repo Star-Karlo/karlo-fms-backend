@@ -97,9 +97,11 @@ func (h *Handler) issue(w http.ResponseWriter, resp *TokenResponse) {
 }
 
 // refreshTokenFrom prefers the body (local mode, or an explicit token) and
-// falls back to the cookie.
+// falls back to the cookie, only in cookie mode: a refresh rotates the shared
+// token, and without a cookie domain the new one cannot be written back, so
+// reading it would leave TMS holding a revoked token.
 func (h *Handler) refreshTokenFrom(r *http.Request, body string) string {
-	if body != "" {
+	if body != "" || h.cookieDomain == "" {
 		return body
 	}
 	for _, name := range []string{refreshCookie, legacyCookie} {

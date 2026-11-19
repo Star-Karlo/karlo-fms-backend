@@ -1,6 +1,10 @@
 package auth
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestCookieName(t *testing.T) {
 	for _, c := range []struct{ domain, base, want string }{
@@ -14,5 +18,19 @@ func TestCookieName(t *testing.T) {
 		if got := (&Handler{cookieDomain: c.domain}).cookieName(c.base); got != c.want {
 			t.Errorf("cookieName(%q, %q) = %q, want %q", c.domain, c.base, got, c.want)
 		}
+	}
+}
+
+func TestRefreshTokenFromNeedsCookieMode(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", nil)
+	r.AddCookie(&http.Cookie{Name: "karlo_rt_staging", Value: "shared"})
+	if got := (&Handler{}).refreshTokenFrom(r, ""); got != "" {
+		t.Errorf("no cookie domain: got %q, want the shared cookie left alone", got)
+	}
+	if got := (&Handler{cookieDomain: ".staging.karlo.id"}).refreshTokenFrom(r, ""); got != "shared" {
+		t.Errorf("cookie mode: got %q, want %q", got, "shared")
+	}
+	if got := (&Handler{}).refreshTokenFrom(r, "body"); got != "body" {
+		t.Errorf("body token: got %q", got)
 	}
 }
