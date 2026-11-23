@@ -183,6 +183,21 @@ type Config struct {
 	MAPIDTollKey string
 	MAPIDTollURL string
 
+	// TollServiceURL points at karlo-prod-maps-toll, which owns the toll
+	// tables in the maps schema of the telemetry database.
+	//
+	// SET IT, AND THIS SERVICE STOPS READING ITS OWN COPY. Those tables exist
+	// here too, from migrations 0058-0065, and the two were identical the day
+	// the Maps copy was made. They diverge the moment either is edited — and
+	// the admin UI being built edits the Maps one. An operator fixing a tariff
+	// there while TMS still priced from the copy here would correct the figure
+	// nobody bills from, silently.
+	//
+	// UNSET, the local tables are used exactly as before. That is deliberate:
+	// rolling this back is removing one environment variable, not a redeploy.
+	TollServiceURL   string
+	TollServiceToken string
+
 	// MasterDataTollFields controls whether a vehicle edit sends axles,
 	// golonganOverride and the lorry dimensions UPSTREAM.
 	//
@@ -282,6 +297,8 @@ func Load() Config {
 		RoutingProvider:      Env("ROUTING_PROVIDER", "geoapify"),
 		RouteCacheURL:        Env("ROUTE_CACHE_URL", ""),
 		MAPIDTollKey:         Env("MAPID_TOLL_KEY", ""),
+		TollServiceURL:       Env("TOLL_SERVICE_URL", ""),
+		TollServiceToken:     Env("TOLL_SERVICE_TOKEN", ""),
 		MAPIDTollURL:         Env("MAPID_TOLL_URL", "https://routing.mapid.io"),
 		MasterDataTollFields: Env("MASTERDATA_TOLL_FIELDS", "") == "true",
 		GeoapifyAPIKey:       Env("GEOAPIFY_API_KEY", ""),
