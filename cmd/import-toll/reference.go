@@ -323,6 +323,20 @@ func runReference(refPath, gatesPath, sqlOut, sourceRef string) {
 	log.Printf("  cells whose gates have no position load nothing until those gates are placed")
 }
 
+// writeTariffConflict emits the upsert rule every tariff load shares.
+//
+// One row per cell since migration 0065, and A WEAKER SOURCE MAY NEVER
+// OVERWRITE A STRONGER ONE: re-running the MAPID harvest must not displace
+// Jasa Marga's own published figure, which it would otherwise do on the 179
+// cells where the two disagree.
+func writeTariffConflict(w func(string, ...any)) {
+	w("ON CONFLICT (entry_gate, COALESCE(exit_gate, 0), golongan)")
+	w("DO UPDATE SET kind = excluded.kind, amount_rp = excluded.amount_rp,")
+	w("  source = excluded.source, verdict = excluded.verdict,")
+	w("  issues = excluded.issues, source_ref = excluded.source_ref, fetched_at = now()")
+	w("WHERE toll_source_rank(excluded.source) >= toll_source_rank(toll_tariffs.source);")
+}
+
 func writeReferenceSQL(path string, cells []refCell, placed map[string]*gate, sourceRef string) error {
 	f, err := os.Create(path)
 	if err != nil {
@@ -347,8 +361,6 @@ func writeReferenceSQL(path string, cells []refCell, placed map[string]*gate, so
 		w("  lon = excluded.lon, source = excluded.source, updated_at = now();")
 	}
 	w("")
-	w("DELETE FROM toll_tariffs WHERE source = 'jasamarga';")
-	w("")
 	for _, c := range cells {
 		vals := make([]string, 5)
 		for g, v := range c.Amount {
@@ -362,13 +374,15 @@ func writeReferenceSQL(path string, cells []refCell, placed map[string]*gate, so
 			w("INSERT INTO toll_tariffs (kind, entry_gate, exit_gate, golongan, amount_rp, source, source_ref, verdict, issues)")
 			w("SELECT 'flat', eg.id, NULL, v.g, v.amount, 'jasamarga', %s, %s, %s", sqlLit(sourceRef), sqlLit(c.verdict()), issues)
 			w("FROM toll_gates eg, (VALUES %s) AS v(g, amount)", strings.Join(vals, ", "))
-			w("WHERE eg.name_norm = %s;", sqlLit(c.EntryNorm))
+			w("WHERE eg.name_norm = %s", sqlLit(c.EntryNorm))
+			writeTariffConflict(w)
 			continue
 		}
 		w("INSERT INTO toll_tariffs (kind, entry_gate, exit_gate, golongan, amount_rp, source, source_ref, verdict, issues)")
 		w("SELECT 'closed', eg.id, xg.id, v.g, v.amount, 'jasamarga', %s, %s, %s", sqlLit(sourceRef), sqlLit(c.verdict()), issues)
 		w("FROM toll_gates eg, toll_gates xg, (VALUES %s) AS v(g, amount)", strings.Join(vals, ", "))
-		w("WHERE eg.name_norm = %s AND xg.name_norm = %s;", sqlLit(c.EntryNorm), sqlLit(c.ExitNorm))
+		w("WHERE eg.name_norm = %s AND xg.name_norm = %s", sqlLit(c.EntryNorm), sqlLit(c.ExitNorm))
+		writeTariffConflict(w)
 	}
 	w("")
 	w("COMMIT;")
