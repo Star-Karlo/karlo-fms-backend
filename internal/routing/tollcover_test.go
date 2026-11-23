@@ -324,3 +324,44 @@ func TestCoverAllTerminatesOnASelfPair(t *testing.T) {
 		t.Fatal("CoverAll did not terminate — resuming at the exit must still advance")
 	}
 }
+
+// ONE CELL PER PAIR, ALL FIVE CLASSES TOGETHER — the contract LoadTollCells
+// must keep after migration 0065.
+//
+// Before the collapse a pair held one row per class PER SOURCE, so grouping
+// the loader's rows by (pair, source) always produced complete cells. With one
+// row per (entry, exit, golongan) a pair's five classes can now come from
+// different sources — Kanci -> Palimanan has I-III from Jasa Marga and IV-V
+// from MAPID — and grouping by source would split it into two partial cells.
+// This records what that costs: the better-ranked half wins and the other
+// classes become unpriceable, on the busiest corridor in the data.
+func TestSplittingAPairBySourceLosesClasses(t *testing.T) {
+	split := NewTollTable([]TollCell{
+		{EntryNorm: "kanci", ExitNorm: "palimanan", Source: "jasamarga",
+			AmountRp: map[int]int64{1: 132000, 2: 217500, 3: 217500}, Verdict: "usable"},
+		{EntryNorm: "kanci", ExitNorm: "palimanan", Source: "mapid",
+			AmountRp: map[int]int64{4: 273000, 5: 273000}, Verdict: "usable"},
+	})
+	passed := GatesAlong(route(), []TollGate{gate(1, "kanci", 106.1), gate(2, "palimanan", 106.4)})
+
+	res, _ := split.Cover(passed, 5)
+	if !res.Incomplete() {
+		t.Fatal("a pair split by source must lose the classes the losing source carried")
+	}
+
+	// Whole: the same five classes as one cell price without a gap.
+	whole := NewTollTable([]TollCell{
+		{EntryNorm: "kanci", ExitNorm: "palimanan", Source: "jasamarga",
+			AmountRp: map[int]int64{1: 132000, 2: 217500, 3: 217500, 4: 273000, 5: 273000},
+			Verdict:  "usable"},
+	})
+	for _, g := range []int{1, 2, 3, 4, 5} {
+		res, err := whole.Cover(passed, g)
+		if err != nil {
+			t.Fatalf("golongan %d: %v", g, err)
+		}
+		if res.Incomplete() {
+			t.Errorf("golongan %d must price from a whole cell, got gaps %v", g, res.Unpriced)
+		}
+	}
+}

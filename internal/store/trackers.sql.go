@@ -73,7 +73,7 @@ func (q *Queries) CountTrackers(ctx context.Context, arg CountTrackersParams) (i
 const createTracker = `-- name: CreateTracker :one
 INSERT INTO trackers (tenant_id, imei, phone_no, vehicle_id, status, master_data_id)
 VALUES ($1, $2, $3, $4, COALESCE($5, 'active'), $6)
-RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at
+RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, owner, owner_name, created_at, updated_at
 `
 
 type CreateTrackerParams struct {
@@ -105,6 +105,8 @@ func (q *Queries) CreateTracker(ctx context.Context, arg CreateTrackerParams) (T
 		&i.ExternalRef,
 		&i.MasterDataID,
 		&i.IsDemo,
+		&i.Owner,
+		&i.OwnerName,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -132,7 +134,7 @@ func (q *Queries) DeleteTracker(ctx context.Context, id int64) error {
 }
 
 const getTracker = `-- name: GetTracker :one
-SELECT id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at FROM trackers WHERE id = $1
+SELECT id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, owner, owner_name, created_at, updated_at FROM trackers WHERE id = $1
 `
 
 func (q *Queries) GetTracker(ctx context.Context, id int64) (Tracker, error) {
@@ -148,6 +150,8 @@ func (q *Queries) GetTracker(ctx context.Context, id int64) (Tracker, error) {
 		&i.ExternalRef,
 		&i.MasterDataID,
 		&i.IsDemo,
+		&i.Owner,
+		&i.OwnerName,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -155,7 +159,7 @@ func (q *Queries) GetTracker(ctx context.Context, id int64) (Tracker, error) {
 }
 
 const getTrackerWithVehicle = `-- name: GetTrackerWithVehicle :one
-SELECT t.id, t.tenant_id, t.imei, t.phone_no, t.vehicle_id, t.status, t.external_ref, t.master_data_id, t.is_demo, t.created_at, t.updated_at, v.license_plate AS vehicle_plate
+SELECT t.id, t.tenant_id, t.imei, t.phone_no, t.vehicle_id, t.status, t.external_ref, t.master_data_id, t.is_demo, t.owner, t.owner_name, t.created_at, t.updated_at, v.license_plate AS vehicle_plate
 FROM trackers t
 LEFT JOIN vehicles v ON v.id = t.vehicle_id
 WHERE t.id = $1
@@ -171,6 +175,8 @@ type GetTrackerWithVehicleRow struct {
 	ExternalRef  *string            `json:"external_ref"`
 	MasterDataID *string            `json:"master_data_id"`
 	IsDemo       bool               `json:"is_demo"`
+	Owner        *string            `json:"owner"`
+	OwnerName    *string            `json:"owner_name"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	VehiclePlate *string            `json:"vehicle_plate"`
@@ -189,6 +195,8 @@ func (q *Queries) GetTrackerWithVehicle(ctx context.Context, id int64) (GetTrack
 		&i.ExternalRef,
 		&i.MasterDataID,
 		&i.IsDemo,
+		&i.Owner,
+		&i.OwnerName,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.VehiclePlate,
@@ -197,7 +205,7 @@ func (q *Queries) GetTrackerWithVehicle(ctx context.Context, id int64) (GetTrack
 }
 
 const listTrackers = `-- name: ListTrackers :many
-SELECT t.id, t.tenant_id, t.imei, t.phone_no, t.vehicle_id, t.status, t.external_ref, t.master_data_id, t.is_demo, t.created_at, t.updated_at, v.license_plate AS vehicle_plate
+SELECT t.id, t.tenant_id, t.imei, t.phone_no, t.vehicle_id, t.status, t.external_ref, t.master_data_id, t.is_demo, t.owner, t.owner_name, t.created_at, t.updated_at, v.license_plate AS vehicle_plate
 FROM trackers t
 LEFT JOIN vehicles v ON v.id = t.vehicle_id
 WHERE ($1::text IS NULL
@@ -228,6 +236,8 @@ type ListTrackersRow struct {
 	ExternalRef  *string            `json:"external_ref"`
 	MasterDataID *string            `json:"master_data_id"`
 	IsDemo       bool               `json:"is_demo"`
+	Owner        *string            `json:"owner"`
+	OwnerName    *string            `json:"owner_name"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	VehiclePlate *string            `json:"vehicle_plate"`
@@ -261,6 +271,8 @@ func (q *Queries) ListTrackers(ctx context.Context, arg ListTrackersParams) ([]L
 			&i.ExternalRef,
 			&i.MasterDataID,
 			&i.IsDemo,
+			&i.Owner,
+			&i.OwnerName,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.VehiclePlate,
@@ -277,7 +289,7 @@ func (q *Queries) ListTrackers(ctx context.Context, arg ListTrackersParams) ([]L
 
 const setTrackerVehicle = `-- name: SetTrackerVehicle :one
 UPDATE trackers SET vehicle_id = $2 WHERE id = $1
-RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at
+RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, owner, owner_name, created_at, updated_at
 `
 
 type SetTrackerVehicleParams struct {
@@ -298,6 +310,8 @@ func (q *Queries) SetTrackerVehicle(ctx context.Context, arg SetTrackerVehiclePa
 		&i.ExternalRef,
 		&i.MasterDataID,
 		&i.IsDemo,
+		&i.Owner,
+		&i.OwnerName,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -322,7 +336,7 @@ func (q *Queries) StampTrackerMasterDataID(ctx context.Context, arg StampTracker
 const unassignTracker = `-- name: UnassignTracker :one
 UPDATE trackers SET vehicle_id = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at
+RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, owner, owner_name, created_at, updated_at
 `
 
 // Take the device off whatever truck it is on, keeping the device. Both
@@ -342,6 +356,8 @@ func (q *Queries) UnassignTracker(ctx context.Context, id int64) (Tracker, error
 		&i.ExternalRef,
 		&i.MasterDataID,
 		&i.IsDemo,
+		&i.Owner,
+		&i.OwnerName,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -355,7 +371,7 @@ SET imei       = COALESCE($2, imei),
     status     = COALESCE($4, status),
     is_demo    = COALESCE($5, is_demo)
 WHERE id = $1
-RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, created_at, updated_at
+RETURNING id, tenant_id, imei, phone_no, vehicle_id, status, external_ref, master_data_id, is_demo, owner, owner_name, created_at, updated_at
 `
 
 type UpdateTrackerParams struct {
@@ -385,6 +401,8 @@ func (q *Queries) UpdateTracker(ctx context.Context, arg UpdateTrackerParams) (T
 		&i.ExternalRef,
 		&i.MasterDataID,
 		&i.IsDemo,
+		&i.Owner,
+		&i.OwnerName,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

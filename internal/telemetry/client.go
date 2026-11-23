@@ -308,6 +308,7 @@ type DashcamEvidenceClip struct {
 	Lat     *float64  `json:"lat"`
 	Lon     *float64  `json:"lon"`
 	Channel int       `json:"channel"`
+	AlarmID string    `json:"alarm_id"`
 }
 
 // DashcamEvidence lists a device's evidence-backed alarms for a date (real time).
@@ -515,6 +516,10 @@ type DashcamDownloadReq struct {
 	Path    string `json:"path"`
 	Start   string `json:"start"`
 	Stop    string `json:"stop"`
+	// AlarmID copies exactly that event's uploaded clip; never the SD card.
+	AlarmID string `json:"alarm_id,omitempty"`
+	// Bucket overrides telemetry's default bucket (it must be on its allowlist).
+	Bucket string `json:"bucket,omitempty"`
 }
 
 // StartDashcamDownload kicks off an async clip pull; returns the job id.
@@ -530,10 +535,11 @@ func (c *Client) StartDashcamDownload(ctx context.Context, deviceID string, req 
 
 // DashcamDownloadStatus polls a pull job. When status is "done" the s3_key is set.
 type DashcamDownloadStatus struct {
-	Status string `json:"status"`
-	S3Key  string `json:"s3_key"`
-	Bucket string `json:"bucket"`
-	Error  string `json:"error"`
+	Status    string `json:"status"`
+	S3Key     string `json:"s3_key"`
+	Bucket    string `json:"bucket"`
+	SizeBytes *int64 `json:"size_bytes"`
+	Error     string `json:"error"`
 }
 
 // DashcamDownloadStatus polls a download job.
@@ -580,6 +586,16 @@ type DashcamAlarm struct {
 	Speed      *float64 `json:"speed"`
 	// Gforce is the peak acceleration a driving-behaviour event reported, or nil.
 	Gforce *float64 `json:"gforce"`
+	// Files are the event's video clips on the camera server; empty = no video.
+	Files []DashcamAlarmFile `json:"files"`
+}
+
+// DashcamAlarmFile is one video clip of an event, per camera channel.
+type DashcamAlarmFile struct {
+	Channel  int    `json:"channel"`
+	FileType int    `json:"file_type"`
+	Start    string `json:"start"` // camera-local "2006-01-02 15:04:05"
+	Stop     string `json:"stop"`
 }
 
 // DashcamAlarms returns alarms with id greater than since, id-ascending.
@@ -589,6 +605,19 @@ func (c *Client) DashcamAlarms(ctx context.Context, since int64, limit int) ([]D
 	if limit > 0 {
 		q.Set("limit", strconv.Itoa(limit))
 	}
+	var out []DashcamAlarm
+	return out, c.getJSON(ctx, "/v1/dashcams/alarms?"+q.Encode(), &out)
+}
+
+// DashcamCameraAlarms returns one camera's stored events in [from, to),
+// id-ascending after since. Read from telemetry's table, not the camera platform.
+func (c *Client) DashcamCameraAlarms(ctx context.Context, deviceID string, from, to time.Time, since int64, limit int) ([]DashcamAlarm, error) {
+	q := url.Values{}
+	q.Set("device_id", deviceID)
+	q.Set("from", from.Format(time.RFC3339))
+	q.Set("to", to.Format(time.RFC3339))
+	q.Set("since", strconv.FormatInt(since, 10))
+	q.Set("limit", strconv.Itoa(limit))
 	var out []DashcamAlarm
 	return out, c.getJSON(ctx, "/v1/dashcams/alarms?"+q.Encode(), &out)
 }

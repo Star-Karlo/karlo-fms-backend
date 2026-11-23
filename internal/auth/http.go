@@ -54,12 +54,23 @@ const (
 	cookieDomainRT = "/"
 )
 
+// cookieName keeps production's names and gives every other environment its
+// own, the same rule as the auth service: a browser sends production's
+// .karlo.id cookies to staging too, so one shared name makes staging refresh
+// with a production token and sign the person out.
+func (h *Handler) cookieName(base string) string {
+	if base == legacyCookie || strings.TrimPrefix(h.cookieDomain, ".") == "karlo.id" {
+		return base
+	}
+	return base + "_staging"
+}
+
 // issue writes a token response, moving the refresh token into the cookie
 // when cookie mode is on so the body never carries it.
 func (h *Handler) issue(w http.ResponseWriter, resp *TokenResponse) {
 	if h.cookieDomain != "" && resp != nil && resp.RefreshToken != "" {
 		http.SetCookie(w, &http.Cookie{
-			Name: refreshCookie, Value: resp.RefreshToken, Domain: h.cookieDomain, Path: cookieDomainRT,
+			Name: h.cookieName(refreshCookie), Value: resp.RefreshToken, Domain: h.cookieDomain, Path: cookieDomainRT,
 			MaxAge: cookieMaxAge, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 		})
 		// The marker carries WHO is signed in (the platform user id), so a tab
@@ -74,7 +85,7 @@ func (h *Handler) issue(w http.ResponseWriter, resp *TokenResponse) {
 			who = "1"
 		}
 		http.SetCookie(w, &http.Cookie{
-			Name: sessionCookie, Value: who, Domain: h.cookieDomain, Path: cookieDomainRT,
+			Name: h.cookieName(sessionCookie), Value: who, Domain: h.cookieDomain, Path: cookieDomainRT,
 			MaxAge: cookieMaxAge, HttpOnly: false, Secure: true, SameSite: http.SameSiteLaxMode,
 		})
 		// The pre-SSO cookie must not linger: with karlo_rt present a stale
@@ -86,13 +97,15 @@ func (h *Handler) issue(w http.ResponseWriter, resp *TokenResponse) {
 }
 
 // refreshTokenFrom prefers the body (local mode, or an explicit token) and
-// falls back to the cookie.
+// falls back to the cookie, only in cookie mode: a refresh rotates the shared
+// token, and without a cookie domain the new one cannot be written back, so
+// reading it would leave TMS holding a revoked token.
 func (h *Handler) refreshTokenFrom(r *http.Request, body string) string {
-	if body != "" {
+	if body != "" || h.cookieDomain == "" {
 		return body
 	}
 	for _, name := range []string{refreshCookie, legacyCookie} {
-		if c, err := r.Cookie(name); err == nil && c.Value != "" {
+		if c, err := r.Cookie(h.cookieName(name)); err == nil && c.Value != "" {
 			return c.Value
 		}
 	}
@@ -107,7 +120,7 @@ func (h *Handler) clearCookie(w http.ResponseWriter) {
 		name, path string
 		httpOnly   bool
 	}{{refreshCookie, cookieDomainRT, true}, {sessionCookie, cookieDomainRT, false}, {legacyCookie, "/v1/auth", true}} {
-		http.SetCookie(w, &http.Cookie{Name: c.name, Value: "", Domain: h.cookieDomain, Path: c.path, MaxAge: -1, HttpOnly: c.httpOnly, Secure: true, SameSite: http.SameSiteLaxMode})
+		http.SetCookie(w, &http.Cookie{Name: h.cookieName(c.name), Value: "", Domain: h.cookieDomain, Path: c.path, MaxAge: -1, HttpOnly: c.httpOnly, Secure: true, SameSite: http.SameSiteLaxMode})
 	}
 }
 

@@ -1645,7 +1645,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Asks the telemetry service to pull the clip to S3; returns a job id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records the clip in video_clips.",
+                "description": "Asks the telemetry service to pull the clip to S3; returns a job id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records the clip in video_clips. With alarm_id, the clip is recorded against that camera event (an SD-card pull for an event without a saved video).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1677,6 +1677,24 @@ const docTemplate = `{
                 "responses": {
                     "202": {
                         "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "alarm_id is not an event of this camera",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "the event already has a video for that camera",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6955,6 +6973,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
+                "description": "Newest first. Deleted auto-saved clips are hidden unless status=deleted. Without a status filter, an event's \"no clip\" or failed row is also hidden once that event has a saved or downloading video (any camera for \"no clip\", the same camera for failed). from/to are WIB days (YYYY-MM-DD) on the clip time. Without limit it returns up to 500, as before.",
                 "produces": [
                     "application/json"
                 ],
@@ -6968,6 +6987,36 @@ const docTemplate = `{
                         "description": "filter by vehicle",
                         "name": "vehicle_id",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "first day, YYYY-MM-DD",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "last day, YYYY-MM-DD",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "pending | ready | failed | no_clip | deleted",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "page size (max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "rows to skip",
+                        "name": "offset",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -6975,6 +7024,133 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/github_com_karlo_fms-backend_internal_platform_httpx.List-dashcam_ClipDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/video-clips/summary": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Totals, per WIB day, per event type and per truck for automatically saved clips. Each event + camera counts once by its latest row; deleted clips are left out; still-downloading clips are left out of the sizes. events_with_video / events_camera_didnt_send / events_save_failed put each event in one outcome, however many cameras it has. Same access as the clip list.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashcams"
+                ],
+                "summary": "Saved Evidence summary (automatic saves)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "first day, YYYY-MM-DD",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "last day, YYYY-MM-DD",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "one truck",
+                        "name": "vehicle_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dashcam.ClipSummaryDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/video-clips/summary/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The same numbers as /v1/video-clips/summary for the same window and customer, as a PDF: overview, per event type, per truck, and what every term means. English, no AI text.",
+                "produces": [
+                    "application/pdf"
+                ],
+                "tags": [
+                    "dashcams"
+                ],
+                "summary": "Saved Evidence summary as a PDF",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "first day, YYYY-MM-DD",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "last day, YYYY-MM-DD",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "pdf, the only format",
+                        "name": "format",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "one truck",
+                        "name": "vehicle_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -6987,7 +7163,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Removes the video_clips record and its S3 object. Manager+.",
+                "description": "Removes the S3 object, and the video_clips record (an auto-saved clip keeps it as 'deleted' so it isn't saved again). 409 while the clip is still downloading. Manager+.",
                 "tags": [
                     "dashcams"
                 ],
@@ -7004,6 +7180,24 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
@@ -8136,6 +8330,10 @@ const docTemplate = `{
         "dashcam.ClipDTO": {
             "type": "object",
             "properties": {
+                "alarm_id": {
+                    "description": "AlarmID is the camera event an auto-saved clip belongs to; EventCode and\nEventName name it. All nil for manual saves.",
+                    "type": "string"
+                },
                 "channel": {
                     "type": "integer"
                 },
@@ -8146,6 +8344,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "error": {
+                    "type": "string"
+                },
+                "event_code": {
+                    "type": "integer"
+                },
+                "event_name": {
                     "type": "string"
                 },
                 "id": {
@@ -8180,7 +8384,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "status": {
-                    "description": "pending | ready | failed. s3_key/bucket are null until ready.",
+                    "description": "pending | ready | failed | no_clip | deleted. s3_key/bucket are null until ready.",
                     "type": "string"
                 },
                 "vehicle_id": {
@@ -8188,6 +8392,179 @@ const docTemplate = `{
                 },
                 "vss_device_id": {
                     "type": "string"
+                }
+            }
+        },
+        "dashcam.ClipDayDTO": {
+            "type": "object",
+            "properties": {
+                "bytes": {
+                    "type": "integer"
+                },
+                "clips": {
+                    "type": "integer"
+                },
+                "day": {
+                    "type": "string"
+                },
+                "events": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "no_clip": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dashcam.ClipSummaryDTO": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dashcam.ClipDayDTO"
+                    }
+                },
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                },
+                "totals": {
+                    "$ref": "#/definitions/dashcam.ClipTotalsDTO"
+                },
+                "trucks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dashcam.ClipTruckDTO"
+                    }
+                },
+                "types": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dashcam.ClipTypeDTO"
+                    }
+                }
+            }
+        },
+        "dashcam.ClipTotalsDTO": {
+            "type": "object",
+            "properties": {
+                "avg_bytes_per_clip": {
+                    "type": "number"
+                },
+                "avg_bytes_per_truck_day": {
+                    "type": "number"
+                },
+                "avg_events_per_truck_day": {
+                    "description": "Averages over the trucks with events and every day of the window.",
+                    "type": "number"
+                },
+                "bytes": {
+                    "type": "integer"
+                },
+                "clips": {
+                    "type": "integer"
+                },
+                "events": {
+                    "type": "integer"
+                },
+                "events_camera_didnt_send": {
+                    "type": "integer"
+                },
+                "events_save_failed": {
+                    "type": "integer"
+                },
+                "events_with_video": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "no_clip": {
+                    "type": "integer"
+                },
+                "pending": {
+                    "type": "integer"
+                },
+                "trucks": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dashcam.ClipTruckDTO": {
+            "type": "object",
+            "properties": {
+                "bytes": {
+                    "type": "integer"
+                },
+                "clips": {
+                    "type": "integer"
+                },
+                "events": {
+                    "type": "integer"
+                },
+                "events_camera_didnt_send": {
+                    "type": "integer"
+                },
+                "events_save_failed": {
+                    "type": "integer"
+                },
+                "events_with_video": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "last_event": {
+                    "type": "string"
+                },
+                "license_plate": {
+                    "type": "string"
+                },
+                "no_clip": {
+                    "type": "integer"
+                },
+                "vehicle_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dashcam.ClipTypeDTO": {
+            "type": "object",
+            "properties": {
+                "bytes": {
+                    "type": "integer"
+                },
+                "clips": {
+                    "type": "integer"
+                },
+                "code": {
+                    "type": "integer"
+                },
+                "events": {
+                    "type": "integer"
+                },
+                "events_camera_didnt_send": {
+                    "type": "integer"
+                },
+                "events_save_failed": {
+                    "type": "integer"
+                },
+                "events_with_video": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "no_clip": {
+                    "type": "integer"
                 }
             }
         },
@@ -8233,6 +8610,10 @@ const docTemplate = `{
         "dashcam.DownloadRequest": {
             "type": "object",
             "properties": {
+                "alarm_id": {
+                    "description": "AlarmID links an SD-card pull to the camera event it replaces, so the\nSaved Evidence summary counts that event as saved. Optional; it must be\nan event this camera already has a clip row for.",
+                    "type": "string"
+                },
                 "channel": {
                     "type": "integer"
                 },
@@ -11990,6 +12371,13 @@ const docTemplate = `{
                     "description": "IsDemo marks a copy of a device that really belongs to another account\n(shown here for a demo). Never paired with or written to master data.",
                     "type": "boolean"
                 },
+                "owner": {
+                    "description": "Owner is who owns the hardware — \"karlo\", \"customer\" or \"vendor\" — and\nOwnerName is that third party when it is not Karlo's own unit. Both are\nprojected from master data, which is their only writer, so they are\nread-only here and nil for a device master data has not labelled.\nThis is the field that separates our own trackers from a vendor's feed.",
+                    "type": "string"
+                },
+                "owner_name": {
+                    "type": "string"
+                },
                 "phone_no": {
                     "type": "string"
                 },
@@ -12064,6 +12452,13 @@ const docTemplate = `{
                 "is_demo": {
                     "description": "IsDemo marks a copy of a device that really belongs to another account\n(shown here for a demo). Never paired with or written to master data.",
                     "type": "boolean"
+                },
+                "owner": {
+                    "description": "Owner is who owns the hardware — \"karlo\", \"customer\" or \"vendor\" — and\nOwnerName is that third party when it is not Karlo's own unit. Both are\nprojected from master data, which is their only writer, so they are\nread-only here and nil for a device master data has not labelled.\nThis is the field that separates our own trackers from a vendor's feed.",
+                    "type": "string"
+                },
+                "owner_name": {
+                    "type": "string"
                 },
                 "phone_no": {
                     "type": "string"

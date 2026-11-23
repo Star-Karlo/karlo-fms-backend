@@ -348,12 +348,16 @@ func main() {
 				  (kind, entry_gate, exit_gate, golongan, amount_rp,
 				   source, source_ref, verdict, issues)
 				VALUES ($1, $2, $3, $4, $5, $6, nullif($7, ''), $8, nullif($9, ''))
-				ON CONFLICT (entry_gate, COALESCE(exit_gate, 0), golongan, source)
-				DO UPDATE SET amount_rp = excluded.amount_rp,
+				ON CONFLICT (entry_gate, COALESCE(exit_gate, 0), golongan)
+				DO UPDATE SET kind = excluded.kind,
+				              amount_rp = excluded.amount_rp,
+				              source = excluded.source,
 				              verdict = excluded.verdict,
 				              issues = excluded.issues,
 				              source_ref = excluded.source_ref,
-				              fetched_at = now()`,
+				              fetched_at = now()
+				WHERE toll_source_rank(excluded.source)
+				      >= toll_source_rank(toll_tariffs.source)`,
 				kind, entryID, exitID, g, int64(amount),
 				*source, *sourceRef, verdict, r["issues"]); err != nil {
 				log.Fatalf("tariff %s -> %s golongan %d: %v", fromNorm, toNorm, g, err)
@@ -465,9 +469,11 @@ func writeSQL(path string, gates map[string]*gate, needed map[string]bool,
 			w("VALUES (%s, (SELECT id FROM toll_gates WHERE name_norm = %s), %s, %d, %d, %s, %s, %s, %s)",
 				sqlLit(kind), sqlLit(fromNorm), exitExpr, g, int64(amount),
 				sqlLit(source), sqlNullable(sourceRef), sqlLit(verdict), sqlNullable(r["issues"]))
-			w("ON CONFLICT (entry_gate, COALESCE(exit_gate, 0), golongan, source)")
-			w("DO UPDATE SET amount_rp = excluded.amount_rp, verdict = excluded.verdict,")
-			w("  issues = excluded.issues, source_ref = excluded.source_ref, fetched_at = now();")
+			w("ON CONFLICT (entry_gate, COALESCE(exit_gate, 0), golongan)")
+			w("DO UPDATE SET kind = excluded.kind, amount_rp = excluded.amount_rp,")
+			w("  source = excluded.source, verdict = excluded.verdict,")
+			w("  issues = excluded.issues, source_ref = excluded.source_ref, fetched_at = now()")
+			w("WHERE toll_source_rank(excluded.source) >= toll_source_rank(toll_tariffs.source);")
 			figures++
 		}
 	}

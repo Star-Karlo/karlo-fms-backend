@@ -58,25 +58,29 @@ func (s *TollStore) LoadTollCells(ctx context.Context) ([]routing.TollCell, erro
 		  t.golongan,
 		  t.amount_rp,
 		  t.source,
-		  -- Pessimistic PER SOURCE. A cell is excluded when that source's own
-		  -- rows disagree, which must not condemn the other source's copy of
-		  -- the same pair.
+		  -- Pessimistic per CELL. Migration 0065 left one row per
+		  -- (entry, exit, golongan), so a pair no longer has a second
+		  -- source's copy to protect: partitioning by source here would
+		  -- instead split one cell's five classes into separate groups
+		  -- whenever they came from different sources, and each group would
+		  -- then be judged — and priced — on its own.
 		  bool_and(t.verdict = 'usable') OVER (
-		    PARTITION BY t.entry_gate, coalesce(t.exit_gate, 0), t.source
+		    PARTITION BY t.entry_gate, coalesce(t.exit_gate, 0)
 		  )                                             AS cell_usable
 		FROM toll_tariffs t
 		JOIN toll_gates eg ON eg.id = t.entry_gate
 		LEFT JOIN toll_gates xg ON xg.id = t.exit_gate
-		-- Grouped per (cell, source): two sources covering one pair are two
-		-- cells here, and NewTollTable picks the better-ranked one. Merging
-		-- them by price would average a published tariff with a derived one.
-		ORDER BY entry_norm, exit_norm, t.source, t.golongan`)
+		-- One cell per pair, all five classes together. Before 0065 this was
+		-- grouped per (cell, source) because a pair could hold two rows per
+		-- class; it now holds exactly one, and the classes of a single cell
+		-- must stay together or Cover reports a class it cannot price.
+		ORDER BY entry_norm, exit_norm, t.golongan`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	type key struct{ entry, exit, source string }
+	type key struct{ entry, exit string }
 	byCell := map[key]*routing.TollCell{}
 	var order []key
 
@@ -88,7 +92,7 @@ func (s *TollStore) LoadTollCells(ctx context.Context) ([]routing.TollCell, erro
 		if err := rows.Scan(&kind, &entryNorm, &exitNorm, &golongan, &amount, &source, &usable); err != nil {
 			return nil, err
 		}
-		k := key{entryNorm, exitNorm, source}
+		k := key{entryNorm, exitNorm}
 		c, ok := byCell[k]
 		if !ok {
 			c = &routing.TollCell{
@@ -105,6 +109,12 @@ func (s *TollStore) LoadTollCells(ctx context.Context) ([]routing.TollCell, erro
 		c.AmountRp[int(golongan)] = amount
 		if !usable {
 			c.Verdict = "review"
+		}
+		// A cell's classes may now come from different sources. It is worth
+		// no more than its weakest one, so record that rather than whichever
+		// class happened to be read first.
+		if routing.SourcePriority[source] < routing.SourcePriority[c.Source] {
+			c.Source = source
 		}
 	}
 	if err := rows.Err(); err != nil {

@@ -17,6 +17,7 @@ package dashcam
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -68,6 +69,13 @@ type Handler struct {
 	s3c     *s3.Client              // deletes the S3 object when a saved clip is removed
 	md      *mdwrite.Client         // nil before cutover: links stay local
 	dir     mdwrite.CompanyResolver // tenant -> company for the write-through's caller
+	buckets map[int64]string        // tenant -> clip bucket; missing = telemetry's default
+}
+
+// WithTenantBuckets sends each listed customer's clips to its own bucket.
+func (h *Handler) WithTenantBuckets(b map[int64]string) *Handler {
+	h.buckets = b
+	return h
 }
 
 // WithMasterData makes a link/unlink reach master data (kind=dashcam,
@@ -152,6 +160,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/dashcams/{id}/clip", h.findClip)
 	r.Get("/v1/dashcams/downloads/{jobId}", h.downloadStatus)
 	r.Get("/v1/video-clips", h.listClips)
+	r.Get("/v1/video-clips/summary", h.clipSummary)
+	r.Get("/v1/video-clips/summary/export", h.clipSummaryExport)
 	r.Get("/v1/video-clips/{id}/url", h.clipURL)
 	r.Group(func(ar chi.Router) {
 		ar.Use(auth.RequireRole(auth.RoleManager))
@@ -449,16 +459,24 @@ func (h *Handler) clipURL(w http.ResponseWriter, r *http.Request) {
 
 func awsString(s string) *string { return &s }
 
+var errClipDownloading = errors.New("clip still downloading")
+
 // deleteClip removes a saved evidence clip: the S3 object (best-effort) and the
 // video_clips row. RLS scopes it to the caller's tenant (EffectiveTenant lets a
 // platform admin target ?account_id), so one tenant can't delete another's clip.
 //
+// An auto-saved clip keeps its row as 'deleted': without it the next auto-save
+// run would find no row and save the clip again. A clip still downloading
+// can't be deleted, since telemetry's job would still write the S3 object.
+//
 //	@Summary		Delete a saved evidence clip
-//	@Description	Removes the video_clips record and its S3 object. Manager+.
+//	@Description	Removes the S3 object, and the video_clips record (an auto-saved clip keeps it as 'deleted' so it isn't saved again). 409 while the clip is still downloading. Manager+.
 //	@Tags			dashcams
 //	@Security		BearerAuth
 //	@Param			id	path	int	true	"clip id"
 //	@Success		204
+//	@Failure		404	{object}	map[string]string
+//	@Failure		409	{object}	map[string]string
 //	@Router			/v1/video-clips/{id} [delete]
 func (h *Handler) deleteClip(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -466,15 +484,24 @@ func (h *Handler) deleteClip(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var bucket, key *string
+	var bucket, key, alarmID *string
+	var status string
 	err = db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
 		// Read the object location, then delete the row — both under RLS, so a
 		// missing/other-tenant id affects nothing and 404s.
 		if e := tx.QueryRow(r.Context(),
-			`SELECT s3_bucket, s3_key FROM video_clips WHERE id=$1`, id).Scan(&bucket, &key); e != nil {
+			`SELECT s3_bucket, s3_key, status, alarm_id FROM video_clips WHERE id=$1 AND status <> 'deleted'`,
+			id).Scan(&bucket, &key, &status, &alarmID); e != nil {
 			return e
 		}
-		tag, e := tx.Exec(r.Context(), `DELETE FROM video_clips WHERE id=$1`, id)
+		if status == "pending" {
+			return errClipDownloading
+		}
+		q := `DELETE FROM video_clips WHERE id=$1`
+		if alarmID != nil {
+			q = `UPDATE video_clips SET status='deleted', s3_bucket=NULL, s3_key=NULL, size_bytes=NULL, error=NULL WHERE id=$1`
+		}
+		tag, e := tx.Exec(r.Context(), q, id)
 		if e != nil {
 			return e
 		}
@@ -483,6 +510,10 @@ func (h *Handler) deleteClip(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
+	if errors.Is(err, errClipDownloading) {
+		httpx.Error(w, http.StatusConflict, "Wait until the download finishes.")
+		return
+	}
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "clip not found")
 		return
@@ -507,6 +538,8 @@ type EvidenceDTO struct {
 	Lat      *float64  `json:"lat"`
 	Lon      *float64  `json:"lon"`
 	Channel  int       `json:"channel"`
+	// AlarmID matches the event to its auto-saved clip (video_clips.alarm_id).
+	AlarmID string `json:"alarm_id,omitempty"`
 }
 
 // evidence lists a camera's alarm-evidence clips for a date — the Recordings
@@ -526,7 +559,7 @@ func (h *Handler) evidence(w http.ResponseWriter, r *http.Request) {
 	for _, e := range evs {
 		code, name, sev := alarmMeta(e.Code)
 		_ = code
-		out = append(out, EvidenceDTO{Code: e.Code, Name: name, Severity: sev, Time: e.Time, Lat: e.Lat, Lon: e.Lon, Channel: e.Channel})
+		out = append(out, EvidenceDTO{Code: e.Code, Name: name, Severity: sev, Time: e.Time, Lat: e.Lat, Lon: e.Lon, Channel: e.Channel, AlarmID: e.AlarmID})
 	}
 	httpx.JSON(w, http.StatusOK, httpx.List[EvidenceDTO]{Items: out, Total: int64(len(out))})
 }
@@ -562,12 +595,16 @@ type DownloadRequest struct {
 	Lat     *float64 `json:"lat"`
 	Lon     *float64 `json:"lon"`
 	Note    string   `json:"note"`
+	// AlarmID links an SD-card pull to the camera event it replaces, so the
+	// Saved Evidence summary counts that event as saved. Optional; it must be
+	// an event this camera already has a clip row for.
+	AlarmID *string `json:"alarm_id,omitempty"`
 }
 
 // download godoc
 //
 //	@Summary		Save a clip to S3 (async)
-//	@Description	Asks the telemetry service to pull the clip to S3; returns a job id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records the clip in video_clips.
+//	@Description	Asks the telemetry service to pull the clip to S3; returns a job id to poll. Poll /v1/dashcams/downloads/{jobId}; on completion FMS records the clip in video_clips. With alarm_id, the clip is recorded against that camera event (an SD-card pull for an event without a saved video).
 //	@Tags			dashcams
 //	@Security		BearerAuth
 //	@Accept			json
@@ -575,6 +612,8 @@ type DownloadRequest struct {
 //	@Param			id		path	int						true	"dashcam id"
 //	@Param			body	body	dashcam.DownloadRequest	true	"clip"
 //	@Success		202		{object}	map[string]string
+//	@Failure		400		{object}	map[string]string	"alarm_id is not an event of this camera"
+//	@Failure		409		{object}	map[string]string	"the event already has a video for that camera"
 //	@Router			/v1/dashcams/{id}/download [post]
 func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	dc, ok := h.resolve(w, r)
@@ -598,8 +637,21 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusOK, map[string]any{"job_id": existing.JobID, "clip_id": existing.ID, "status": existing.Status, "existing": true})
 		return
 	}
+	vehicleID := dc.vehicleID
+	if req.AlarmID != nil {
+		v, status, msg := h.checkPullAlarm(r.Context(), auth.EffectiveTenant(r), dc.deviceID, *req.AlarmID, req.Channel)
+		if status != 0 {
+			httpx.Error(w, status, msg)
+			return
+		}
+		// The event's own truck, so the pull is counted where the event is.
+		vehicleID = v
+	}
+	// AlarmID is deliberately not sent: with it, telemetry copies the event's
+	// uploaded clip only and never reads the SD card, which is what a pull is for.
 	jobID, err := h.tel.StartDashcamDownload(r.Context(), dc.deviceID, telemetry.DashcamDownloadReq{
 		Channel: req.Channel, Path: req.Path, Start: req.Start, Stop: req.Stop,
+		Bucket: h.buckets[auth.EffectiveTenant(r)],
 	})
 	if err != nil {
 		h.gatewayError(w, err)
@@ -609,9 +661,10 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	// instant the operator clicks Save. The reconciler flips it to ready/failed
 	// when the background download finishes — the client need not wait or poll.
 	pc := pendingClip{
-		tenantID: auth.EffectiveTenant(r), dashcamID: dc.id, vehicleID: dc.vehicleID,
+		tenantID: auth.EffectiveTenant(r), dashcamID: dc.id, vehicleID: vehicleID,
 		deviceID: dc.deviceID, channel: req.Channel, start: req.Start, stop: req.Stop,
 		lat: req.Lat, lon: req.Lon, note: req.Note, userID: auth.UserID(r.Context()),
+		alarmID: req.AlarmID,
 	}
 	clipID, err := h.insertPendingClip(r.Context(), pc, jobID)
 	if err != nil {
@@ -620,6 +673,33 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusAccepted, map[string]any{"job_id": jobID, "clip_id": clipID, "status": "pending", "existing": false})
+}
+
+// checkPullAlarm vets an SD-card pull's alarm_id before anything is
+// downloaded. The event must already have a clip row on this camera (RLS
+// keeps it to the caller's fleet), and that camera channel must not already
+// have a saved or downloading video for it. Returns the event's truck, or an
+// HTTP status and message to refuse with.
+func (h *Handler) checkPullAlarm(ctx context.Context, tenantID int64, deviceID, alarmID string, channel int) (*int64, int, string) {
+	var rows int64
+	var vehicleID *int64
+	var taken *bool
+	err := db.Tx(ctx, h.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+SELECT count(*), max(vehicle_id), bool_or(status IN ('ready', 'pending') AND channel = $3)
+FROM video_clips
+WHERE vss_device_id = $1 AND alarm_id = $2`, deviceID, alarmID, channel).Scan(&rows, &vehicleID, &taken)
+	})
+	switch {
+	case err != nil:
+		log.Printf("dashcam: check pull alarm %s: %v", alarmID, err)
+		return nil, http.StatusInternalServerError, "could not start the save"
+	case rows == 0:
+		return nil, http.StatusBadRequest, "alarm_id is not an event of this camera"
+	case taken != nil && *taken:
+		return nil, http.StatusConflict, "this event already has a video for that camera"
+	}
+	return vehicleID, 0, ""
 }
 
 // findClip godoc
@@ -687,30 +767,64 @@ func (h *Handler) downloadStatus(w http.ResponseWriter, r *http.Request) {
 
 // listClips godoc
 //
-//	@Summary	Saved clips (accident evidence)
-//	@Tags		dashcams
-//	@Security	BearerAuth
-//	@Produce	json
-//	@Param		vehicle_id	query	int	false	"filter by vehicle"
-//	@Success	200	{object}	httpx.List[dashcam.ClipDTO]
-//	@Router		/v1/video-clips [get]
+//	@Summary		Saved clips (accident evidence)
+//	@Description	Newest first. Deleted auto-saved clips are hidden unless status=deleted. Without a status filter, an event's "no clip" or failed row is also hidden once that event has a saved or downloading video (any camera for "no clip", the same camera for failed). from/to are WIB days (YYYY-MM-DD) on the clip time. Without limit it returns up to 500, as before.
+//	@Tags			dashcams
+//	@Security		BearerAuth
+//	@Produce		json
+//	@Param			vehicle_id	query	int		false	"filter by vehicle"
+//	@Param			from		query	string	false	"first day, YYYY-MM-DD"
+//	@Param			to			query	string	false	"last day, YYYY-MM-DD"
+//	@Param			status		query	string	false	"pending | ready | failed | no_clip | deleted"
+//	@Param			limit		query	int		false	"page size (max 500)"
+//	@Param			offset		query	int		false	"rows to skip"
+//	@Success		200	{object}	httpx.List[dashcam.ClipDTO]
+//	@Failure		400	{object}	map[string]string
+//	@Router			/v1/video-clips [get]
 func (h *Handler) listClips(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
 	var vehicleFilter *int64
-	if v := r.URL.Query().Get("vehicle_id"); v != "" {
+	if v := q.Get("vehicle_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
 			vehicleFilter = &id
 		}
 	}
+	from, to, err := dayWindow(q.Get("from"), q.Get("to"))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	p := httpx.ParseList(r)
+	if q.Get("limit") == "" {
+		p.Limit = 500
+	}
+	var status *string
+	if p.Status != "" {
+		status = &p.Status
+	}
+	const where = `
+WHERE ($1::bigint IS NULL OR c.vehicle_id = $1)
+  AND ($2::timestamptz IS NULL OR c.clip_start >= $2)
+  AND ($3::timestamptz IS NULL OR c.clip_start < $3)
+  AND (($4::text IS NULL AND c.status <> 'deleted') OR c.status = $4)
+  AND ($4::text IS NOT NULL OR c.status NOT IN ('no_clip', 'failed') OR c.alarm_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM video_clips s
+        WHERE s.vss_device_id = c.vss_device_id AND s.alarm_id = c.alarm_id
+          AND s.status IN ('ready', 'pending') AND (c.status = 'no_clip' OR s.channel = c.channel)))`
 	var items []ClipDTO
-	err := db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
+	var total int64
+	err = db.Tx(r.Context(), h.pool, auth.EffectiveTenant(r), func(tx pgx.Tx) error {
+		if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM video_clips c`+where,
+			vehicleFilter, from, to, status).Scan(&total); err != nil {
+			return err
+		}
 		rows, err := tx.Query(r.Context(), `
 SELECT c.id, c.vehicle_id, v.license_plate, c.vss_device_id, c.channel,
        to_char(c.clip_start, 'YYYY-MM-DD"T"HH24:MI:SSOF:00'),
        c.status, c.error, c.s3_bucket, c.s3_key, c.size_bytes, c.lat, c.lon, c.reason, c.note,
-       to_char(c.created_at, 'YYYY-MM-DD"T"HH24:MI:SSOF:00')
-FROM video_clips c LEFT JOIN vehicles v ON v.id = c.vehicle_id
-WHERE ($1::bigint IS NULL OR c.vehicle_id = $1)
-ORDER BY c.created_at DESC LIMIT 500`, vehicleFilter)
+       to_char(c.created_at, 'YYYY-MM-DD"T"HH24:MI:SSOF:00'), c.alarm_id
+FROM video_clips c LEFT JOIN vehicles v ON v.id = c.vehicle_id`+where+`
+ORDER BY c.created_at DESC, c.id DESC LIMIT $5 OFFSET $6`, vehicleFilter, from, to, status, p.Limit, p.Offset)
 		if err != nil {
 			return err
 		}
@@ -719,9 +833,10 @@ ORDER BY c.created_at DESC LIMIT 500`, vehicleFilter)
 		for rows.Next() {
 			var c ClipDTO
 			if err := rows.Scan(&c.ID, &c.VehicleID, &c.LicensePlate, &c.VSSDeviceID, &c.Channel,
-				&c.ClipStart, &c.Status, &c.Error, &c.S3Bucket, &c.S3Key, &c.SizeBytes, &c.Lat, &c.Lon, &c.Reason, &c.Note, &c.CreatedAt); err != nil {
+				&c.ClipStart, &c.Status, &c.Error, &c.S3Bucket, &c.S3Key, &c.SizeBytes, &c.Lat, &c.Lon, &c.Reason, &c.Note, &c.CreatedAt, &c.AlarmID); err != nil {
 				return err
 			}
+			c.EventCode, c.EventName = eventOf(c.Reason)
 			items = append(items, c)
 		}
 		return rows.Err()
@@ -730,7 +845,39 @@ ORDER BY c.created_at DESC LIMIT 500`, vehicleFilter)
 		httpx.Error(w, http.StatusInternalServerError, "list clips failed")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, httpx.List[ClipDTO]{Items: items, Total: int64(len(items))})
+	httpx.JSON(w, http.StatusOK, httpx.List[ClipDTO]{Items: items, Total: total})
+}
+
+// eventOf reads the camera event an auto-saved clip was kept for from its
+// reason ("auto:124"). Manual clips have none.
+func eventOf(reason string) (*int, *string) {
+	code, err := strconv.Atoi(strings.TrimPrefix(reason, "auto:"))
+	if !strings.HasPrefix(reason, "auto:") || err != nil {
+		return nil, nil
+	}
+	_, name, _ := alarmMeta(code)
+	return &code, &name
+}
+
+// dayWindow turns optional WIB days into clip_start bounds. clip_start holds
+// WIB clock time labelled UTC, so a WIB day starts at that date's UTC midnight.
+func dayWindow(fromDay, toDay string) (from, to *time.Time, err error) {
+	if fromDay != "" {
+		t, e := time.Parse("2006-01-02", fromDay)
+		if e != nil {
+			return nil, nil, errors.New("from must be YYYY-MM-DD")
+		}
+		from = &t
+	}
+	if toDay != "" {
+		t, e := time.Parse("2006-01-02", toDay)
+		if e != nil {
+			return nil, nil, errors.New("to must be YYYY-MM-DD")
+		}
+		end := t.AddDate(0, 0, 1)
+		to = &end
+	}
+	return from, to, nil
 }
 
 // ClipDTO is a saved clip.
@@ -741,7 +888,7 @@ type ClipDTO struct {
 	VSSDeviceID  string  `json:"vss_device_id"`
 	Channel      int     `json:"channel"`
 	ClipStart    string  `json:"clip_start"`
-	// pending | ready | failed. s3_key/bucket are null until ready.
+	// pending | ready | failed | no_clip | deleted. s3_key/bucket are null until ready.
 	Status    string   `json:"status"`
 	Error     *string  `json:"error"`
 	S3Bucket  *string  `json:"s3_bucket"`
@@ -752,6 +899,11 @@ type ClipDTO struct {
 	Reason    string   `json:"reason"`
 	Note      *string  `json:"note"`
 	CreatedAt string   `json:"created_at"`
+	// AlarmID is the camera event an auto-saved clip belongs to; EventCode and
+	// EventName name it. All nil for manual saves.
+	AlarmID   *string `json:"alarm_id"`
+	EventCode *int    `json:"event_code"`
+	EventName *string `json:"event_name"`
 	// JobID of the telemetry download, for polling live stage while pending. Empty on list.
 	JobID string `json:"job_id,omitempty"`
 }

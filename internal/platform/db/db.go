@@ -35,6 +35,10 @@ func New(ctx context.Context, url string) (*Pool, error) {
 // that bulk-write one tenant's `vehicles` rows. See LockFleetProjection.
 const FleetProjectionLock = 42
 
+// DashcamAutosaveLock is the advisory-lock class that keeps the dashcam
+// auto-save to one backend instance at a time (session lock, key 0).
+const DashcamAutosaveLock = 43
+
 // LockFleetProjection serialises this transaction against the other background
 // job that bulk-writes the same tenant's vehicles.
 //

@@ -24,25 +24,37 @@ type pendingClip struct {
 	lat, lon  *float64
 	note      string
 	userID    int64
+	reason    string  // "manual", or "auto:<event code>" from the auto-save
+	alarmID   *string // the camera event id (auto-save only)
 }
 
 // insertPendingClip records a clip as 'pending' the moment Save is clicked, so
-// it shows in Saved Evidence immediately. The reconciler finishes it.
+// it shows in Saved Evidence immediately. The reconciler finishes it. Returns
+// pgx.ErrNoRows when the event + camera already has a live row (auto-save only).
 func (h *Handler) insertPendingClip(ctx context.Context, pc pendingClip, jobID string) (int64, error) {
+	return insertPendingClip(ctx, h.pool, pc, jobID)
+}
+
+func insertPendingClip(ctx context.Context, pool *db.Pool, pc pendingClip, jobID string) (int64, error) {
 	start, _ := time.Parse(clipStartLayout, pc.start)
 	var stop *time.Time
 	if t, err := time.Parse(clipStartLayout, pc.stop); err == nil {
 		stop = &t
 	}
 	var id int64
-	err := db.Tx(ctx, h.pool, pc.tenantID, func(tx pgx.Tx) error {
+	reason := pc.reason
+	if reason == "" {
+		reason = "manual"
+	}
+	err := db.Tx(ctx, pool, pc.tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 INSERT INTO video_clips (tenant_id, vehicle_id, vss_device_id, channel, clip_start, clip_stop,
-                         status, job_id, lat, lon, reason, note, created_by)
-VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,'manual',NULLIF($10,''),$11)
+                         status, job_id, lat, lon, reason, note, created_by, alarm_id)
+VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,NULLIF($11,''),$12,$13)
+ON CONFLICT DO NOTHING
 RETURNING id`,
 			pc.tenantID, pc.vehicleID, pc.deviceID, pc.channel, start, stop,
-			jobID, pc.lat, pc.lon, pc.note, nullableUser(pc.userID)).Scan(&id)
+			jobID, pc.lat, pc.lon, reason, pc.note, nullableUser(pc.userID), pc.alarmID).Scan(&id)
 	})
 	return id, err
 }
@@ -54,7 +66,7 @@ const clipStartLayout = "2006-01-02 15:04:05"
 
 // lookupClip finds the most recent clip saved for this camera + channel +
 // start — the identity of a clip, whatever reason or note it was saved with.
-// nil when none.
+// A clip a user deleted doesn't count. nil when none.
 func (h *Handler) lookupClip(ctx context.Context, tenantID int64, deviceID string, channel int, startStr string) (*ClipDTO, error) {
 	start, err := time.Parse(clipStartLayout, startStr)
 	if err != nil {
@@ -69,7 +81,7 @@ SELECT c.id, c.vehicle_id, v.license_plate, c.vss_device_id, c.channel,
        c.status, c.error, c.s3_bucket, c.s3_key, c.size_bytes, c.lat, c.lon, c.reason, c.note,
        to_char(c.created_at, 'YYYY-MM-DD"T"HH24:MI:SSOF:00'), COALESCE(c.job_id, '')
 FROM video_clips c LEFT JOIN vehicles v ON v.id = c.vehicle_id
-WHERE c.vss_device_id = $1 AND c.channel = $2 AND c.clip_start = $3
+WHERE c.vss_device_id = $1 AND c.channel = $2 AND c.clip_start = $3 AND c.status <> 'deleted'
 ORDER BY (c.status = 'ready') DESC, (c.status = 'pending') DESC, c.created_at DESC
 LIMIT 1`, deviceID, channel, start)
 		if err != nil {
@@ -176,7 +188,7 @@ func (h *Handler) reconcileClip(ctx context.Context, tid int64, pr pendingRow) {
 	switch st.Status {
 	case "done":
 		if st.S3Key != "" {
-			h.readyClip(ctx, tid, pr.id, st.Bucket, st.S3Key)
+			h.readyClip(ctx, tid, pr.id, st.Bucket, st.S3Key, st.SizeBytes)
 		}
 	case "failed":
 		msg := st.Error
@@ -191,11 +203,11 @@ func (h *Handler) reconcileClip(ctx context.Context, tid int64, pr pendingRow) {
 	}
 }
 
-func (h *Handler) readyClip(ctx context.Context, tid, id int64, bucket, key string) {
+func (h *Handler) readyClip(ctx context.Context, tid, id int64, bucket, key string, size *int64) {
 	err := db.Tx(ctx, h.pool, tid, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx, `UPDATE video_clips
-			SET status='ready', s3_bucket=$2, s3_key=$3, error=NULL
-			WHERE id=$1 AND status='pending'`, id, bucket, key)
+			SET status='ready', s3_bucket=$2, s3_key=$3, size_bytes=$4, error=NULL
+			WHERE id=$1 AND status='pending'`, id, bucket, key, size)
 		return e
 	})
 	if err != nil {

@@ -291,6 +291,8 @@ type Tracker struct {
 	ExternalRef  *string            `json:"external_ref"`
 	MasterDataID *string            `json:"master_data_id"`
 	IsDemo       bool               `json:"is_demo"`
+	Owner        *string            `json:"owner"`
+	OwnerName    *string            `json:"owner_name"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
@@ -382,4 +384,27 @@ type VehicleTelemetryState struct {
 	LastSampleAt       pgtype.Timestamptz `json:"last_sample_at"`
 	InsideGeofences    []byte             `json:"inside_geofences"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type VideoClip struct {
+	ID          int64              `json:"id"`
+	TenantID    int64              `json:"tenant_id"`
+	VehicleID   *int64             `json:"vehicle_id"`
+	VssDeviceID string             `json:"vss_device_id"`
+	Channel     int32              `json:"channel"`
+	ClipStart   pgtype.Timestamptz `json:"clip_start"`
+	ClipStop    pgtype.Timestamptz `json:"clip_stop"`
+	S3Bucket    *string            `json:"s3_bucket"`
+	S3Key       *string            `json:"s3_key"`
+	SizeBytes   *int64             `json:"size_bytes"`
+	Lat         *float64           `json:"lat"`
+	Lon         *float64           `json:"lon"`
+	Reason      string             `json:"reason"`
+	Note        *string            `json:"note"`
+	CreatedBy   *int64             `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Status      string             `json:"status"`
+	JobID       *string            `json:"job_id"`
+	Error       *string            `json:"error"`
+	AlarmID     *string            `json:"alarm_id"`
 }
