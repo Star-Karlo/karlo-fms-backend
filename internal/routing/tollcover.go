@@ -54,8 +54,11 @@ type TollGate struct {
 //
 // A source absent from this map ranks below every listed one, which is the
 // safe default for something added later without thought.
+// Kept in step with toll_source_rank() in migration 0065, which the collapse
+// and the importer's upsert both use; TestSourceRankMatchesSQL reads that file.
 var SourcePriority = map[string]int{
 	"decree":    30, // a ministerial decree: the legal figure
+	"manual":    25, // a person who looked at it: beats a harvest, not the law
 	"jasamarga": 20, // the operator's own published table
 	"mapid":     10, // derived from a routing answer
 }

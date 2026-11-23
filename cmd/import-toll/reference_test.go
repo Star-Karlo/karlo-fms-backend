@@ -112,14 +112,21 @@ func TestReferenceSQLJoinsByName(t *testing.T) {
 	}
 	sql := readFile(t, path)
 	for _, want := range []string{
-		"DELETE FROM toll_tariffs WHERE source = 'jasamarga';",
-		"WHERE eg.name_norm = 'cikupa' AND xg.name_norm = 'serang barat';",
+		"ON CONFLICT (entry_gate, COALESCE(exit_gate, 0), golongan)",
+		"WHERE toll_source_rank(excluded.source) >= toll_source_rank(toll_tariffs.source);",
+		"WHERE eg.name_norm = 'cikupa' AND xg.name_norm = 'serang barat'",
 		"(VALUES (1, 38000), (2, 59000), (3, 59000), (4, 76500), (5, 76500))",
 		"SELECT 'flat', eg.id, NULL",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("SQL lacks %q", want)
 		}
+	}
+	// The blanket delete is gone with migration 0065: one row per cell means
+	// it would remove winners whose alternative has been archived, and drop
+	// any cell this file stopped covering.
+	if strings.Contains(sql, "DELETE FROM toll_tariffs") {
+		t.Error("a reference load must refresh in place, not delete every row of its source")
 	}
 	if strings.Contains(sql, "VALUES ('closed'") {
 		t.Error("a pair must insert through a join, so an unplaced gate loads nothing instead of failing")
