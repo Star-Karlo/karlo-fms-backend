@@ -414,8 +414,25 @@ func main() {
 	// internalToll is also served over HTTP further down, so TMS can price
 	// against these tables instead of calling MAPID for figures we hold.
 	var internalToll routing.TollQuoter
+
+	// PREFERRED: ask the Maps toll service, which owns the tables now.
+	//
+	// The same rows exist in this database from migrations 0058-0065, and
+	// reading them here is what creates two copies that drift. Whoever edits
+	// a tariff edits the Maps copy, so that has to be the one every quote
+	// comes from — otherwise a correction fixes the figure nobody bills from.
+	// Local tables stay wired below so rollback is removing an env var.
+	if remote := routing.NewRemoteToll(cfg.TollServiceURL, cfg.TollServiceToken); remote.Configured() {
+		internalToll = remote
+		maintenanceH = maintenanceH.WithTollQuoter(remote)
+		log.Printf("routing: toll pricing via %s at %s", remote.Name(), cfg.TollServiceURL)
+	}
+
 	tollStore := maintenance.NewTollStore(pool)
-	if gates, err := tollStore.LoadTollGates(ctx); err != nil {
+	if internalToll != nil {
+		// Already answered remotely. The block below is the fallback path and
+		// must not override it.
+	} else if gates, err := tollStore.LoadTollGates(ctx); err != nil {
 		log.Printf("routing: toll tables unreadable, no in-house pricing: %v", err)
 	} else if len(gates) == 0 {
 		log.Printf("routing: toll tables are empty; load them with cmd/import-toll")
