@@ -78,6 +78,24 @@ type TollQuote struct {
 	UnpricedGates []string `json:"unpriced_gates,omitempty"`
 
 	Provider string `json:"provider"`
+
+	// PricedBy says which side of the Maps gateway produced the figure:
+	// "local" for Karlo's own tariff tables, "mapid" for the aggregator.
+	// FellBack is true when our own tables could not price the journey
+	// completely and MAPID answered instead.
+	//
+	// WHY THESE ARE NEW FIELDS AND NOT A CHANGE TO Provider. Provider has
+	// said "maps-toll" since this moved out of process and TMS reads it;
+	// repurposing it to carry "local"/"mapid" would change an existing value
+	// under a consumer we do not deploy. These are additive, so a caller that
+	// ignores them is unaffected and one that wants to show "priced by MAPID"
+	// can.
+	//
+	// EMPTY MEANS THE QUESTION DOES NOT ARISE — an in-process quote, or a
+	// direct call to the toll service with no gateway in between. Do not read
+	// an empty PricedBy as "local".
+	PricedBy string `json:"priced_by,omitempty"`
+	FellBack bool   `json:"fell_back,omitempty"`
 }
 
 // TollSegment is one toll charge within a journey.
