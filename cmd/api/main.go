@@ -76,6 +76,7 @@ import (
 	"github.com/karlo/fms-backend/internal/routing"
 	"github.com/karlo/fms-backend/internal/scorecard"
 	"github.com/karlo/fms-backend/internal/sop"
+	"github.com/karlo/fms-backend/internal/specialreport"
 	"github.com/karlo/fms-backend/internal/telemetry"
 	"github.com/karlo/fms-backend/internal/telemetrysync"
 	"github.com/karlo/fms-backend/internal/tenantsync"
@@ -598,6 +599,8 @@ func main() {
 		// scope per tenant. The auth is about who may spend our compute, not
 		// about whose data is returned.
 		toll.NewHandler(internalToll).Routes(ir)
+		// Fixed-format reports for outside systems (legacy feed shapes).
+		specialreport.NewHandler(specialreport.NewService(pool, tel)).Routes(ir)
 	})
 
 	log.Printf("fms-backend api on %s  (swagger: http://localhost%s/swagger/index.html)", cfg.Addr, cfg.Addr)
