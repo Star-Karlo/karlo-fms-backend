@@ -434,6 +434,8 @@ type MobilePosition struct {
 	Kota       string     `json:"kota"`
 	Provinsi   string     `json:"provinsi"`
 	Jalan      string     `json:"jalan"`
+	// Metadata is the app's extras (batteryLevel, altitude, gpsOn, status…).
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 // MobileLiveMany returns the latest phone fix for each of the given drivers

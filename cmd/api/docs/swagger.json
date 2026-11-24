@@ -5214,6 +5214,49 @@
                 }
             }
         },
+        "/v1/special-reports/driver-truck-distance": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every non-archived truck of the caller's account with its tracker's last location, its assigned driver's last K-Trip phone location, and the straight-line distance between them in metres. The response shape matches the old GPS platform's feed field for field, so an existing consumer can switch without changing its parser.\n\nRules carried over from that feed: `_id` and `driver` are master-data ObjectIds; `lastLocation` falls back to the driver's phone fix when it is newer than the tracker's last fix (distance is then 0, and `lastGPS` still shows the tracker's own last fix time); tracker `batteryLevel` is the external supply in volts, flagged in `errorDesc` as BATT_LOW under 8 V and BATT_WARNING under 24.5 V; LOST_GPS is added for a 0,0 fix. Positions are null when telemetry has none (or is unreachable).\n\nAuthenticate with the account's API key (`Authorization: Bearer fms_...` or `X-Api-Key: fms_...`) or a signed-in session.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "special-report"
+                ],
+                "summary": "Truck vs driver last location (legacy feed format)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/specialreport.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/toll/quote": {
             "post": {
                 "security": [
@@ -12202,6 +12245,157 @@
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "specialreport.DriverLocation": {
+            "type": "object",
+            "properties": {
+                "altitude": {
+                    "type": "number",
+                    "example": 91.2
+                },
+                "batteryLevel": {
+                    "description": "phone battery, percent",
+                    "type": "number",
+                    "example": 27
+                },
+                "bearing": {
+                    "type": "number",
+                    "example": 0
+                },
+                "gpsOn": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "latitude": {
+                    "type": "number",
+                    "example": -6.4258087
+                },
+                "longitude": {
+                    "type": "number",
+                    "example": 107.4801472
+                },
+                "speed": {
+                    "type": "number",
+                    "example": 0
+                },
+                "status": {
+                    "type": "string",
+                    "example": "Idle"
+                },
+                "updatedAt": {
+                    "type": "string",
+                    "example": "2026-11-21T22:28:07.241Z"
+                }
+            }
+        },
+        "specialreport.Response": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/specialreport.Row"
+                    }
+                },
+                "message": {
+                    "type": "string",
+                    "example": "success"
+                }
+            }
+        },
+        "specialreport.Row": {
+            "type": "object",
+            "properties": {
+                "_id": {
+                    "description": "ID is the truck's master-data ObjectId. Null for a vehicle the\nmaster-data projection has not paired yet.",
+                    "type": "string",
+                    "example": "60192bfd28e7a4430e73d8ee"
+                },
+                "distanceDriverToTruck": {
+                    "description": "DistanceDriverToTruck is the straight-line distance in metres between\nlastLocation and driverLastLocation. Null unless both are present.",
+                    "type": "number",
+                    "example": 14528.75
+                },
+                "driver": {
+                    "description": "Driver is the assigned driver's master-data ObjectId. Absent when the\ntruck has no driver assigned, as in the legacy feed.",
+                    "type": "string",
+                    "example": "66debc0562e3db0b259024ee"
+                },
+                "driverLastLocation": {
+                    "$ref": "#/definitions/specialreport.DriverLocation"
+                },
+                "lastLocation": {
+                    "description": "LastLocation is the tracker's latest fix — or the assigned driver's\nphone fix when that is newer than anything the tracker has sent (the\nlegacy rule; the distance is then 0). Null when neither has a fix.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/specialreport.TruckLocation"
+                        }
+                    ]
+                },
+                "policeNumber": {
+                    "type": "string",
+                    "example": "H-9070-OH"
+                }
+            }
+        },
+        "specialreport.TruckLocation": {
+            "type": "object",
+            "properties": {
+                "altitude": {
+                    "type": "number",
+                    "example": 49
+                },
+                "batteryLevel": {
+                    "description": "tracker: external supply in volts; phone: percent",
+                    "type": "number",
+                    "example": 25.575
+                },
+                "bearing": {
+                    "type": "number",
+                    "example": 280
+                },
+                "errorDesc": {
+                    "description": "NORMAL | BATT_WARNING | BATT_LOW, plus LOST_GPS",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "NORMAL"
+                    ]
+                },
+                "gpsError": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "lastGPS": {
+                    "description": "LastGPS is the tracker's own latest fix time, even when the position\nshown is the phone's. Null when the tracker has never reported.",
+                    "type": "string",
+                    "example": "2026-11-24T02:17:24.264Z"
+                },
+                "latitude": {
+                    "type": "number",
+                    "example": -6.3676866
+                },
+                "longitude": {
+                    "type": "number",
+                    "example": 107.3623933
+                },
+                "speed": {
+                    "type": "number",
+                    "example": 0
+                },
+                "status": {
+                    "description": "Moving | Idle | Stop (tracker only)",
+                    "type": "string",
+                    "example": "Stop"
+                },
+                "updatedAt": {
+                    "description": "when the position was received",
+                    "type": "string",
+                    "example": "2026-11-24T02:17:24.264Z"
                 }
             }
         },

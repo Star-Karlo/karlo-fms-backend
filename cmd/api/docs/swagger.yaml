@@ -3571,6 +3571,126 @@ definitions:
       updated_at:
         type: string
     type: object
+  specialreport.DriverLocation:
+    properties:
+      altitude:
+        example: 91.2
+        type: number
+      batteryLevel:
+        description: phone battery, percent
+        example: 27
+        type: number
+      bearing:
+        example: 0
+        type: number
+      gpsOn:
+        example: true
+        type: boolean
+      latitude:
+        example: -6.4258087
+        type: number
+      longitude:
+        example: 107.4801472
+        type: number
+      speed:
+        example: 0
+        type: number
+      status:
+        example: Idle
+        type: string
+      updatedAt:
+        example: "2026-11-21T22:28:07.241Z"
+        type: string
+    type: object
+  specialreport.Response:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/specialreport.Row'
+        type: array
+      message:
+        example: success
+        type: string
+    type: object
+  specialreport.Row:
+    properties:
+      _id:
+        description: |-
+          ID is the truck's master-data ObjectId. Null for a vehicle the
+          master-data projection has not paired yet.
+        example: 60192bfd28e7a4430e73d8ee
+        type: string
+      distanceDriverToTruck:
+        description: |-
+          DistanceDriverToTruck is the straight-line distance in metres between
+          lastLocation and driverLastLocation. Null unless both are present.
+        example: 14528.75
+        type: number
+      driver:
+        description: |-
+          Driver is the assigned driver's master-data ObjectId. Absent when the
+          truck has no driver assigned, as in the legacy feed.
+        example: 66debc0562e3db0b259024ee
+        type: string
+      driverLastLocation:
+        $ref: '#/definitions/specialreport.DriverLocation'
+      lastLocation:
+        allOf:
+        - $ref: '#/definitions/specialreport.TruckLocation'
+        description: |-
+          LastLocation is the tracker's latest fix — or the assigned driver's
+          phone fix when that is newer than anything the tracker has sent (the
+          legacy rule; the distance is then 0). Null when neither has a fix.
+      policeNumber:
+        example: H-9070-OH
+        type: string
+    type: object
+  specialreport.TruckLocation:
+    properties:
+      altitude:
+        example: 49
+        type: number
+      batteryLevel:
+        description: 'tracker: external supply in volts; phone: percent'
+        example: 25.575
+        type: number
+      bearing:
+        example: 280
+        type: number
+      errorDesc:
+        description: NORMAL | BATT_WARNING | BATT_LOW, plus LOST_GPS
+        example:
+        - NORMAL
+        items:
+          type: string
+        type: array
+      gpsError:
+        example: false
+        type: boolean
+      lastGPS:
+        description: |-
+          LastGPS is the tracker's own latest fix time, even when the position
+          shown is the phone's. Null when the tracker has never reported.
+        example: "2026-11-24T02:17:24.264Z"
+        type: string
+      latitude:
+        example: -6.3676866
+        type: number
+      longitude:
+        example: 107.3623933
+        type: number
+      speed:
+        example: 0
+        type: number
+      status:
+        description: Moving | Idle | Stop (tracker only)
+        example: Stop
+        type: string
+      updatedAt:
+        description: when the position was received
+        example: "2026-11-24T02:17:24.264Z"
+        type: string
+    type: object
   telemetry.DashcamClip:
     properties:
       channel:
@@ -7588,6 +7708,38 @@ paths:
       summary: The remaining journey from a vehicle to its hangar
       tags:
       - maintenance
+  /v1/special-reports/driver-truck-distance:
+    get:
+      description: |-
+        Every non-archived truck of the caller's account with its tracker's last location, its assigned driver's last K-Trip phone location, and the straight-line distance between them in metres. The response shape matches the old GPS platform's feed field for field, so an existing consumer can switch without changing its parser.
+
+        Rules carried over from that feed: `_id` and `driver` are master-data ObjectIds; `lastLocation` falls back to the driver's phone fix when it is newer than the tracker's last fix (distance is then 0, and `lastGPS` still shows the tracker's own last fix time); tracker `batteryLevel` is the external supply in volts, flagged in `errorDesc` as BATT_LOW under 8 V and BATT_WARNING under 24.5 V; LOST_GPS is added for a 0,0 fix. Positions are null when telemetry has none (or is unreachable).
+
+        Authenticate with the account's API key (`Authorization: Bearer fms_...` or `X-Api-Key: fms_...`) or a signed-in session.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/specialreport.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Truck vs driver last location (legacy feed format)
+      tags:
+      - special-report
   /v1/toll/quote:
     post:
       consumes:
