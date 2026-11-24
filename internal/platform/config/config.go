@@ -173,6 +173,25 @@ type Config struct {
 	// geocode service), used by the "mapid" provider. FMS presents its
 	// platform service token; the MAPID key stays on that service.
 	RouteCacheURL string
+	// GeocodeBaseURL and GeocodeToken are what the browser's place search and
+	// reverse lookup are relayed to.
+	//
+	// SEPARATE FROM RouteCacheURL SINCE 2026-11-24, and that separation is
+	// the whole point of these two fields. One variable used to feed both the
+	// geocode proxy and the router:
+	//
+	//	geocodeH := geocodeproxy.NewHandler(cfg.RouteCacheURL, ...)
+	//	routing.Config{RouteCacheURL: cfg.RouteCacheURL}
+	//
+	// so moving routing to the Maps gateway would have dragged place search
+	// with it and broken the picker in every map form — which is exactly why
+	// infra/jakarta/services.tf said ROUTE_CACHE_URL was "deliberately left
+	// alone". Splitting them is what makes each repointable on its own.
+	//
+	// EMPTY FALLS BACK TO RouteCacheURL and the platform service token, so a
+	// deployment that sets neither behaves exactly as it did before.
+	GeocodeBaseURL string
+	GeocodeToken   string
 	// MAPIDTollKey and MAPIDTollURL price tolls. SEPARATE FROM RouteCacheURL
 	// on purpose: the route cache has no toll path (nine candidates answer 404
 	// while /v1/route answers 401), so toll pricing goes straight to MAPID's
@@ -296,6 +315,8 @@ func Load() Config {
 		},
 		RoutingProvider:      Env("ROUTING_PROVIDER", "geoapify"),
 		RouteCacheURL:        Env("ROUTE_CACHE_URL", ""),
+		GeocodeBaseURL:       Env("GEOCODE_BASE_URL", ""),
+		GeocodeToken:         Env("GEOCODE_TOKEN", ""),
 		MAPIDTollKey:         Env("MAPID_TOLL_KEY", ""),
 		TollServiceURL:       Env("TOLL_SERVICE_URL", ""),
 		TollServiceToken:     Env("TOLL_SERVICE_TOKEN", ""),
@@ -422,4 +443,24 @@ func EnvBool(k string, def bool) bool {
 		}
 	}
 	return def
+}
+
+// GeocodeTarget is where the browser's place search and reverse lookup are
+// relayed, and with which credential.
+//
+// THE FALLBACK IS THE COMPATIBILITY GUARANTEE. Place search and the router
+// shared one variable until 2026-11-24, so a deployment that sets neither of
+// the new ones must behave exactly as it did: the route cache's URL and the
+// platform service token. A base set without a token keeps the service token
+// rather than sending none, because an empty credential makes the relay
+// answer 503 and look like the geocoder is down.
+func (c Config) GeocodeTarget() (base, token string) {
+	base, token = c.GeocodeBaseURL, c.GeocodeToken
+	if base == "" {
+		return c.RouteCacheURL, c.ServiceToken
+	}
+	if token == "" {
+		token = c.ServiceToken
+	}
+	return base, token
 }

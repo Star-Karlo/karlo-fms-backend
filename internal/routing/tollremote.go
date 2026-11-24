@@ -71,6 +71,21 @@ type remoteTollResponse struct {
 	UnpricedGates []string      `json:"unpriced_gates"`
 	Complete      bool          `json:"complete"`
 	Error         string        `json:"error"`
+
+	// WHO ACTUALLY PRICED IT, added by the Maps gateway.
+	//
+	// The gateway asks Karlo's own tariff tables first and falls back to
+	// MAPID automatically when they cannot price a journey completely. That
+	// fallback is the right behaviour — an operator cannot wait for a missing
+	// tariff — but it means a figure can come from an aggregator rather than
+	// from our own data, and nothing downstream could tell. These two fields
+	// are how it says so.
+	//
+	// Absent when the request went straight to the toll service rather than
+	// through the gateway, which is the rollback shape, so neither field can
+	// be relied on to be present.
+	PricedBy string `json:"priced_by"`
+	FellBack bool   `json:"fell_back"`
 }
 
 // PriceRoute implements TollQuoter.
@@ -130,6 +145,8 @@ func (r *RemoteToll) PriceRoute(ctx context.Context, geometry [][2]float64) (*To
 		Segments:      out.Segments,
 		UnpricedGates: out.UnpricedGates,
 		Provider:      r.Name(),
+		PricedBy:      out.PricedBy,
+		FellBack:      out.FellBack,
 	}, nil
 }
 
