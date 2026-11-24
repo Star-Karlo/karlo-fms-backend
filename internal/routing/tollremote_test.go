@@ -133,3 +133,48 @@ func TestRemoteTollRefusesATooShortGeometry(t *testing.T) {
 		t.Error("one point is a caller bug, not a toll-free journey")
 	}
 }
+
+// THE GATEWAY'S FALLBACK HAS TO REACH THE CALLER. The gateway asks Karlo's
+// own tariffs first and MAPID automatically when they cannot price a journey,
+// which is the right behaviour and also means a figure can come from an
+// aggregator. Without carrying priced_by and fell_back, nothing downstream
+// could tell the two apart and the fallback would be invisible outside the
+// gateway's own log.
+func TestRemoteTollCarriesWhoPricedIt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"by_golongan":{"1":22500},"complete":true,"priced_by":"mapid","fell_back":true}`))
+	}))
+	defer srv.Close()
+
+	q, err := NewRemoteToll(srv.URL, "").PriceRoute(context.Background(), [][2]float64{{106.8, -6.2}, {107.6, -6.9}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.PricedBy != "mapid" {
+		t.Errorf("PricedBy = %q, want mapid", q.PricedBy)
+	}
+	if !q.FellBack {
+		t.Error("FellBack = false, want true")
+	}
+	// Provider is unchanged, because TMS reads it and we do not deploy TMS.
+	if q.Provider != "maps-toll" {
+		t.Errorf("Provider = %q — must not change under an existing consumer", q.Provider)
+	}
+}
+
+// An answer with no such fields — the toll service called directly, which is
+// the rollback shape — must leave them empty rather than guessing "local".
+func TestAbsentPricedByIsNotGuessed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"by_golongan":{"1":22500},"complete":true}`))
+	}))
+	defer srv.Close()
+
+	q, err := NewRemoteToll(srv.URL, "").PriceRoute(context.Background(), [][2]float64{{106.8, -6.2}, {107.6, -6.9}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.PricedBy != "" || q.FellBack {
+		t.Errorf("PricedBy=%q FellBack=%v — absent must stay absent", q.PricedBy, q.FellBack)
+	}
+}
