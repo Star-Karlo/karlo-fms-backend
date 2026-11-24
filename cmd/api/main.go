@@ -337,7 +337,16 @@ func main() {
 	geofenceH := geofence.NewHandler(pool)
 	// Place search / reverse lookup for the map forms, relayed with FMS's own
 	// service token because a browser cannot hold one.
-	geocodeH := geocodeproxy.NewHandler(cfg.RouteCacheURL, cfg.ServiceToken)
+	// PLACE SEARCH AND THE ROUTER NO LONGER SHARE A URL.
+	//
+	// Both used to read cfg.RouteCacheURL, which meant routing could not be
+	// moved to the Maps gateway without taking the map pickers' place search
+	// with it. GEOCODE_BASE_URL and GEOCODE_TOKEN let geocoding be repointed
+	// on its own; unset, they fall back to exactly what was used before, so
+	// an existing deployment does not change behaviour.
+	geocodeBase, geocodeToken := cfg.GeocodeTarget()
+	log.Printf("geocode: place search via %s", orNotSet(geocodeBase))
+	geocodeH := geocodeproxy.NewHandler(geocodeBase, geocodeToken)
 	fuelH := fuel.NewHandler(pool)
 	fuelAnalysisH := fuelanalysis.NewHandler(pool, liveSvc)
 	// Findings rather than figures: each vehicle compared with its own past,
@@ -649,4 +658,13 @@ func clientIPKey(r *http.Request) (string, error) {
 		return r.RemoteAddr, nil
 	}
 	return host, nil
+}
+
+// orNotSet keeps a startup line readable when a URL is absent, so "not set"
+// appears instead of an empty gap that reads like a truncated log.
+func orNotSet(s string) string {
+	if s == "" {
+		return "(not set)"
+	}
+	return s
 }
