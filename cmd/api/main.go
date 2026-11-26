@@ -284,7 +284,7 @@ func main() {
 	trackerH := tracker.NewHandler(pool).WithMasterData(mdWriter).WithResolver(companyDir).WithSyncWakers(trackerWakers...)
 	tel := telemetry.NewClient(cfg.TelemetryBaseURL, cfg.TelemetryAPIKey, cfg.TelemetryTimeout)
 	liveSvc := liveview.NewService(pool, tel)
-	liveH := liveview.NewHandler(liveSvc)
+	liveH := liveview.NewHandler(liveSvc).WithBulk(cfg.BulkBehaviorConcurrency, cfg.TelemetryHotDays)
 	// Cold storage reader/writer, shared by the alert hot+cold merge and the
 	// retention sweeper. Nil when COLD_BUCKET is unset (alerts stay hot-only).
 	cold := coldstore.New(ctx, cfg.AWSRegion, cfg.ColdBucket)

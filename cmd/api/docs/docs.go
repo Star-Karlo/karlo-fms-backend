@@ -5867,6 +5867,116 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/vehicles/behavior": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The /v1/vehicles/by-hull/{hull_number}/behavior report for many trucks in one request: each item is exactly that response. Give ` + "`" + `hull_numbers` + "`" + ` to ask for specific trucks (up to 100, no paging; unknown ones are listed in ` + "`" + `not_found` + "`" + `, shared ones in ` + "`" + `ambiguous` + "`" + `). Leave it out for every tracked vehicle in the account, up to ` + "`" + `page_size` + "`" + ` per page in id order: pass ` + "`" + `next_cursor` + "`" + ` from the previous response as ` + "`" + `cursor` + "`" + ` to get the next page; a response without ` + "`" + `next_cursor` + "`" + ` is the last page. A truck whose figures could not be computed still has a row, with ` + "`" + `error` + "`" + ` set to a code (telemetry_unavailable, telemetry_timeout, telemetry_misconfigured, vehicle_not_found) and ` + "`" + `summary` + "`" + `, ` + "`" + `events` + "`" + ` and ` + "`" + `stops` + "`" + ` null, and is named in the page's ` + "`" + `failed` + "`" + ` list; the rest of the page is unaffected. Figures are computed live, so the window is limited to 7 days and to telemetry's hot history (the last 7 days by default, counted from UTC midnight, so a whole-day window can reach back about 6 days). ` + "`" + `fields` + "`" + ` trims each item to the named keys (hull_no and license_plate are always included, and error when set); leave it out for the full report. It makes responses smaller — events alone are most of a page — but not faster to compute. ` + "`" + `stream=true` + "`" + ` returns every tracked vehicle (after ` + "`" + `cursor` + "`" + `, if given) in one response of the same shape, sent as it is computed; it takes as long as walking the pages (about a minute for 3,000 trucks over one day), and may carry spaces between items. Read it as follows: (1) if the body is not valid JSON or the connection failed, the stream was cut off (for example by a restart): call again; (2) if ` + "`" + `next_cursor` + "`" + ` is present, the stream stopped early on Karlo's side, ` + "`" + `error` + "`" + ` says so, and ` + "`" + `items` + "`" + ` holds what was sent: keep them and call again with ` + "`" + `stream=true` + "`" + ` and that ` + "`" + `cursor` + "`" + `; (3) otherwise the response is complete. The status is 200 in cases 2 and 3.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "live-view"
+                ],
+                "summary": "Driving behaviour for many vehicles, a page at a time or the whole fleet in one response",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "comma-separated hull numbers, e.g. S3487,S3490; omit for every tracked vehicle",
+                        "name": "hull_numbers",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "overspeed limit km/h (default 60)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "minutes a stop must exceed to count as idle (default 120)",
+                        "name": "idle_threshold",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "vehicles per page, 1-100 (default 100)",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "next_cursor from the previous page; empty for the first page",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "comma-separated item keys to return: summary, events, stops, overspeed_limit, idle_threshold_min, fuel_ratio_kmpl, fuel_tank_liters; omit for all",
+                        "name": "fields",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "true: every tracked vehicle in one response; not with hull_numbers or page_size",
+                        "name": "stream",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/liveview.BulkBehaviorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/vehicles/by-hull/{hull_number}/behavior": {
             "get": {
                 "security": [
@@ -9890,26 +10000,30 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "address": {
+                    "description": "Address is the street and area stored with the point; empty when none.",
                     "type": "string"
                 },
                 "lat": {
+                    "description": "Lat and Lon are where the point was recorded.",
                     "type": "number"
                 },
                 "lon": {
                     "type": "number"
                 },
                 "speed": {
+                    "description": "Speed is the point's speed in km/h.",
                     "type": "number"
                 },
                 "time": {
+                    "description": "Time is when the GPS point was recorded.",
                     "type": "string"
                 },
                 "type": {
-                    "description": "overspeed | harsh_accel | harsh_brake",
+                    "description": "Type is overspeed (speed above the request's limit), harsh_accel (speed\nrose 10 km/h or more per second since the previous point) or harsh_brake\n(fell 12 km/h or more per second). Harsh events are only looked for\nbetween points under 30 s apart; see summary.events_sampled.",
                     "type": "string"
                 },
                 "value": {
-                    "description": "km/h over limit, or km/h/s for harsh",
+                    "description": "Value is km/h over the limit for overspeed, or the rate of change in\nkm/h per second for harsh events (negative when braking).",
                     "type": "number"
                 }
             }
@@ -9959,9 +10073,11 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "avg_moving_speed": {
+                    "description": "AvgMovingSpeed is the average km/h of the points with speed above 0.",
                     "type": "number"
                 },
                 "distance_km": {
+                    "description": "DistanceKm is the distance driven; see distance_source for how it was\nmeasured.",
                     "type": "number"
                 },
                 "distance_source": {
@@ -9987,20 +10103,22 @@ const docTemplate = `{
                     }
                 },
                 "idle_count": {
-                    "description": "stops over the idle threshold",
+                    "description": "IdleCount is the number of stops, TotalIdleMin their summed minutes and\nLongestStopMin the longest one.",
                     "type": "integer"
                 },
                 "longest_stop_min": {
-                    "description": "longest single stop",
                     "type": "number"
                 },
                 "max_speed": {
+                    "description": "MaxSpeed is the highest speed in km/h.",
                     "type": "number"
                 },
                 "overspeed_count": {
+                    "description": "OverspeedCount, HarshAccel and HarshBrake count the events of each type.",
                     "type": "integer"
                 },
                 "points": {
+                    "description": "Points is how many GPS points the figures were computed from; 0 means\nno GPS in the window (tracker offline), not an error.",
                     "type": "integer"
                 },
                 "sample_gap_s": {
@@ -10008,7 +10126,6 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "total_idle_min": {
-                    "description": "summed dwell of those stops",
                     "type": "number"
                 }
             }
@@ -10020,6 +10137,100 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "label": {
+                    "type": "string"
+                }
+            }
+        },
+        "liveview.BulkBehaviorItem": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error is set when this truck's figures could not be computed; summary,\nevents and stops are then null, and the rest of the page still comes\nback. One of: telemetry_unavailable (a temporary problem reading its\nGPS; retry later), telemetry_timeout (reading it took too long; retry\nlater or off-peak), telemetry_misconfigured (a problem on Karlo's side;\nretrying will not help), vehicle_not_found (the truck was removed).",
+                    "type": "string"
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.BehaviorEvent"
+                    }
+                },
+                "fuel_ratio_kmpl": {
+                    "description": "Vehicle fuel config, echoed so the client can turn distance into an\nestimated litres consumed for this trip. Null when the vehicle has no\nfigures set — the estimate is then simply not shown.",
+                    "type": "number"
+                },
+                "fuel_tank_liters": {
+                    "type": "number"
+                },
+                "hull_no": {
+                    "description": "HullNo is the truck's hull number (nomor lambung) as set on the vehicle. Null when none is set.",
+                    "type": "string"
+                },
+                "idle_threshold_min": {
+                    "type": "number"
+                },
+                "license_plate": {
+                    "description": "The truck's nomor polisi, so a caller that asked by hull number can\ntell which truck answered.",
+                    "type": "string"
+                },
+                "overspeed_limit": {
+                    "type": "number"
+                },
+                "stops": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.IdleStop"
+                    }
+                },
+                "summary": {
+                    "$ref": "#/definitions/liveview.BehaviorSummary"
+                }
+            }
+        },
+        "liveview.BulkBehaviorResponse": {
+            "type": "object",
+            "properties": {
+                "ambiguous": {
+                    "description": "Ambiguous maps a requested hull number to the plates of the vehicles it\nmatched, when it matched more than one; none of them is answered.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "error": {
+                    "description": "Error is set only when a stream=true response was cut short by a fault\non Karlo's side: items holds what was sent, and calling again with\nstream=true and next_cursor as cursor continues after the last of them.",
+                    "type": "string"
+                },
+                "failed": {
+                    "description": "Failed names this page's trucks whose figures could not be computed (by\nhull number, else plate, else vehicle id); their rows carry error.\nAbsent when every truck on the page was answered.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "from": {
+                    "type": "string"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/liveview.BulkBehaviorItem"
+                    }
+                },
+                "next_cursor": {
+                    "description": "NextCursor is passed back as ` + "`" + `cursor` + "`" + ` for the next page. Absent on the\nlast page, and always absent when hull_numbers was given.",
+                    "type": "string"
+                },
+                "not_found": {
+                    "description": "NotFound lists requested hull numbers that matched no vehicle.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "to": {
                     "type": "string"
                 }
             }
@@ -10340,25 +10551,29 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "dwell_min": {
+                    "description": "DwellMin is how long the vehicle stood there, in minutes.",
                     "type": "number"
                 },
                 "end_time": {
                     "type": "string"
                 },
                 "lat": {
+                    "description": "Lat and Lon are the average position of the stop's points.",
                     "type": "number"
                 },
                 "lon": {
                     "type": "number"
                 },
                 "place": {
+                    "description": "Place is the geofence's name for a loading stop.",
                     "type": "string"
                 },
                 "reason": {
-                    "description": "Reason: loading | traffic | rest | unknown — why the truck stood still,\nso idle time is not judged subjectively (feedback epic 2.2). Place names\nthe geofence for a loading stop.",
+                    "description": "Reason says why the truck stood still, so idle time is not judged\nsubjectively (feedback epic 2.2): loading inside one of the company's\ngeofences; traffic for 20 minutes or less with the engine mostly on, on\na named road; rest for 60 minutes or more, or with the engine mostly\noff; unknown otherwise.",
                     "type": "string"
                 },
                 "start_time": {
+                    "description": "Start and End are the first and last GPS point of the stop.",
                     "type": "string"
                 }
             }

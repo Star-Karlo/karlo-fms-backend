@@ -33,6 +33,14 @@ SELECT id, license_plate, status FROM vehicles
  WHERE upper(regexp_replace(hull_no, '[^A-Za-z0-9]', '', 'g')) = sqlc.arg(hull)::text
  ORDER BY id;
 
+-- name: ListTrackedVehicleIDsPage :many
+-- One page of the bulk behaviour endpoint, keyed on id so a truck added or
+-- archived mid-walk cannot shift the pages and skip another.
+SELECT id FROM vehicles
+ WHERE status <> 'archive' AND tracker_id IS NOT NULL AND id > sqlc.arg(after_id)::bigint
+ ORDER BY id
+ LIMIT sqlc.arg(page_size)::int;
+
 -- name: PairVehicle :one
 -- Attach an existing local vehicle to its master-data record, for rows created
 -- before write-through existed. Fills a NULL only: re-pointing a paired vehicle

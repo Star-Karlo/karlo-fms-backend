@@ -668,6 +668,40 @@ func (q *Queries) ListLiveViewVehicles(ctx context.Context, fleetGroupID *int64)
 	return items, nil
 }
 
+const listTrackedVehicleIDsPage = `-- name: ListTrackedVehicleIDsPage :many
+SELECT id FROM vehicles
+ WHERE status <> 'archive' AND tracker_id IS NOT NULL AND id > $1::bigint
+ ORDER BY id
+ LIMIT $2::int
+`
+
+type ListTrackedVehicleIDsPageParams struct {
+	AfterID  int64 `json:"after_id"`
+	PageSize int32 `json:"page_size"`
+}
+
+// One page of the bulk behaviour endpoint, keyed on id so a truck added or
+// archived mid-walk cannot shift the pages and skip another.
+func (q *Queries) ListTrackedVehicleIDsPage(ctx context.Context, arg ListTrackedVehicleIDsPageParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listTrackedVehicleIDsPage, arg.AfterID, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnpairedVehicles = `-- name: ListUnpairedVehicles :many
 SELECT id, tenant_id, license_plate, manufacturer, vehicle_type, box_type, unit_year, hull_no, fleet_group_id, status, garage, odometer, hourmeter, fuel_tank_liters, fuel_ratio_kmpl, axles, golongan_override, length_m, width_m, height_m, max_weight_kg, tracker_id, current_driver_id, notes, documents, external_ref, color, attributes, master_data_id, created_at, updated_at FROM vehicles
  WHERE tenant_id = $1 AND master_data_id IS NULL AND status <> 'archive'
