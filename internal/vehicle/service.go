@@ -384,6 +384,11 @@ func (s *Service) Update(ctx context.Context, tenantID, id int64, caller mdwrite
 		// upstream call targets the record this row belongs to.
 		if before, err := q.GetVehicleRow(ctx, id); err == nil {
 			mdID = before.MasterDataID
+			// The truck form sends status on every save, and a status set in TMS
+			// (inactive) never reaches this row: an unchanged status would undo it.
+			if req.Status != nil && *req.Status == before.Status {
+				req.Status = nil
+			}
 			// fleet_group_id is a patch field: present and different = a move.
 			if req.FleetGroupID != nil && (before.FleetGroupID == nil || *before.FleetGroupID != *req.FleetGroupID) {
 				groupTouched = true
