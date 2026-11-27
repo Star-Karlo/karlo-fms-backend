@@ -58,6 +58,35 @@ func TestIsEndOfDay(t *testing.T) {
 	}
 }
 
+// Which daily rows answer a window. A window ending at 00:00 used to include
+// that day's row too, doubling a midnight-to-midnight day's distance.
+func TestRollupDays(t *testing.T) {
+	now := time.Date(2026, 11, 24, 11, 0, 0, 0, wib)
+	at := func(d, h, m, s int) time.Time { return time.Date(2026, 11, d, h, m, s, 0, wib) }
+	cases := []struct {
+		name        string
+		from, to    time.Time
+		first, last string
+		ok          bool
+	}{
+		{"midnight to midnight is one day", at(22, 0, 0, 0), at(23, 0, 0, 0), "2026-11-22", "2026-11-22", true},
+		{"to the last second of the day", at(22, 0, 0, 0), at(22, 23, 59, 59), "2026-11-22", "2026-11-22", true},
+		{"to the last minute of the day", at(22, 0, 0, 0), at(22, 23, 59, 0), "2026-11-22", "2026-11-22", true},
+		{"seven days ending at midnight", at(17, 0, 0, 0), at(24, 0, 0, 0), "2026-11-17", "2026-11-23", true},
+		{"today up to now", at(24, 0, 0, 0), now, "2026-11-24", "2026-11-24", true},
+		{"same day as UTC instants", time.Date(2026, 11, 21, 17, 0, 0, 0, time.UTC), time.Date(2026, 11, 22, 17, 0, 0, 0, time.UTC), "2026-11-22", "2026-11-22", true},
+		{"empty window at midnight", at(22, 0, 0, 0), at(22, 0, 0, 0), "", "", false},
+		{"starts mid-day", at(22, 8, 0, 0), at(23, 0, 0, 0), "", "", false},
+		{"ends mid-day in the past", at(22, 0, 0, 0), at(22, 14, 0, 0), "", "", false},
+	}
+	for _, c := range cases {
+		first, last, ok := rollupDays(c.from, c.to, now)
+		if first != c.first || last != c.last || ok != c.ok {
+			t.Errorf("%s: rollupDays = (%q, %q, %v), want (%q, %q, %v)", c.name, first, last, ok, c.first, c.last, c.ok)
+		}
+	}
+}
+
 // Without a telemetry client there is no rollup to true up from, and the
 // answer must still say what it was derived from rather than leaving the
 // fields empty and letting a reader assume the best.

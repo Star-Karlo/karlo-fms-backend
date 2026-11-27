@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"sync"
@@ -401,10 +402,22 @@ type Handler struct {
 	// matcher is optional; nil means road snapping is unavailable and its
 	// endpoint answers 503 while everything else keeps working.
 	matcher routing.Matcher
+	// bulkSem bounds how many trucks every bulk behaviour request together
+	// computes at once; hotDays is telemetry's hot-tier length (see bulk.go).
+	bulkSem chan struct{}
+	hotDays int
 }
 
 // NewHandler builds the live-view HTTP handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithBulk configures the bulk behaviour endpoint: concurrency bounds how many
+// telemetry history fetches all its requests together run at once, and
+// hotDays must equal telemetry's RETENTION_DAYS.
+func (h *Handler) WithBulk(concurrency, hotDays int) *Handler {
+	h.bulkSem, h.hotDays = make(chan struct{}, max(concurrency, 1)), hotDays
+	return h
+}
 
 // Routes mounts the live-view endpoints (any authenticated user).
 func (h *Handler) Routes(r chi.Router) {
@@ -587,29 +600,50 @@ func (h *Handler) fleetAnalytics(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, out)
 }
 
-// BehaviorEvent is a detected driving event on a vehicle's track.
+// BehaviorEvent is one GPS point that broke a driving rule. Overspeed is
+// reported per point, not per episode: ten minutes above the limit at one
+// point every 45 s is about thirteen events.
 type BehaviorEvent struct {
-	Type    string    `json:"type"` // overspeed | harsh_accel | harsh_brake
-	Time    time.Time `json:"time"`
-	Lat     *float64  `json:"lat"`
-	Lon     *float64  `json:"lon"`
-	Speed   float64   `json:"speed"`
-	Value   float64   `json:"value"` // km/h over limit, or km/h/s for harsh
-	Address string    `json:"address"`
+	// Type is overspeed (speed above the request's limit), harsh_accel (speed
+	// rose 10 km/h or more per second since the previous point) or harsh_brake
+	// (fell 12 km/h or more per second). Harsh events are only looked for
+	// between points under 30 s apart; see summary.events_sampled.
+	Type string `json:"type"`
+	// Time is when the GPS point was recorded.
+	Time time.Time `json:"time"`
+	// Lat and Lon are where the point was recorded.
+	Lat *float64 `json:"lat"`
+	Lon *float64 `json:"lon"`
+	// Speed is the point's speed in km/h.
+	Speed float64 `json:"speed"`
+	// Value is km/h over the limit for overspeed, or the rate of change in
+	// km/h per second for harsh events (negative when braking).
+	Value float64 `json:"value"`
+	// Address is the street and area stored with the point; empty when none.
+	Address string `json:"address"`
 }
 
 // BehaviorSummary aggregates a track's driving behavior.
 type BehaviorSummary struct {
-	Points         int     `json:"points"`
-	DistanceKm     float64 `json:"distance_km"`
-	MaxSpeed       float64 `json:"max_speed"`
+	// Points is how many GPS points the figures were computed from; 0 means
+	// no GPS in the window (tracker offline), not an error.
+	Points int `json:"points"`
+	// DistanceKm is the distance driven; see distance_source for how it was
+	// measured.
+	DistanceKm float64 `json:"distance_km"`
+	// MaxSpeed is the highest speed in km/h.
+	MaxSpeed float64 `json:"max_speed"`
+	// AvgMovingSpeed is the average km/h of the points with speed above 0.
 	AvgMovingSpeed float64 `json:"avg_moving_speed"`
-	OverspeedCount int     `json:"overspeed_count"`
-	HarshAccel     int     `json:"harsh_accel"`
-	HarshBrake     int     `json:"harsh_brake"`
-	IdleCount      int     `json:"idle_count"`       // stops over the idle threshold
-	TotalIdleMin   float64 `json:"total_idle_min"`   // summed dwell of those stops
-	LongestStopMin float64 `json:"longest_stop_min"` // longest single stop
+	// OverspeedCount, HarshAccel and HarshBrake count the events of each type.
+	OverspeedCount int `json:"overspeed_count"`
+	HarshAccel     int `json:"harsh_accel"`
+	HarshBrake     int `json:"harsh_brake"`
+	// IdleCount is the number of stops, TotalIdleMin their summed minutes and
+	// LongestStopMin the longest one.
+	IdleCount      int     `json:"idle_count"`
+	TotalIdleMin   float64 `json:"total_idle_min"`
+	LongestStopMin float64 `json:"longest_stop_min"`
 	// IdleByReason splits TotalIdleMin by why the truck stood still (see
 	// classifyStop). "loading" and "traffic" are the job; "rest" and "unknown"
 	// are what a fleet manager can actually act on.
@@ -637,18 +671,26 @@ type BehaviorSummary struct {
 	EventsSampled bool `json:"events_sampled"`
 }
 
-// IdleStop is a place the vehicle sat longer than the idle threshold.
+// IdleStop is a place the vehicle stood still for at least the request's
+// idle threshold: consecutive GPS points staying within 60 m of where the
+// stop began. Shorter stops are not listed.
 type IdleStop struct {
-	Lat      *float64  `json:"lat"`
-	Lon      *float64  `json:"lon"`
-	Start    time.Time `json:"start_time"`
-	End      time.Time `json:"end_time"`
-	DwellMin float64   `json:"dwell_min"`
-	// Reason: loading | traffic | rest | unknown — why the truck stood still,
-	// so idle time is not judged subjectively (feedback epic 2.2). Place names
-	// the geofence for a loading stop.
+	// Lat and Lon are the average position of the stop's points.
+	Lat *float64 `json:"lat"`
+	Lon *float64 `json:"lon"`
+	// Start and End are the first and last GPS point of the stop.
+	Start time.Time `json:"start_time"`
+	End   time.Time `json:"end_time"`
+	// DwellMin is how long the vehicle stood there, in minutes.
+	DwellMin float64 `json:"dwell_min"`
+	// Reason says why the truck stood still, so idle time is not judged
+	// subjectively (feedback epic 2.2): loading inside one of the company's
+	// geofences; traffic for 20 minutes or less with the engine mostly on, on
+	// a named road; rest for 60 minutes or more, or with the engine mostly
+	// off; unknown otherwise.
 	Reason string `json:"reason"`
-	Place  string `json:"place,omitempty"`
+	// Place is the geofence's name for a loading stop.
+	Place string `json:"place,omitempty"`
 }
 
 // classifyStop decides why a stop happened, from what the data can say:
@@ -822,18 +864,7 @@ func (h *Handler) behaviorFor(w http.ResponseWriter, r *http.Request, id int64) 
 		httpx.Error(w, http.StatusBadRequest, "from/to must be RFC3339")
 		return
 	}
-	limit := 60.0
-	if v := q.Get("limit"); v != "" {
-		if f, e := strconv.ParseFloat(v, 64); e == nil && f > 0 {
-			limit = f
-		}
-	}
-	idleThreshold := 120.0
-	if v := q.Get("idle_threshold"); v != "" {
-		if f, e := strconv.ParseFloat(v, 64); e == nil && f > 0 {
-			idleThreshold = f
-		}
-	}
+	limit, idleThreshold := behaviorThresholds(q)
 
 	res, err := h.svc.Behavior(r.Context(), auth.EffectiveTenant(r), id, from, to, limit, idleThreshold)
 	if err != nil {
@@ -841,6 +872,20 @@ func (h *Handler) behaviorFor(w http.ResponseWriter, r *http.Request, id int64) 
 		return
 	}
 	httpx.JSON(w, http.StatusOK, res)
+}
+
+// behaviorThresholds reads the overspeed limit (km/h, default 60) and the idle
+// threshold (minutes, default 120). Shared by the single and bulk behaviour
+// endpoints so one truck reports the same figures through either.
+func behaviorThresholds(q url.Values) (limit, idleThreshold float64) {
+	limit, idleThreshold = 60, 120
+	if f, err := strconv.ParseFloat(q.Get("limit"), 64); err == nil && f > 0 {
+		limit = f
+	}
+	if f, err := strconv.ParseFloat(q.Get("idle_threshold"), 64); err == nil && f > 0 {
+		idleThreshold = f
+	}
+	return limit, idleThreshold
 }
 
 // Behavior computes the GPS-derived driving behaviour (overspeed, harsh
@@ -954,21 +999,8 @@ func (s *Service) trueUpFromRollup(ctx context.Context, tenantID, vehicleID int6
 	if s.tel == nil {
 		return
 	}
-	// The rollup buckets in Asia/Jakarta, and its rows cover whole local days
-	// — except the last, which covers midnight until now. So it answers for
-	// this window exactly when the window starts at a local midnight and runs
-	// either to the end of a day or up to now.
-	//
-	// "Midnight yesterday to midday today" is the case it must refuse: the
-	// rollup's row for today holds the whole day so far and would overstate.
-	// Refusing leaves the track's figure, which is understated — but a
-	// wrong-and-labelled figure beats a wrong one presented as exact.
-	wib := time.FixedZone("WIB", 7*3600)
-	lo, hi := from.In(wib), to.In(wib)
-	if h, m, sec := lo.Clock(); h != 0 || m != 0 || sec != 0 {
-		return
-	}
-	if !isEndOfDay(hi) && hi.Before(time.Now().In(wib).Add(-5*time.Minute)) {
+	first, last, ok := rollupDays(from, to, time.Now())
+	if !ok {
 		return
 	}
 	var imei string
@@ -982,7 +1014,7 @@ func (s *Service) trueUpFromRollup(ctx context.Context, tenantID, vehicleID int6
 	if imei == "" {
 		return
 	}
-	days, err := s.dailyStats(ctx, lo.Format("2006-01-02"), hi.Format("2006-01-02"))
+	days, err := s.dailyStats(ctx, first, last)
 	if err != nil {
 		return
 	}
@@ -1006,6 +1038,40 @@ func (s *Service) trueUpFromRollup(ctx context.Context, tenantID, vehicleID int6
 		res.Summary.MaxSpeed = maxSpeed
 	}
 	res.Summary.DistanceSource = "rollup"
+}
+
+// rollupDays returns the local dates whose rollup rows exactly cover
+// [from, to], or ok=false when they cannot.
+//
+// The rollup buckets in Asia/Jakarta, and its rows cover whole local days
+// — except the last, which covers midnight until now. So it answers for
+// this window exactly when the window starts at a local midnight and runs
+// either to the end of a day or up to now.
+//
+// "Midnight yesterday to midday today" is the case it must refuse: the
+// rollup's row for today holds the whole day so far and would overstate.
+// Refusing leaves the track's figure, which is understated — but a
+// wrong-and-labelled figure beats a wrong one presented as exact.
+//
+// A window ending at 00:00 ends with the day before. Its own date is the
+// first day outside the window; summing that row too reported two days of
+// distance for a midnight-to-midnight day.
+func rollupDays(from, to, now time.Time) (first, last string, ok bool) {
+	wib := time.FixedZone("WIB", 7*3600)
+	lo, hi := from.In(wib), to.In(wib)
+	if h, m, sec := lo.Clock(); h != 0 || m != 0 || sec != 0 {
+		return "", "", false
+	}
+	if !isEndOfDay(hi) && hi.Before(now.In(wib).Add(-5*time.Minute)) {
+		return "", "", false
+	}
+	if h, m, sec := hi.Clock(); h == 0 && m == 0 && sec == 0 {
+		hi = hi.AddDate(0, 0, -1)
+	}
+	if hi.Before(lo) {
+		return "", "", false
+	}
+	return lo.Format("2006-01-02"), hi.Format("2006-01-02"), true
 }
 
 // dailyStats is DailyStats with a short cache, because the rollup is fetched

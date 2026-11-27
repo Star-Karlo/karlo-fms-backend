@@ -130,6 +130,12 @@ type Config struct {
 	TelemetryAPIKey  string
 	TelemetryTimeout time.Duration
 	LiveCacheTTL     time.Duration
+	// TelemetryHotDays must equal telemetry's RETENTION_DAYS: history older
+	// than that is read from Athena, which the bulk behaviour endpoint refuses.
+	TelemetryHotDays int
+	// BulkBehaviorConcurrency bounds how many telemetry history fetches all
+	// bulk behaviour requests together run at once.
+	BulkBehaviorConcurrency int
 
 	// AWSRegion / BedrockModelID drive AI dashboard composition. Auth is the
 	// task's IAM role — no API key to store or rotate. Nova Pro is exposed in
@@ -357,6 +363,12 @@ func Load() Config {
 		TelemetryAPIKey:  Env("TELEMETRY_API_KEY", ""),
 		TelemetryTimeout: time.Duration(EnvInt("TELEMETRY_TIMEOUT_MS", 15000)) * time.Millisecond,
 		LiveCacheTTL:     time.Duration(EnvInt("LIVE_CACHE_TTL_SEC", 8)) * time.Second,
+
+		// Production telemetry runs RETENTION_DAYS=7, and on its 0.5 vCPU task
+		// more than about 4 parallel history reads slowed every caller sharply.
+		TelemetryHotDays:        EnvInt("TELEMETRY_HOT_DAYS", 7),
+		BulkBehaviorConcurrency: EnvInt("BULK_BEHAVIOR_CONCURRENCY", 4),
+
 		CORSOrigins:      splitCSV(Env("CORS_ORIGINS", "")),
 		AuthCookieDomain: Env("AUTH_COOKIE_DOMAIN", ""),
 	}

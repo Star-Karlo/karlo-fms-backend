@@ -67,11 +67,15 @@ func NewClient(baseURL, apiKey string, timeout time.Duration) *Client {
 	if timeout > histTimeout {
 		histTimeout = timeout
 	}
+	// The default transport keeps 2 idle connections per host, so the bulk
+	// behaviour endpoint's parallel history fetches would reconnect each time.
+	histTr := http.DefaultTransport.(*http.Transport).Clone()
+	histTr.MaxIdleConnsPerHost = 16
 	return &Client{
 		base:   strings.TrimRight(baseURL, "/"),
 		key:    apiKey,
 		hc:     &http.Client{Timeout: timeout},
-		histHC: &http.Client{Timeout: histTimeout},
+		histHC: &http.Client{Timeout: histTimeout, Transport: histTr},
 	}
 }
 
@@ -408,9 +412,21 @@ func (c *Client) getJSONVia(ctx context.Context, hc *http.Client, path string, d
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("telemetry %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+		return &StatusError{Path: path, Code: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
 	return json.NewDecoder(resp.Body).Decode(dst)
+}
+
+// StatusError is a non-200 answer from the telemetry service, kept typed so a
+// caller can tell its own misconfiguration (401/403) from an outage.
+type StatusError struct {
+	Path string
+	Code int
+	Body string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("telemetry %s: status %d: %s", e.Path, e.Code, e.Body)
 }
 
 // ---- dashcams (fronted by the telemetry service, which talks to VSS) --------
